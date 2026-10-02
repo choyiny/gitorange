@@ -7,6 +7,7 @@ import {
   PersonIcon,
   SignOutIcon,
   KeyIcon,
+  PlugIcon,
   ShieldLockIcon,
 } from '@primer/octicons-react';
 import type { ReactNode } from 'react';
@@ -136,6 +137,13 @@ export function Header({
                   >
                     <KeyIcon className="color-fg-muted" /> Personal access
                     tokens
+                  </Link>
+                  <Link
+                    className="select-panel-item"
+                    to="/settings/mcp"
+                    onClick={close}
+                  >
+                    <PlugIcon className="color-fg-muted" /> MCP server
                   </Link>
                   {isAdmin && (
                     <Link

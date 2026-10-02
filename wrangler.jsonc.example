@@ -52,8 +52,9 @@
     "binding": "ASSETS",
     "directory": "./dist/client",
     "not_found_handling": "single-page-application",
-    // API, auth, and the git smart-HTTP endpoint (/<owner>/<repo>.git/...) must reach the worker.
-    "run_worker_first": ["/api/*", "/*/*.git/*", "/*/*.git"]
+    // API, auth, the git smart-HTTP endpoint (/<owner>/<repo>.git/...), the MCP server, and OAuth
+    // discovery (/.well-known/...) must reach the worker.
+    "run_worker_first": ["/api/*", "/*/*.git/*", "/*/*.git", "/mcp", "/.well-known/*"]
   },
   "observability": { "enabled": true, "head_sampling_rate": 1 },
   "vars": {

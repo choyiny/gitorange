@@ -28,6 +28,8 @@ import PullNew from './pages/PullNew';
 import PullView from './pages/PullView';
 import RepoSettings from './pages/RepoSettings';
 import RepoActions from './pages/RepoActions';
+import SettingsMcp from './pages/SettingsMcp';
+import OAuthConsent from './pages/OAuthConsent';
 import RunView from './pages/RunView';
 import SettingsTokens from './pages/SettingsTokens';
 import Admin from './pages/Admin';
@@ -81,6 +83,8 @@ const App = () => (
                 <Route path="/" element={<Dashboard />} />
                 <Route path="/new" element={<NewRepo />} />
                 <Route path="/settings/tokens" element={<SettingsTokens />} />
+                <Route path="/settings/mcp" element={<SettingsMcp />} />
+                <Route path="/oauth/consent" element={<OAuthConsent />} />
                 <Route
                   path="/admin"
                   element={

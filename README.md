@@ -59,6 +59,10 @@ Full docs live in **[docs/](docs/README.md)**: [Setup](docs/setup.md) · [Config
 
 ![An Actions job log](docs/screenshots/actions-run.jpg)
 
+**MCP server** — set up Claude, Cursor, or another AI client, see the tools it gets, and manage connected apps.
+
+![MCP server settings](docs/screenshots/mcp.jpg)
+
 **First run** — the first visitor creates the administrator; everyone after that joins by invitation.
 
 ![First-run setup](docs/screenshots/setup.jpg)
@@ -75,6 +79,7 @@ Full docs live in **[docs/](docs/README.md)**: [Setup](docs/setup.md) · [Config
 - **Pull requests** — open, comment, close, and reopen; view commits and files changed; merge with a merge commit or squash; delete the branch after merging.
 - **Personal and team repositories** — personal repositories (`/<you>/<repo>`) are private by default: only you, collaborators you add, and site admins can see them, and you can make one internal so every member can read it. Repositories under the shared team (`/<team>/<repo>`, created by a site admin) are visible to every member.
 - **GitHub Actions workflows** — your existing `.github/workflows/*.yml` files run as-is on pushes and pull requests. Each job gets its own Linux container on Cloudflare Containers, with live logs, re-runs, cancel, and a checks box on pull requests. See [GitHub Actions compatibility](#github-actions-compatibility).
+- **MCP server** — connect Claude Code, Claude.ai, Cursor, Codex, or any MCP client to `https://your-host/mcp`. The client signs in through GitOrange with OAuth 2.1 (PKCE and dynamic client registration, no token to paste), the user approves it on a consent page, and it can then list, inspect, and create repositories as that user. **Settings → MCP server** shows the setup steps for each client, the available tools, and the connected apps, each of which can be disconnected instantly.
 - **Access control** — the owner (or a team repository's creator), site admins, and collaborators added in repository settings can push and merge; other members can read what they can see and comment.
 
 Intentionally not here yet: issues, forks, code review comments, and search. See the [roadmap](#roadmap).

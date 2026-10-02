@@ -14,6 +14,8 @@ import { setupRouter } from './routers/setup-router';
 import { tokensRouter } from './routers/tokens-router';
 import { usersRouter } from './routers/users-router';
 import { namespacesRouter, teamRouter } from './routers/teams-router';
+import { mcpApiRouter, mcpRouter } from './mcp';
+import { wellKnownRouter } from './mcp/well-known';
 import type { AppEnv } from './variables';
 
 const app = new OpenAPIHono<AppEnv>();
@@ -23,12 +25,19 @@ app.use('*', logger());
 app.use('*', async (c, next) => {
   const auth = createAuth(c.env);
   c.set('auth', auth);
+  // The MCP endpoint and OAuth discovery authenticate with bearer tokens, never cookies.
+  const p = c.req.path;
+  if (p === '/mcp' || p.startsWith('/.well-known/')) return next();
   const session = await auth.api.getSession({ headers: c.req.raw.headers });
   if (session?.user) c.set('user', session.user as AppEnv['Variables']['user']);
   await next();
 });
 
 app.on(['GET', 'POST'], '/api/auth/*', (c) => c.get('auth').handler(c.req.raw));
+
+// OAuth discovery and the MCP server (bearer-token auth, see worker/src/mcp)
+app.route('/', wellKnownRouter);
+app.route('/mcp', mcpRouter);
 
 // Public
 app.route('/api/setup', setupRouter);
@@ -47,6 +56,9 @@ app.use('/api/team', requireAuth);
 app.route('/api/team', teamRouter);
 app.use('/api/namespaces/*', requireAuth);
 app.route('/api/namespaces', namespacesRouter);
+app.use('/api/mcp/*', requireAuth);
+app.use('/api/mcp', requireAuth);
+app.route('/api/mcp', mcpApiRouter);
 app.use('/api/tokens/*', requireAuth);
 app.use('/api/tokens', requireAuth);
 app.route('/api/tokens', tokensRouter);

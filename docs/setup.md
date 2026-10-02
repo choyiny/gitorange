@@ -86,6 +86,10 @@ Then:
    git push -u origin main   # username: anything, password: the token
    ```
 
+## Connecting AI tools (MCP)
+
+Nothing to configure. Each member opens **avatar → MCP server** for their client's setup steps, e.g. `claude mcp add --transport http gitorange https://git.example.com/mcp`, then signs in and approves the app in the browser. MCP clients need to reach your instance over HTTPS.
+
 ## Using Git LFS
 
 Nothing to configure per repository. The easiest route for non-developers is the **Set up with an AI agent** prompt on a new repository's page (or **Code → AI agent** on an existing one): paste it into Claude Code and the agent installs and configures Git LFS. By hand, with [git-lfs](https://git-lfs.com) installed:

@@ -38,6 +38,14 @@
   resolved "https://registry.yarnpkg.com/@better-auth/mongo-adapter/-/mongo-adapter-1.7.7.tgz#90281fe29362b702d88512fc380b2d56f8fd4b5f"
   integrity sha512-ZnVDuRrXqbf0oHphrEN27oTImNH5NTO26dtWatq5cXyYAsH7goof9QIoTOmxTbBxUQahKBw9T6+9h6n+RtOE+g==
 
+"@better-auth/oauth-provider@1.7.7":
+  version "1.7.7"
+  resolved "https://registry.yarnpkg.com/@better-auth/oauth-provider/-/oauth-provider-1.7.7.tgz#2cd748f610a331b23ac85c41430bef682dbb1dab"
+  integrity sha512-dc4C/ZF+8qc88ebcU8kaFp8yladCtfTkuUt2zBSmYw25YCNC5BoUP9rpAkIx4nemlZ11gLtSnkEPc0sA7MwVmw==
+  dependencies:
+    jose "^6.2.3"
+    zod "^4.5.4"
+
 "@better-auth/prisma-adapter@1.7.7":
   version "1.7.7"
   resolved "https://registry.yarnpkg.com/@better-auth/prisma-adapter/-/prisma-adapter-1.7.7.tgz#c1d3ec9360ba06eb72cd22cb35b789d5683f11d1"

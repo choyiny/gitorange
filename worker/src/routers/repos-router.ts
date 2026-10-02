@@ -24,6 +24,7 @@ import {
   type RepoEnv,
 } from '../lib/repos';
 import { deleteRepositoryLogs } from '../actions/trigger';
+import { createRepository, nameTaken } from '../lib/repo-create';
 import {
   LFS_NOT_CONFIGURED,
   OID_RE,
@@ -68,25 +69,6 @@ export function serializeRepo(r: Repository, ns: Namespace) {
     createdAt: r.createdAt.toISOString(),
     updatedAt: r.updatedAt.toISOString(),
   };
-}
-
-/** The same name may exist once per namespace: per user for personal repos, per team for team repos. */
-async function nameTaken(
-  db: RepoEnv['Variables']['db'],
-  repo: { ownerId: string; teamId: string | null },
-  name: string
-) {
-  const scope = repo.teamId
-    ? eq(repositories.teamId, repo.teamId)
-    : and(
-        eq(repositories.ownerId, repo.ownerId),
-        sql`${repositories.teamId} IS NULL`
-      );
-  return !!(await db
-    .select({ id: repositories.id })
-    .from(repositories)
-    .where(and(scope, eq(repositories.name, name)))
-    .get());
 }
 
 /** Splits "feature/x/src/a.ts" into the longest matching branch name and the remaining path. */
@@ -171,76 +153,14 @@ const createRepoRoute = createRoute({
   },
 });
 reposRouter.openapi(createRepoRoute, async (c) => {
-  const db = c.get('db');
-  const user = c.get('user')!;
-  const body = c.req.valid('json');
-  const name = normalizeRepoName(body.name);
-  if (
-    !REPO_NAME_RE.test(name) ||
-    name === '.' ||
-    name === '..' ||
-    name.endsWith('.git')
-  ) {
-    return c.json({ error: 'Repository name is invalid' }, 400);
-  }
-  const team = body.owner === 'team' ? await getTeam(db) : null;
-  if (body.owner === 'team' && !team)
-    return c.json(
-      {
-        error:
-          'There is no team yet. A site admin can create one in Site admin.',
-      },
-      400
-    );
-  if (await nameTaken(db, { ownerId: user.id, teamId: team?.id ?? null }, name))
-    return c.json(
-      {
-        error: `${team ? team.name : 'You'} already ${team ? 'has' : 'have'} a repository named ${name}`,
-      },
-      409
-    );
-  const ns = team ? teamNamespace(team) : userNamespace(user);
-
-  const id = crypto.randomUUID();
-  const now = new Date();
-  const row: Repository = {
-    id,
-    ownerId: user.id,
-    teamId: team?.id ?? null,
-    visibility: team ? 'internal' : body.visibility,
-    name,
-    description: body.description?.trim() || null,
-    defaultBranch: 'main',
-    artifactsName: `r_${id}`,
-    nextPrNumber: 1,
-    createdAt: now,
-    updatedAt: now,
-  };
-  // Storage first: if the D1 insert then fails, roll the Artifacts repo back.
-  await c.env.ARTIFACTS.create(row.artifactsName, {
-    setDefaultBranch: 'main',
-    description: `${ns.username}/${name}`,
-  });
-  try {
-    await db.insert(repositories).values(row);
-  } catch (e) {
-    await c.env.ARTIFACTS.delete(row.artifactsName);
-    throw e;
-  }
-  if (body.addReadme) {
-    const readme = `# ${name}\n${row.description ? `\n${row.description}\n` : ''}`;
-    await gitFor(c.env, row).initialCommit(
-      'main',
-      { 'README.md': readme },
-      {
-        name: user.name,
-        email: user.email,
-        timestamp: Math.floor(Date.now() / 1000),
-      },
-      'Initial commit'
-    );
-  }
-  return c.json(serializeRepo(row, ns), 201);
+  const result = await createRepository(
+    c.env,
+    c.get('db'),
+    c.get('user')!,
+    c.req.valid('json')
+  );
+  if (!result.ok) return c.json({ error: result.error }, result.status);
+  return c.json(serializeRepo(result.repo, result.namespace), 201);
 });
 
 // ── one repo ─────────────────────────────────────────────────────────────────

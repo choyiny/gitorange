@@ -19,7 +19,7 @@ Binding names are load-bearing — the worker looks them up by exact name. Resou
 
 `containers` defines the Actions runner: class `JobRunner` with `scheduling_policy: "durable_object"` and one image named `runner`, built from [`actions/runner/Dockerfile`](../actions/runner/Dockerfile) when you deploy (Docker must be running). Each job picks its instance size at start from `runs-on` (`ubuntu-latest` → `standard-1`; `gitorange-standard-2` … `gitorange-standard-4` for bigger machines). To deploy without Actions, remove `containers`, `durable_objects`, `exports`, `workflows`, and the `ACTIONS_LOGS` bucket: pushes then never queue runs, and the Actions tab says Actions isn't set up.
 
-Keep `assets.run_worker_first` as shipped: the git endpoint (`/<owner>/<repo>.git/...`) and `/api/*` must reach the worker before static asset handling.
+Keep `assets.run_worker_first` as shipped (it includes `/mcp` and `/.well-known/*`, which the MCP server and OAuth discovery need): the git endpoint (`/<owner>/<repo>.git/...`) and `/api/*` must reach the worker before static asset handling.
 
 ## Variables
 
@@ -33,10 +33,10 @@ Keep `assets.run_worker_first` as shipped: the git endpoint (`/<owner>/<repo>.gi
 
 ## Secrets
 
-| Secret                                     | How to set                                                                                                                                                                                                |
-| ------------------------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `BETTER_AUTH_SECRET`                       | Production: `wrangler secret put BETTER_AUTH_SECRET`. Local: `.dev.vars` (see `.dev.vars.example`). Generate with `openssl rand -hex 32`                                                                  |
-| `R2_ACCESS_KEY_ID`, `R2_SECRET_ACCESS_KEY` | S3-compatible credentials of an R2 API token with **Object Read & Write** on the LFS bucket, used only to sign short-lived LFS URLs. Without them Git LFS answers "not configured"; everything else works |
+| Secret                                     | How to set                                                                                                                                                                                                                                                              |
+| ------------------------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `BETTER_AUTH_SECRET`                       | Signs sessions and encrypts the MCP server's OAuth signing keys; changing it signs everyone out and disconnects every MCP app. Production: `wrangler secret put BETTER_AUTH_SECRET`. Local: `.dev.vars` (see `.dev.vars.example`). Generate with `openssl rand -hex 32` |
+| `R2_ACCESS_KEY_ID`, `R2_SECRET_ACCESS_KEY` | S3-compatible credentials of an R2 API token with **Object Read & Write** on the LFS bucket, used only to sign short-lived LFS URLs. Without them Git LFS answers "not configured"; everything else works                                                               |
 
 ## Environments
 

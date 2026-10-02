@@ -1,12 +1,12 @@
 import { useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { KeyIcon } from '@primer/octicons-react';
 import { api, qk } from '@/lib/uiApi';
 import { errorMessage } from '@/lib/api';
 import { timeAgo } from '@/lib/format';
 import { Header } from '@/components/Header';
 import { CopyButton } from '@/components/CopyButton';
 import { Spinner } from '@/components/Spinner';
+import { SettingsNav } from '@/components/SettingsNav';
 
 export default function SettingsTokens() {
   const qc = useQueryClient();
@@ -36,17 +36,7 @@ export default function SettingsTokens() {
     <>
       <Header context={<span className="text-bold px-2">Settings</span>} />
       <div className="container-lg px-3 py-4 d-flex" style={{ gap: 24 }}>
-        <nav
-          className="menu col-3 d-none d-md-block"
-          style={{ height: 'fit-content' }}
-        >
-          <span
-            className="menu-item selected d-flex flex-items-center"
-            style={{ gap: 8 }}
-          >
-            <KeyIcon /> Personal access tokens
-          </span>
-        </nav>
+        <SettingsNav />
         <div className="flex-1">
           <div className="Subhead">
             <h2 className="Subhead-heading">Personal access tokens</h2>

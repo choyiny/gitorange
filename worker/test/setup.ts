@@ -7,6 +7,14 @@ await applyD1Migrations(env.DB, env.TEST_D1_MIGRATIONS);
 // Storage is shared between tests within a file, so start each test from empty tables.
 // Children before parents so foreign keys never block the delete.
 const TABLES = [
+  'oauth_client_assertions',
+  'oauth_access_tokens',
+  'oauth_refresh_tokens',
+  'oauth_consents',
+  'oauth_client_resources',
+  'oauth_clients',
+  'oauth_resources',
+  'jwkss',
   'workflow_steps',
   'workflow_jobs',
   'workflow_runs',

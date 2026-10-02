@@ -28,6 +28,10 @@ and better-auth. Git storage is **Cloudflare Artifacts**: one Artifacts repo per
   `ActionsRun` Workflow executes jobs, and a `JobRunner` Durable Object per job owns its container (Cloudflare Containers,
   `durable_object` scheduling, image `actions/runner/Dockerfile`). Step logs in R2 (`ACTIONS_LOGS`). Tests drive `executeRun`
   with a fake step and runner; `makeEnv({ actions: true })` adds fake `ACTIONS_RUN`/`JOB_RUNNER` bindings.
+- MCP (`worker/src/mcp/`): `POST /mcp` is a hand-rolled JSON-RPC MCP server. better-auth's `@better-auth/oauth-provider`
+  (+ `jwt()`) is the OAuth 2.1 authorization server; `/mcp` verifies JWT access tokens (audience `<origin>/mcp`) locally
+  and requires the user's consent row, so disconnecting an app is immediate. Discovery routes live at the origin root.
+  `yarn auth:update` runs `scripts/fix-auth-schema.mjs` to patch a better-auth CLI bug in the generated schema.
 - Artifacts has no local emulator: `yarn dev` runs `env.dev`, which uses the remote service in the
   `gitorange-dev` namespace. Tests use `wrangler.test.jsonc` (no remote bindings) plus an in-memory
   Artifacts fake.

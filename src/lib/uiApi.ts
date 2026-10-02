@@ -205,6 +205,27 @@ export type CommitRuns = {
   runs: WorkflowRun[];
 };
 
+export type McpTool = {
+  name: string;
+  title: string;
+  description: string;
+  annotations: { readOnlyHint: boolean; title: string };
+  inputSchema: {
+    properties?: Record<
+      string,
+      { type?: string; description?: string; enum?: string[] }
+    >;
+    required?: string[];
+  };
+};
+export type McpConnection = {
+  clientId: string;
+  name: string;
+  uri: string | null;
+  scopes: string[];
+  connectedAt: string | null;
+};
+
 const r = (owner: string, repo: string) =>
   `/api/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}`;
 const q = (params: Record<string, string | number>) =>
@@ -251,6 +272,12 @@ export const api = {
   saveTeam: (body: { name: string; slug: string }) =>
     apiFetch<{ team: Team }>('/api/team', { method: 'PUT', json: body }),
 
+  mcp: () => apiFetch<{ serverUrl: string; tools: McpTool[] }>('/api/mcp'),
+  mcpConnections: () => apiFetch<McpConnection[]>('/api/mcp/connections'),
+  disconnectMcp: (clientId: string) =>
+    apiFetch(`/api/mcp/connections/${encodeURIComponent(clientId)}`, {
+      method: 'DELETE',
+    }),
   tokens: () => apiFetch<Token[]>('/api/tokens'),
   createToken: (body: { name: string; expiresInDays: number | null }) =>
     apiFetch<{ token: Token; plaintext: string }>('/api/tokens', {
@@ -386,6 +413,8 @@ export const qk = {
   members: ['members'] as const,
   invitations: ['invitations'] as const,
   tokens: ['tokens'] as const,
+  mcp: ['mcp'] as const,
+  mcpConnections: ['mcp', 'connections'] as const,
   namespace: (u: string) => ['namespace', u] as const,
   team: ['team'] as const,
   repo: (o: string, n: string) => ['repo', o, n] as const,
