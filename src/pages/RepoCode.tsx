@@ -1,3 +1,4 @@
+import { useState } from 'react';
 import {
   Link,
   useLocation,
@@ -30,6 +31,7 @@ import { NotFound } from './NotFound';
 
 function QuickSetup({ repo }: { repo: RepoDetail }) {
   const url = repo.cloneUrl;
+  const [agentTab, setAgentTab] = useState<'work' | 'import'>('work');
   const block = (lines: string[]) => (
     <div className="position-relative">
       <pre
@@ -50,7 +52,29 @@ function QuickSetup({ repo }: { repo: RepoDetail }) {
           <h3 className="f4 mb-2 d-flex flex-items-center" style={{ gap: 6 }}>
             <SparkleFillIcon /> Set up with an AI agent
           </h3>
-          <AgentPrompt repo={repo} />
+          <div className="UnderlineNav mb-3" style={{ minHeight: 0 }}>
+            <div className="UnderlineNav-body" role="tablist">
+              {(
+                [
+                  ['work', 'Start a new project'],
+                  ['import', 'Import from GitHub'],
+                ] as const
+              ).map(([key, label]) => (
+                <button
+                  key={key}
+                  type="button"
+                  role="tab"
+                  aria-selected={agentTab === key}
+                  className={`UnderlineNav-item py-1${agentTab === key ? ' selected' : ''}`}
+                  style={{ background: 'none', border: 0, cursor: 'pointer' }}
+                  onClick={() => setAgentTab(key)}
+                >
+                  {label}
+                </button>
+              ))}
+            </div>
+          </div>
+          <AgentPrompt repo={repo} kind={agentTab} />
         </div>
         <div className="Box-row">
           <h3 className="f4 text-normal mb-2">
@@ -101,6 +125,25 @@ function QuickSetup({ repo }: { repo: RepoDetail }) {
             'git branch -M main',
             'git push -u origin main',
           ])}
+        </div>
+        <div className="Box-row">
+          <h3 className="f4 text-normal mb-2">
+            …or import a repository from GitHub on the command line
+          </h3>
+          {block([
+            'git clone --mirror https://github.com/OWNER/REPO.git github-mirror.git',
+            'cd github-mirror.git',
+            'git lfs fetch --all',
+            `git push --all ${url}`,
+            `git push --tags ${url}`,
+            `git lfs push --all ${url}`,
+          ])}
+          <p className="f6 color-fg-muted mt-2 mb-0">
+            Copies every branch, tag, and Git LFS file. To sync again later, run{' '}
+            <code>git fetch --prune origin</code> and{' '}
+            <code>git lfs fetch --all origin</code> in the same folder, then the
+            three push commands.
+          </p>
         </div>
         <div className="Box-row">
           <h3 className="f4 text-normal mb-2">

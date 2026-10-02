@@ -1,17 +1,23 @@
 import { SparkleFillIcon } from '@primer/octicons-react';
 import type { RepoDetail } from '@/lib/uiApi';
-import { agentPrompt } from '@/lib/agentPrompt';
+import { agentPrompt, importFromGitHubPrompt } from '@/lib/agentPrompt';
 import { CopyButton } from './CopyButton';
 
-/** The copy-paste prompt for working on a repository through a coding agent. */
+/**
+ * A copy-paste prompt for a coding agent: `work` sets the repository up locally and helps make
+ * changes; `import` brings an existing GitHub repository (all branches, tags, LFS files) in.
+ */
 export function AgentPrompt({
   repo,
   compact = false,
+  kind = 'work',
 }: {
   repo: RepoDetail;
   compact?: boolean;
+  kind?: 'work' | 'import';
 }) {
-  const prompt = agentPrompt(repo);
+  const prompt =
+    kind === 'import' ? importFromGitHubPrompt(repo) : agentPrompt(repo);
   return (
     <div>
       {!compact && (
@@ -24,9 +30,10 @@ export function AgentPrompt({
           >
             Claude Code
           </a>{' '}
-          or another coding agent, and it will set up the repository on your
-          computer, including Git LFS for large files, then help you make
-          changes and open pull requests.
+          or another coding agent,{' '}
+          {kind === 'import'
+            ? 'and it will copy your GitHub repository here — every branch, tag, and Git LFS file — then either keep it in sync with GitHub or switch your everyday work over.'
+            : 'and it will set up the repository on your computer, including Git LFS for large files, then help you make changes and open pull requests.'}
         </p>
       )}
       <div className="Box">

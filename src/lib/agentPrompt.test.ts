@@ -1,9 +1,10 @@
 import { describe, expect, it } from 'vitest';
-import { agentPrompt } from './agentPrompt';
+import { agentPrompt, importFromGitHubPrompt } from './agentPrompt';
 import type { RepoDetail } from './uiApi';
 
 const repo = (empty: boolean) =>
   ({
+    name: 'engine',
     fullName: 'ada/engine',
     cloneUrl: 'https://git.example.com/ada/engine.git',
     defaultBranch: 'main',
@@ -34,5 +35,29 @@ describe('agentPrompt', () => {
     expect(agentPrompt(repo(false), 'https://git.example.com')).not.toContain(
       'This repository is empty'
     );
+  });
+});
+
+describe('importFromGitHubPrompt', () => {
+  const p = importFromGitHubPrompt(repo(true), 'https://git.example.com');
+
+  it('has the person run both password-prompting commands themselves', () => {
+    expect(p).toContain(
+      '! git clone --mirror <GitHub address> engine-github.git'
+    );
+    expect(p).toContain(
+      '! git -C engine-github.git push --all https://git.example.com/ada/engine.git'
+    );
+    expect(p).not.toMatch(/gop_[0-9a-f]|ghp_/);
+  });
+
+  it('copies tags and LFS files, and never force-pushes', () => {
+    expect(p).toContain('lfs fetch --all');
+    expect(p).toContain('push --tags https://git.example.com/ada/engine.git');
+    expect(p).toContain(
+      'lfs push --all https://git.example.com/ada/engine.git'
+    );
+    expect(p).not.toMatch(/--force|--mirror https:\/\/git\.example/);
+    expect(p).toContain('Never force-push');
   });
 });

@@ -187,6 +187,11 @@ export default function NewRepo() {
           </div>
           <div className="border-top py-3">
             <h3 className="f5 mb-2">Initialize this repository with:</h3>
+            <p className="f6 color-fg-muted mb-2">
+              Moving a project from GitHub? Leave this empty: the next page has
+              step-by-step import instructions, including a prompt for your AI
+              agent.
+            </p>
             <label className="d-flex flex-items-start" style={{ gap: 8 }}>
               <input
                 type="checkbox"
