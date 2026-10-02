@@ -1,10 +1,10 @@
 # Architecture
 
-GitOrange is one Cloudflare Worker with three storage backends.
+GitOrange is one Cloudflare Worker backed by D1, Artifacts, and R2, with Actions jobs running on Cloudflare Workflows and Containers.
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="diagrams/architecture-dark.png">
-  <img alt="Browsers and git clients talk to one GitOrange Cloudflare Worker, which keeps metadata in D1, stores repositories in Cloudflare Artifacts, and sends invitations through Email Sending." src="diagrams/architecture.png">
+  <img alt="Browsers and git clients talk to one GitOrange Cloudflare Worker, which keeps metadata in D1, stores repositories in Cloudflare Artifacts, and sends invitations through Email Sending. Pushes queue GitOrange Actions runs on Cloudflare Workflows, which run each job in a Cloudflare Container and keep step logs in R2." src="diagrams/architecture.png">
 </picture>
 
 The diagram's source is [`diagrams/architecture.html`](diagrams/architecture.html) (light) and [`diagrams/architecture-dark.html`](diagrams/architecture-dark.html) (dark); the PNGs are 2× screenshots of them.

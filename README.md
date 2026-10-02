@@ -75,7 +75,7 @@ Intentionally not here yet: issues, forks, code review comments, and search. See
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="docs/diagrams/architecture-dark.png">
-  <img alt="Browsers and git clients talk to one GitOrange Cloudflare Worker, which serves the API, the web app, and the git endpoint. The Worker keeps metadata in D1, stores every repository in Cloudflare Artifacts, and sends invitations through Email Sending — all inside your Cloudflare account." src="docs/diagrams/architecture.png">
+  <img alt="Browsers and git clients talk to one GitOrange Cloudflare Worker, which serves the API, the web app, and the git endpoint. The Worker keeps metadata in D1, stores every repository in Cloudflare Artifacts, and sends invitations through Email Sending. Pushes queue GitOrange Actions runs on Cloudflare Workflows, which run each job in its own Cloudflare Container and keep step logs in R2 — all inside your Cloudflare account." src="docs/diagrams/architecture.png">
 </picture>
 
 Everything runs as a single Cloudflare Worker — no git server to operate. Git LFS files live in R2 and never pass through the Worker. Git traffic is authenticated with a personal access token, then streamed to Artifacts with a short-lived token scoped to that one repository; merges are computed inside the Worker and pushed back as ordinary git objects. See [Architecture](docs/architecture.md) for the full breakdown.
