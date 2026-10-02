@@ -16,6 +16,9 @@ function createAuth(env?: CloudflareBindings) {
     database: drizzleAdapter(db, {
       provider: 'sqlite',
       usePlural: true,
+      // Explicit so better-auth's startup schema check sees the tables even for the CLI-only
+      // instance below, which has no database to read them from.
+      schema,
     }),
     emailAndPassword: {
       enabled: true,
