@@ -43,13 +43,21 @@ Full docs live in **[docs/](docs/README.md)**: [Setup](docs/setup.md) · [Config
 
 ## Screenshots
 
-**Pull requests** — a conversation with Markdown comments, a merge box that detects conflicts, and merge-commit or squash merges.
+**Pull requests** — a conversation with Markdown comments, CI checks from Actions, a merge box that detects conflicts, and merge-commit or squash merges.
 
 ![Pull request conversation](docs/screenshots/pull-request.jpg)
 
 **Files changed** — per-file unified diffs with diffstats.
 
 ![Files changed](docs/screenshots/files-changed.jpg)
+
+**Actions** — every push and pull request runs your `.github/workflows` files.
+
+![Actions workflow runs](docs/screenshots/actions.jpg)
+
+**Job logs** — step-by-step logs, live while a job runs.
+
+![An Actions job log](docs/screenshots/actions-run.jpg)
 
 **First run** — the first visitor creates the administrator; everyone after that joins by invitation.
 
