@@ -1,0 +1,32 @@
+{
+  // CI-only wrangler config. CI copies it to wrangler.jsonc so `yarn build` can run, and
+  // `yarn cf-typegen` generates worker-configuration.d.ts from it so the tracked types
+  // never contain a deployer's account or resource IDs. Placeholders only — not for deploy.
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "gitorange",
+  "main": "worker/src/index.ts",
+  "compatibility_date": "2026-10-01",
+  "compatibility_flags": ["nodejs_compat"],
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "gitorange-db",
+      "database_id": "00000000-0000-0000-0000-000000000000",
+      "migrations_dir": "migrations"
+    }
+  ],
+  "artifacts": [{ "binding": "ARTIFACTS", "namespace": "gitorange" }],
+  "send_email": [{ "name": "EMAIL" }],
+  "assets": {
+    "binding": "ASSETS",
+    "directory": "./dist/client",
+    "not_found_handling": "single-page-application",
+    "run_worker_first": ["/api/*", "/*/*.git/*", "/*/*.git"]
+  },
+  "observability": { "enabled": true, "head_sampling_rate": 1 },
+  "vars": {
+    "APP_NAME": "GitOrange",
+    "BASE_URL": "http://localhost:8080",
+    "FROM_EMAIL": "noreply@example.com"
+  }
+}

@@ -4,3 +4,7 @@ dist
 .dev.vars
 *.log
 .DS_Store
+
+# Per-deployer wrangler config (template: wrangler.jsonc.example)
+wrangler.jsonc
+.wrangler.jsonc.local-backup

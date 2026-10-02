@@ -1,0 +1,67 @@
+{
+  // Copy this file to wrangler.jsonc and fill in your values (or run /gitorange-onboarding in Claude Code).
+  // wrangler.jsonc is gitignored so each deployer keeps their own account and resource IDs.
+  //
+  // The top level is your PRODUCTION worker (`yarn deploy`).
+  // `env.dev` is what `yarn dev` runs locally: local D1, but Artifacts has no local emulator,
+  // so dev talks to the real service in a separate namespace and never touches production repos.
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "gitorange",
+  "main": "worker/src/index.ts",
+  "account_id": "<your-cloudflare-account-id>",
+  "compatibility_date": "2026-10-01",
+  "compatibility_flags": ["nodejs_compat"],
+
+  // Uncomment to serve on your own domain (the zone must be on Cloudflare):
+  // "routes": [{ "pattern": "git.yourdomain.com", "custom_domain": true }],
+
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "gitorange-db",
+      "database_id": "<your-d1-database-id>",
+      "migrations_dir": "migrations"
+    }
+  ],
+  // Git storage. One Artifacts repo per GitOrange repository, all in this namespace.
+  "artifacts": [{ "binding": "ARTIFACTS", "namespace": "gitorange" }],
+  // Invitation emails. FROM_EMAIL's domain must be onboarded to Cloudflare Email Sending:
+  // https://dash.cloudflare.com/?to=/:account/email-service
+  "send_email": [{ "name": "EMAIL" }],
+  "assets": {
+    "binding": "ASSETS",
+    "directory": "./dist/client",
+    "not_found_handling": "single-page-application",
+    // API, auth, and the git smart-HTTP endpoint (/<owner>/<repo>.git/...) must reach the worker.
+    "run_worker_first": ["/api/*", "/*/*.git/*", "/*/*.git"]
+  },
+  "observability": { "enabled": true, "head_sampling_rate": 1 },
+  "vars": {
+    "APP_NAME": "GitOrange",
+    // Public URL of the instance; used in invite links and auth redirects.
+    "BASE_URL": "https://<your-deployed-host>",
+    "FROM_EMAIL": "noreply@<your-email-sending-domain>"
+  },
+  // BETTER_AUTH_SECRET is a secret: `wrangler secret put BETTER_AUTH_SECRET` (prod) / .dev.vars (dev).
+
+  "env": {
+    "dev": {
+      // Named envs do not inherit bindings; everything the worker needs is repeated here.
+      "d1_databases": [
+        {
+          "binding": "DB",
+          "database_name": "gitorange-db-dev",
+          "database_id": "local",
+          "migrations_dir": "migrations"
+        }
+      ],
+      "artifacts": [{ "binding": "ARTIFACTS", "namespace": "gitorange-dev", "remote": true }],
+      "send_email": [{ "name": "EMAIL" }],
+      "vars": {
+        "APP_NAME": "GitOrange",
+        "BASE_URL": "http://localhost:8080",
+        "FROM_EMAIL": "noreply@<your-email-sending-domain>"
+      }
+    }
+  }
+}

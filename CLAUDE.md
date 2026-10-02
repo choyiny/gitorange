@@ -17,14 +17,25 @@ and better-auth. Git storage is **Cloudflare Artifacts**: one Artifacts repo per
   `worker/src/git/service.ts`) and written as a packfile pushed over `git-receive-pack`
   with compare-and-swap on the base ref.
 - Access: every member reads every repo; owner, site admins, and collaborators push and merge.
-- Artifacts has no local emulator: `yarn dev` uses the remote service (namespace `gitorange-dev`).
-  Tests use `wrangler.test.jsonc` (no remote bindings) plus an in-memory Artifacts fake.
+- Artifacts has no local emulator: `yarn dev` runs `env.dev`, which uses the remote service in the
+  `gitorange-dev` namespace. Tests use `wrangler.test.jsonc` (no remote bindings) plus an in-memory
+  Artifacts fake.
+
+## Configuration files
+
+- `wrangler.jsonc` is **gitignored** — each deployer copies `wrangler.jsonc.example` and fills in their
+  own account and resource IDs. Never commit it, and never put real IDs in the tracked templates.
+- When adding a binding or var, update all of: `wrangler.jsonc.example` (top level **and** `env.dev`),
+  `wrangler.jsonc.ci`, `wrangler.test.jsonc` (if tests need it), and `docs/configuration.md`; then run
+  `yarn cf-typegen` (which generates types from `wrangler.jsonc.ci`, never the local file).
+- Deploying is set up by the `/gitorange-onboarding` skill; keep it and `docs/setup.md` in sync.
 
 ## Git Workflow
 
 - ALL work happens on a new feature branch — never commit directly to `main`.
 - **NEVER push directly to `main`**.
-- **NEVER deploy** (`yarn deploy:production` or any `wrangler deploy`) — deployments are done by humans only.
+- **NEVER deploy** (`yarn deploy` or any `wrangler deploy`) — deployments are done by humans. The one
+  exception is the `/gitorange-onboarding` skill, which a deployer runs and confirms step by step.
 - Submit work as a pull request for human review.
 
 ## Package Manager

@@ -4,18 +4,18 @@
   "version": "0.0.1",
   "type": "module",
   "scripts": {
-    "dev": "vite",
+    "dev": "CLOUDFLARE_ENV=dev vite",
     "build": "vite build",
     "preview": "vite preview",
-    "deploy:production": "CLOUDFLARE_ENV=production vite build && wrangler deploy --minify --env production",
+    "deploy": "vite build && wrangler deploy --minify",
     "typecheck": "tsc --noEmit -p tsconfig.app.json && tsc --noEmit -p worker/tsconfig.json",
-    "cf-typegen": "wrangler types worker/worker-configuration.d.ts --env-interface CloudflareBindings",
+    "cf-typegen": "node scripts/cf-typegen.mjs",
     "auth:generate": "npx --yes @better-auth/cli@latest generate --config worker/src/auth/index.ts --output worker/src/db/auth.schema.ts -y",
     "auth:format": "prettier --write worker/src/db/auth.schema.ts",
     "auth:update": "yarn auth:generate && yarn auth:format",
     "db:generate": "drizzle-kit generate",
-    "db:migrate:local": "wrangler d1 migrations apply DB --local",
-    "db:migrate:prod": "wrangler d1 migrations apply DB --remote --env production",
+    "db:migrate:local": "wrangler d1 migrations apply DB --local --env dev",
+    "db:migrate:prod": "wrangler d1 migrations apply DB --remote",
     "db:studio:dev": "drizzle-kit studio",
     "tail": "wrangler tail --format=pretty",
     "test": "vitest run --config worker/vitest.config.ts",
@@ -66,5 +66,10 @@
   },
   "resolutions": {
     "vite": "^7.3.6"
+  },
+  "license": "Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/choyiny/gitorange.git"
   }
 }

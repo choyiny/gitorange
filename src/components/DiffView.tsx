@@ -14,14 +14,13 @@ function DiffStat({
   deletions: number;
 }) {
   const total = additions + deletions;
-  const greens = total === 0 ? 0 : Math.round((additions / total) * 5);
-  const reds =
-    total === 0
-      ? 0
-      : Math.min(
-          5 - greens,
-          Math.round((deletions / total) * 5) || (deletions ? 1 : 0)
-        );
+  // Five blocks split by ratio; a non-zero side always gets at least one block.
+  let greens = total === 0 ? 0 : Math.round((additions / total) * 5);
+  if (additions && !greens) greens = 1;
+  if (deletions && greens === 5) greens = 4;
+  const reds = deletions
+    ? Math.max(1, Math.min(5 - greens, Math.round((deletions / total) * 5)))
+    : 0;
   return (
     <span className="d-inline-flex flex-items-center" style={{ gap: 4 }}>
       <span className="color-fg-success text-bold">+{additions}</span>

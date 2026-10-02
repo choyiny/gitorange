@@ -28,6 +28,10 @@ jobs:
       - name: Install dependencies
         run: yarn install --frozen-lockfile
 
+      # wrangler.jsonc is gitignored (per-deployer IDs); CI builds from placeholders.
+      - name: Stage wrangler.jsonc from CI config
+        run: cp wrangler.jsonc.ci wrangler.jsonc
+
       # .dev.vars is gitignored; the example holds dev-only placeholder secrets.
       - name: Stage .dev.vars from example
         run: cp .dev.vars.example .dev.vars
