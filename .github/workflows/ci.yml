@@ -1,0 +1,46 @@
+# Verification only — this workflow never deploys. Humans deploy.
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22
+          cache: yarn
+
+      - name: Install dependencies
+        run: yarn install --frozen-lockfile
+
+      # .dev.vars is gitignored; the example holds dev-only placeholder secrets.
+      - name: Stage .dev.vars from example
+        run: cp .dev.vars.example .dev.vars
+
+      # vitest-pool-workers needs assets.directory (dist/client) to exist; the build produces it.
+      - name: Build
+        run: yarn build
+
+      - name: Format check
+        run: yarn format:check
+
+      - name: Typecheck
+        run: yarn typecheck
+
+      - name: Test
+        run: yarn test

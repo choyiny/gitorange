@@ -1,0 +1,315 @@
+@import '@primer/primitives/dist/css/primitives.css';
+@import '@primer/primitives/dist/css/functional/themes/light.css';
+@import '@primer/primitives/dist/css/functional/themes/dark.css';
+@import '@primer/css/dist/primer.css';
+
+body {
+  background-color: var(--bgColor-default);
+  color: var(--fgColor-default);
+  min-height: 100vh;
+}
+
+/* ── App header (GitHub's global nav) ───────────────────────────────────── */
+.AppHeader {
+  background-color: var(--header-bgColor, var(--bgColor-inset));
+  border-bottom: 1px solid var(--borderColor-muted);
+  padding: 16px 16px 0;
+}
+.AppHeader-globalBar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding-bottom: 16px;
+}
+.AppHeader-context {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 14px;
+  min-width: 0;
+}
+.AppHeader-context a {
+  color: var(--fgColor-default);
+  padding: 4px 6px;
+  border-radius: 6px;
+  font-weight: 600;
+}
+.AppHeader-context a:hover {
+  background: var(--control-transparent-bgColor-hover);
+  text-decoration: none;
+}
+.AppHeader-context .sep {
+  color: var(--fgColor-muted);
+}
+.AppHeader-search {
+  min-width: 260px;
+}
+.AppHeader .UnderlineNav {
+  box-shadow: none;
+  min-height: 48px;
+  margin-bottom: -1px;
+}
+.AppHeader-logo {
+  border: 1px solid var(--borderColor-default);
+  border-radius: 6px;
+  width: 32px;
+  height: 32px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+.icon-btn {
+  width: 32px;
+  height: 32px;
+  padding: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+/* ── File listing ───────────────────────────────────────────────────────── */
+.file-table {
+  width: 100%;
+  border-collapse: separate;
+  border-spacing: 0;
+  font-size: 14px;
+  table-layout: fixed;
+}
+.file-table td {
+  padding: 8px 16px;
+  border-top: 1px solid var(--borderColor-muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.file-table tr:hover td {
+  background: var(--bgColor-muted);
+}
+.file-table .col-msg a {
+  color: var(--fgColor-muted);
+}
+.file-table .col-age {
+  text-align: right;
+  color: var(--fgColor-muted);
+  width: 150px;
+}
+.latest-commit {
+  background: var(--bgColor-muted);
+  padding: 12px 16px;
+  font-size: 14px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  border-top-left-radius: 6px;
+  border-top-right-radius: 6px;
+}
+
+/* ── Code & diffs ───────────────────────────────────────────────────────── */
+.blob-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-family: var(--fontStack-monospace);
+  font-size: 12px;
+  line-height: 20px;
+  tab-size: 4;
+}
+.blob-num {
+  width: 1%;
+  min-width: 50px;
+  padding: 0 10px;
+  text-align: right;
+  color: var(--fgColor-muted);
+  user-select: none;
+  vertical-align: top;
+  white-space: nowrap;
+}
+.blob-code {
+  padding: 0 10px;
+  white-space: pre;
+  word-wrap: normal;
+}
+.diff-add .blob-code {
+  background: var(--diffBlob-additionLine-bgColor);
+}
+.diff-add .blob-num {
+  background: var(--diffBlob-additionNum-bgColor);
+}
+.diff-del .blob-code {
+  background: var(--diffBlob-deletionLine-bgColor);
+}
+.diff-del .blob-num {
+  background: var(--diffBlob-deletionNum-bgColor);
+}
+.diff-hunk td {
+  background: var(--diffBlob-hunkLine-bgColor);
+  color: var(--fgColor-muted);
+}
+.diff-hunk .blob-num {
+  background: var(--diffBlob-hunkNum-bgColor-rest);
+}
+.diffstat-block {
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  margin-left: 1px;
+}
+.file-header {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  padding: 5px 10px 5px 16px;
+  background: var(--bgColor-muted);
+  border-bottom: 1px solid var(--borderColor-default);
+  border-top-left-radius: 6px;
+  border-top-right-radius: 6px;
+  font-family: var(--fontStack-monospace);
+  font-size: 12px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+/* ── Timeline (PR conversation) ─────────────────────────────────────────── */
+.TimelineItem-badge {
+  position: relative;
+  z-index: 1;
+}
+.timeline-comment {
+  position: relative;
+  border: 1px solid var(--borderColor-default);
+  border-radius: 6px;
+  background: var(--bgColor-default);
+}
+.timeline-comment-header {
+  padding: 8px 16px;
+  background: var(--bgColor-muted);
+  border-bottom: 1px solid var(--borderColor-default);
+  border-top-left-radius: 6px;
+  border-top-right-radius: 6px;
+  color: var(--fgColor-muted);
+  font-size: 14px;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+.timeline-comment.current-user .timeline-comment-header {
+  background: var(--bgColor-accent-muted);
+  border-bottom-color: var(--borderColor-accent-muted);
+}
+.timeline-comment.current-user {
+  border-color: var(--borderColor-accent-muted);
+}
+.comment-arrow::before,
+.comment-arrow::after {
+  position: absolute;
+  top: 11px;
+  right: 100%;
+  left: -8px;
+  display: block;
+  width: 8px;
+  height: 16px;
+  pointer-events: none;
+  content: ' ';
+  clip-path: polygon(0 50%, 100% 0, 100% 100%);
+  background-color: var(--borderColor-default);
+}
+.comment-arrow::after {
+  margin-left: 1px;
+  background-color: var(--bgColor-muted);
+}
+.timeline-comment.current-user.comment-arrow::before {
+  background-color: var(--borderColor-accent-muted);
+}
+.timeline-comment.current-user.comment-arrow::after {
+  background-color: var(--bgColor-accent-muted);
+}
+.merge-box-icon {
+  width: 40px;
+  height: 40px;
+  border-radius: 6px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--fgColor-onEmphasis);
+  flex-shrink: 0;
+}
+
+/* ── State labels / misc ────────────────────────────────────────────────── */
+.State--merged {
+  background-color: var(--bgColor-done-emphasis);
+}
+.repo-tab-count {
+  margin-left: 6px;
+}
+.hx_avatar {
+  border-radius: 50%;
+}
+.auth-form {
+  width: 340px;
+  margin: 0 auto;
+  padding: 32px 16px;
+}
+.auth-form-body {
+  padding: 16px;
+  font-size: 14px;
+  background-color: var(--bgColor-muted);
+  border: 1px solid var(--borderColor-muted);
+  border-radius: 6px;
+}
+.auth-form-header h1 {
+  font-size: 24px;
+  font-weight: 300;
+  letter-spacing: -0.5px;
+  text-align: center;
+  margin: 16px 0;
+}
+.markdown-body {
+  font-size: 16px;
+}
+.text-mono-sm {
+  font-family: var(--fontStack-monospace);
+  font-size: 12px;
+}
+.select-panel {
+  position: absolute;
+  z-index: 100;
+  width: 300px;
+  margin-top: 4px;
+  background: var(--overlay-bgColor);
+  border: 1px solid var(--borderColor-default);
+  border-radius: 12px;
+  box-shadow: var(--shadow-floating-large);
+  overflow: hidden;
+}
+.select-panel-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 6px 16px;
+  font-size: 14px;
+  color: var(--fgColor-default);
+  text-align: left;
+  background: none;
+  border: 0;
+  cursor: pointer;
+}
+.select-panel-item:hover {
+  background: var(--control-transparent-bgColor-hover);
+  text-decoration: none;
+}
+.ellipsis-expander {
+  display: inline-block;
+  height: 12px;
+  padding: 0 5px 5px;
+  font-size: 12px;
+  font-weight: 600;
+  line-height: 6px;
+  color: var(--fgColor-default);
+  text-decoration: none;
+  vertical-align: middle;
+  background: var(--bgColor-neutral-muted);
+  border: 0;
+  border-radius: 1px;
+  cursor: pointer;
+}

@@ -1,0 +1,30 @@
+// Test-only config: same D1 + assets as wrangler.jsonc, but no remote bindings.
+// Artifacts and Email Sending have no local emulator, so tests inject an in-memory
+// Artifacts fake via app.fetch(req, env) and never open a remote proxy session.
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "gitorange-test",
+  "main": "worker/src/index.ts",
+  // The workerd bundled with @cloudflare/vitest-pool-workers@0.22 supports dates up to 2026-08-22.
+  // Bump to match wrangler.jsonc once the pool ships a newer runtime.
+  "compatibility_date": "2026-08-22",
+  "compatibility_flags": ["nodejs_compat"],
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "gitorange-test",
+      "database_id": "00000000-0000-0000-0000-000000000000",
+      "migrations_dir": "migrations",
+    },
+  ],
+  "assets": {
+    "binding": "ASSETS",
+    "directory": "./dist/client",
+    "not_found_handling": "single-page-application",
+  },
+  "vars": {
+    "APP_NAME": "GitOrange",
+    "FROM_EMAIL": "test@example.com",
+    "BASE_URL": "http://test.local",
+  },
+}
