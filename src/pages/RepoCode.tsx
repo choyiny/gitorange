@@ -12,6 +12,7 @@ import {
   HistoryIcon,
   BookIcon,
   GitBranchIcon,
+  SparkleFillIcon,
 } from '@primer/octicons-react';
 import { api, qk, type Contents, type RepoDetail } from '@/lib/uiApi';
 import { firstLine, formatBytes, shortSha, timeAgo } from '@/lib/format';
@@ -21,6 +22,7 @@ import { ApiError } from '@/lib/api';
 import { Avatar } from '@/components/Avatar';
 import { BranchSelect } from '@/components/BranchSelect';
 import { CloneButton } from '@/components/CloneButton';
+import { AgentPrompt } from '@/components/AgentPrompt';
 import { CopyButton } from '@/components/CopyButton';
 import { Markdown } from '@/components/Markdown';
 import { Spinner } from '@/components/Spinner';
@@ -45,7 +47,13 @@ function QuickSetup({ repo }: { repo: RepoDetail }) {
     <div className="container-xl px-3 px-md-4 px-lg-5 pb-6">
       <div className="Box mb-4">
         <div className="Box-row color-bg-accent">
-          <h3 className="f4 mb-2">
+          <h3 className="f4 mb-2 d-flex flex-items-center" style={{ gap: 6 }}>
+            <SparkleFillIcon /> Set up with an AI agent
+          </h3>
+          <AgentPrompt repo={repo} />
+        </div>
+        <div className="Box-row">
+          <h3 className="f4 text-normal mb-2">
             Quick setup — if you've done this kind of thing before
           </h3>
           <div className="input-group">
@@ -65,8 +73,7 @@ function QuickSetup({ repo }: { repo: RepoDetail }) {
           <p className="f6 color-fg-muted mt-2 mb-0">
             Authenticate with your username and a{' '}
             <Link to="/settings/tokens">personal access token</Link> as the
-            password. Get started by creating a new file or pushing an existing
-            repository.
+            password.
           </p>
         </div>
         <div className="Box-row">
@@ -76,7 +83,9 @@ function QuickSetup({ repo }: { repo: RepoDetail }) {
           {block([
             `echo "# ${repo.name}" >> README.md`,
             'git init',
-            'git add README.md',
+            'git lfs install',
+            'git lfs track "*.psd" "*.zip" "*.mp4"   # large files you plan to commit',
+            'git add .gitattributes README.md',
             'git commit -m "first commit"',
             'git branch -M main',
             `git remote add origin ${url}`,
@@ -92,6 +101,26 @@ function QuickSetup({ repo }: { repo: RepoDetail }) {
             'git branch -M main',
             'git push -u origin main',
           ])}
+        </div>
+        <div className="Box-row">
+          <h3 className="f4 text-normal mb-2">
+            …and store large files with Git LFS
+          </h3>
+          {block([
+            'git lfs install',
+            'git lfs track "*.psd"',
+            'git add .gitattributes',
+            'git commit -m "Track large files with Git LFS"',
+            'git push',
+          ])}
+          <p className="f6 color-fg-muted mt-2 mb-0">
+            Tracked files are stored outside the repository (up to 5 GB each)
+            and shown here with their real size. Requires{' '}
+            <a href="https://git-lfs.com" target="_blank" rel="noreferrer">
+              Git LFS
+            </a>
+            .
+          </p>
         </div>
       </div>
     </div>
@@ -441,7 +470,7 @@ export default function RepoCode() {
           <Breadcrumb repo={repo} refName={data.ref} path={data.path} />
         )}
         <div className="flex-1" />
-        {atRoot && <CloneButton url={repo.cloneUrl} />}
+        {atRoot && <CloneButton repo={repo} />}
       </div>
       <div
         className={atRoot ? 'd-flex flex-column flex-lg-row' : ''}

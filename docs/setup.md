@@ -86,7 +86,7 @@ Then:
 
 ## Using Git LFS
 
-Nothing to configure per repository. With [git-lfs](https://git-lfs.com) installed:
+Nothing to configure per repository. The easiest route for non-developers is the **Set up with an AI agent** prompt on a new repository's page (or **Code → AI agent** on an existing one): paste it into Claude Code and the agent installs and configures Git LFS. By hand, with [git-lfs](https://git-lfs.com) installed:
 
 ```bash
 git lfs install                 # once per machine
