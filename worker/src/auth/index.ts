@@ -3,6 +3,7 @@ import { admin, openAPI, username } from 'better-auth/plugins';
 import { drizzleAdapter } from 'better-auth/adapters/drizzle';
 import { drizzle } from 'drizzle-orm/d1';
 import { schema } from '../db/schema';
+import { isValidUsername } from '../lib/usernames';
 
 function createAuth(env?: CloudflareBindings) {
   // Real DB at runtime; empty object during CLI schema generation (env is undefined).
@@ -28,9 +29,8 @@ function createAuth(env?: CloudflareBindings) {
       username({
         minUsernameLength: 1,
         maxUsernameLength: 39,
-        // GitHub rules: alphanumerics and single hyphens, no leading/trailing hyphen.
-        usernameValidator: (name) =>
-          /^[a-zA-Z0-9](?:[a-zA-Z0-9]|-(?=[a-zA-Z0-9])){0,38}$/.test(name),
+        // Also guards better-auth's own endpoints (update-user), not just our routes.
+        usernameValidator: isValidUsername,
       }),
     ],
     // Database-backed so limits hold across isolates (in-memory state is per-isolate on Workers).
@@ -44,7 +44,8 @@ function createAuth(env?: CloudflareBindings) {
         secure: baseURL.startsWith('https://'),
       },
     },
-    trustedOrigins: [baseURL, 'http://localhost:8080'],
+    // Only the instance's own origin; localhost is trusted only when the instance itself is local.
+    trustedOrigins: [baseURL],
   });
 }
 

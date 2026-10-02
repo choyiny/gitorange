@@ -17,7 +17,8 @@ export const usersRouter = new OpenAPIHono<AppEnv>({
 });
 
 const memberSchema = publicUserSchema.extend({
-  email: z.string(),
+  // Only site admins (and the user themself) see email addresses.
+  email: z.string().nullable(),
   role: z.string(),
   createdAt: z.string(),
 });
@@ -29,6 +30,7 @@ const listRoute = createRoute({
   responses: { ...json200Response(z.array(memberSchema), 'All members') },
 });
 usersRouter.openapi(listRoute, async (c) => {
+  const viewer = c.get('user')!;
   const rows = await c
     .get('db')
     .select()
@@ -38,7 +40,7 @@ usersRouter.openapi(listRoute, async (c) => {
   return c.json(
     rows.map((u) => ({
       ...toPublicUser(u),
-      email: u.email,
+      email: viewer.role === 'admin' || viewer.id === u.id ? u.email : null,
       role: u.role ?? 'user',
       createdAt: u.createdAt.toISOString(),
     })),

@@ -6,7 +6,11 @@ export type User = {
   name: string;
   image: string | null;
 };
-export type Member = User & { email: string; role: string; createdAt: string };
+export type Member = User & {
+  email: string | null;
+  role: string;
+  createdAt: string;
+};
 export type Perms = { read: boolean; write: boolean; admin: boolean };
 export type Repo = {
   id: string;

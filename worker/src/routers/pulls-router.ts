@@ -231,10 +231,11 @@ pullsRouter.openapi(createPullRoute, async (c) => {
   const body = c.req.valid('json');
   if (body.base === body.head)
     return c.json({ error: 'Base and head must be different branches' }, 400);
-  const [baseSha, headSha] = await Promise.all([
-    git.resolve(body.base),
-    git.resolve(body.head),
-  ]);
+  // Both sides must be branch names: resolve() also accepts SHAs and tags, and a merge
+  // pushes to refs/heads/<base>, so a non-branch base would create a stray branch.
+  const refs = await git.refs();
+  const baseSha = refs.get(`refs/heads/${body.base}`);
+  const headSha = refs.get(`refs/heads/${body.head}`);
   if (!baseSha || !headSha) return c.json({ error: 'Branch not found' }, 400);
   if ((await git.mergeBase(baseSha, headSha)) === headSha) {
     return c.json(

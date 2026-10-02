@@ -277,3 +277,36 @@ describe('pull requests', () => {
     ).toBe(403);
   });
 });
+
+describe('hardening', () => {
+  it('rejects pull requests whose base or head is not a branch', async () => {
+    const { t, admin, repo } = await withRepo();
+    const main = repo.refs.get('refs/heads/main')!;
+    await commitFiles(repo, 'feature', { 'x.txt': 'x' }, 'x', [main]);
+    const res = await call(t, '/api/repos/octocat/app/pulls', {
+      cookie: admin,
+      json: { title: 'A', base: main, head: 'feature' },
+    });
+    expect(res.status).toBe(400);
+  });
+
+  it('shows member emails only to site admins and the member themself', async () => {
+    const { t, admin } = await withRepo();
+    const bob = await addMember(t, admin, 'bob');
+    await addMember(t, admin, 'carol');
+    type M = { username: string; email: string | null }[];
+    const asBob = (await (
+      await call(t, '/api/users', { cookie: bob })
+    ).json()) as M;
+    expect(asBob.find((m) => m.username === 'carol')!.email).toBeNull();
+    expect(asBob.find((m) => m.username === 'bob')!.email).toBe(
+      'bob@example.com'
+    );
+    const asAdmin = (await (
+      await call(t, '/api/users', { cookie: admin })
+    ).json()) as M;
+    expect(asAdmin.find((m) => m.username === 'carol')!.email).toBe(
+      'carol@example.com'
+    );
+  });
+});

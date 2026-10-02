@@ -145,3 +145,29 @@ describe('invitations', () => {
     expect(res.status).toBe(409);
   });
 });
+
+describe('usernames', () => {
+  it('rejects renaming to a reserved username through better-auth', async () => {
+    const t = makeEnv();
+    const cookie = await bootstrapAdmin(t);
+    const res = await call(t, '/api/auth/update-user', {
+      cookie,
+      json: { username: 'settings' },
+    });
+    expect(res.ok).toBe(false);
+    const session = (await (
+      await call(t, '/api/auth/get-session', { cookie })
+    ).json()) as { user: { username: string } };
+    expect(session.user.username).toBe('octocat');
+  });
+
+  it('still allows renaming to an ordinary username', async () => {
+    const t = makeEnv();
+    const cookie = await bootstrapAdmin(t);
+    const res = await call(t, '/api/auth/update-user', {
+      cookie,
+      json: { username: 'hubot' },
+    });
+    expect(res.ok).toBe(true);
+  });
+});

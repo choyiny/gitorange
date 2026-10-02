@@ -137,4 +137,22 @@ describe('git smart-HTTP proxy', () => {
       ).status
     ).toBe(401);
   });
+
+  it('only allows GET for the ref advertisement and POST for pack exchanges', async () => {
+    const { t, admin } = await setup();
+    const token = await pat(t, admin);
+    expect(
+      (
+        await git(
+          t,
+          '/octocat/app.git/info/refs?service=git-upload-pack',
+          token,
+          'POST'
+        )
+      ).status
+    ).toBe(405);
+    expect(
+      (await git(t, '/octocat/app.git/git-upload-pack', token, 'GET')).status
+    ).toBe(405);
+  });
 });

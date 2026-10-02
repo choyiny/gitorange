@@ -2,6 +2,7 @@ import { OpenAPIHono, createRoute, z } from '@hono/zod-openapi';
 import { sql } from 'drizzle-orm';
 import { users } from '../db/auth.schema';
 import type { DrizzleDB } from '../db/middleware';
+import { USERNAME_RE, isReservedUsername } from '../lib/usernames';
 import type { AppEnv } from '../variables';
 import {
   json200Response,
@@ -23,32 +24,15 @@ export async function countUsers(db: DrizzleDB) {
   return Number(r?.count ?? 0);
 }
 
-// First path segments the SPA and worker already own; a user with one of these names would be unreachable.
-export const RESERVED_USERNAMES = new Set([
-  'admin',
-  'api',
-  'invite',
-  'login',
-  'logout',
-  'new',
-  'settings',
-  'setup',
-  'assets',
-  'favicon.svg',
-]);
-
 export const usernameSchema = z
   .string()
   .min(1)
   .max(39)
   .regex(
-    /^[a-zA-Z0-9](?:[a-zA-Z0-9]|-(?=[a-zA-Z0-9]))*$/,
+    USERNAME_RE,
     'Username may only contain alphanumeric characters or single hyphens, and cannot begin or end with a hyphen.'
   )
-  .refine(
-    (u) => !RESERVED_USERNAMES.has(u.toLowerCase()),
-    'Username is reserved.'
-  );
+  .refine((u) => !isReservedUsername(u), 'Username is reserved.');
 
 const statusRoute = createRoute({
   method: 'get',

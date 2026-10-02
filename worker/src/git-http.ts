@@ -91,6 +91,14 @@ export async function handleGitRequest(
   if (service !== 'git-upload-pack' && service !== 'git-receive-pack') {
     return new Response('Unsupported service\n', { status: 403 });
   }
+  // Smart HTTP has exactly two shapes: GET the ref advertisement, POST a pack exchange.
+  const expectedMethod = endpoint === 'info/refs' ? 'GET' : 'POST';
+  if (request.method !== expectedMethod) {
+    return new Response('Method not allowed\n', {
+      status: 405,
+      headers: { Allow: expectedMethod },
+    });
+  }
   const isPush = service === 'git-receive-pack';
   if (isPush && !perms.write) {
     return new Response(
