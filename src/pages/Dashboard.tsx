@@ -8,12 +8,15 @@ import { timeAgo } from '@/lib/format';
 import { Header } from '@/components/Header';
 import { Avatar } from '@/components/Avatar';
 import { Spinner } from '@/components/Spinner';
+import { VisibilityLabel } from '@/components/VisibilityLabel';
 
 export default function Dashboard() {
   const user = useCurrentUser()!;
   const repos = useQuery({ queryKey: qk.repos, queryFn: api.repos });
   const [filter, setFilter] = useState('');
-  const mine = (repos.data ?? []).filter((r) => r.owner.id === user.id);
+  const mine = (repos.data ?? []).filter(
+    (r) => r.owner.id === user.id || r.ownerType === 'team'
+  );
   const shownMine = mine.filter((r) =>
     r.fullName.toLowerCase().includes(filter.toLowerCase())
   );
@@ -52,7 +55,11 @@ export default function Dashboard() {
                 className="d-flex flex-items-center py-1"
                 style={{ gap: 8 }}
               >
-                <Avatar user={r.owner} size={16} />
+                <Avatar
+                  user={r.owner}
+                  size={16}
+                  square={r.ownerType === 'team'}
+                />
                 <Link
                   to={`/${r.fullName}`}
                   className="color-fg-default f5 text-truncate"
@@ -113,11 +120,19 @@ export default function Dashboard() {
                   className="Box-row d-flex flex-items-start"
                   style={{ gap: 12 }}
                 >
-                  <Avatar user={r.owner} size={32} />
+                  <Avatar
+                    user={r.owner}
+                    size={32}
+                    square={r.ownerType === 'team'}
+                  />
                   <div className="flex-1" style={{ minWidth: 0 }}>
                     <Link to={`/${r.fullName}`} className="text-bold f5">
                       {r.fullName}
                     </Link>
+                    <VisibilityLabel
+                      visibility={r.visibility}
+                      className="ml-2 v-align-middle"
+                    />
                     {r.description && (
                       <p className="color-fg-muted f6 mb-0 mt-1">
                         {r.description}

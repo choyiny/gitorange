@@ -12,9 +12,13 @@ export type Member = User & {
   createdAt: string;
 };
 export type Perms = { read: boolean; write: boolean; admin: boolean };
+export type Visibility = 'private' | 'internal';
 export type Repo = {
   id: string;
+  /** The user or the team the repository lives under (`owner.username` is the URL segment). */
   owner: User;
+  ownerType: 'user' | 'team';
+  visibility: Visibility;
   name: string;
   fullName: string;
   description: string | null;
@@ -135,6 +139,17 @@ export type Invitation = {
   expiresAt: string;
   createdAt: string;
 };
+export type Team = {
+  id: string;
+  slug: string;
+  name: string;
+  createdAt: string;
+};
+export type Namespace = {
+  kind: 'user' | 'team';
+  owner: User & { createdAt: string };
+  repositories: Repo[];
+};
 export type Token = {
   id: string;
   name: string;
@@ -183,10 +198,11 @@ export const api = {
     apiFetch(`/api/invites/manage/${id}`, { method: 'DELETE' }),
 
   members: () => apiFetch<Member[]>('/api/users'),
-  profile: (username: string) =>
-    apiFetch<{ user: User & { createdAt: string }; repositories: Repo[] }>(
-      `/api/users/${encodeURIComponent(username)}`
-    ),
+  namespace: (slug: string) =>
+    apiFetch<Namespace>(`/api/namespaces/${encodeURIComponent(slug)}`),
+  team: () => apiFetch<{ team: Team | null }>('/api/team'),
+  saveTeam: (body: { name: string; slug: string }) =>
+    apiFetch<{ team: Team }>('/api/team', { method: 'PUT', json: body }),
 
   tokens: () => apiFetch<Token[]>('/api/tokens'),
   createToken: (body: { name: string; expiresInDays: number | null }) =>
@@ -202,12 +218,19 @@ export const api = {
     name: string;
     description?: string;
     addReadme: boolean;
+    owner: 'user' | 'team';
+    visibility: Visibility;
   }) => apiFetch<Repo>('/api/repos', { method: 'POST', json: body }),
   repo: (o: string, n: string) => apiFetch<RepoDetail>(r(o, n)),
   updateRepo: (
     o: string,
     n: string,
-    body: { name?: string; description?: string | null; defaultBranch?: string }
+    body: {
+      name?: string;
+      description?: string | null;
+      defaultBranch?: string;
+      visibility?: Visibility;
+    }
   ) => apiFetch<Repo>(r(o, n), { method: 'PATCH', json: body }),
   deleteRepo: (o: string, n: string) => apiFetch(r(o, n), { method: 'DELETE' }),
   collaborators: (o: string, n: string) =>
@@ -282,7 +305,8 @@ export const qk = {
   members: ['members'] as const,
   invitations: ['invitations'] as const,
   tokens: ['tokens'] as const,
-  profile: (u: string) => ['profile', u] as const,
+  namespace: (u: string) => ['namespace', u] as const,
+  team: ['team'] as const,
   repo: (o: string, n: string) => ['repo', o, n] as const,
   contents: (o: string, n: string, refPath: string) =>
     ['repo', o, n, 'contents', refPath] as const,

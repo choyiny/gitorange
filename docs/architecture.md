@@ -62,7 +62,14 @@ In the web UI, a file whose blob is an LFS pointer shows the real size, an image
 
 ## Access model
 
-Every signed-in member can read every repository. The owner, site admins, and repository collaborators can push, open pull requests, and merge. Any member can comment.
+Repositories live in one of two namespaces, which share the URL space:
+
+- **Personal** (`/<username>/<repo>`): `private` by default (the owner, collaborators, and site admins can see it) or `internal` (every member can read it). The owner switches between the two in settings.
+- **Team** (`/<team slug>/<repo>`): owned by the instance's single shared team, which a site admin creates and renames in Site admin. Always `internal`.
+
+Usernames and the team slug can't collide; both directions are checked, including renames through better-auth's own endpoints.
+
+Site admins and a repository's owner (or, for a team repository, its creator) can do everything. Collaborators can read, push, open pull requests, and merge. Every other member can read what's visible to them and comment. The same rules govern the web UI, listings, the git endpoint, and Git LFS; a repository a user can't see answers 404 rather than 403, so its existence isn't revealed.
 
 ## Authentication
 

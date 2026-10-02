@@ -16,6 +16,7 @@ import { api, qk, type RepoDetail } from '@/lib/uiApi';
 import { ApiError } from '@/lib/api';
 import { Header } from './Header';
 import { Spinner } from './Spinner';
+import { VisibilityLabel } from './VisibilityLabel';
 import { NotFound } from '@/pages/NotFound';
 
 export function useRepoParams() {
@@ -105,6 +106,7 @@ export function RepoLayout() {
             <div className="UnderlineNav-body">
               <NavLink
                 to={base}
+                end
                 className={() =>
                   `UnderlineNav-item${codeActive ? ' selected' : ''}`
                 }
@@ -148,7 +150,7 @@ export function RepoLayout() {
                     {repo}
                   </Link>
                 </strong>
-                <span className="Label Label--secondary">Internal</span>
+                <VisibilityLabel visibility={data.visibility} />
               </div>
             </div>
             <Outlet context={data satisfies RepoDetail} />

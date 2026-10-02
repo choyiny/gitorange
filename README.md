@@ -63,7 +63,8 @@ Full docs live in **[docs/](docs/README.md)**: [Setup](docs/setup.md) · [Config
 - **Git over HTTPS** — `git clone https://your-host/<owner>/<repo>.git` with a personal access token as the password.
 - **Git LFS** — large files are stored in Cloudflare R2 and transferred directly between `git lfs` and R2 through short-lived signed URLs (up to 5 GB per file). The web UI shows, previews, and downloads LFS files.
 - **Pull requests** — open, comment, close, and reopen; view commits and files changed; merge with a merge commit or squash; delete the branch after merging.
-- **Access control** — every member can read every repository; the owner, site admins, and collaborators added in repository settings can push and merge.
+- **Personal and team repositories** — personal repositories (`/<you>/<repo>`) are private by default: only you, collaborators you add, and site admins can see them, and you can make one internal so every member can read it. Repositories under the shared team (`/<team>/<repo>`, created by a site admin) are visible to every member.
+- **Access control** — the owner (or a team repository's creator), site admins, and collaborators added in repository settings can push and merge; other members can read what they can see and comment.
 
 Intentionally not here yet: issues, forks, code review comments, Actions, and search. See the [roadmap](#roadmap).
 

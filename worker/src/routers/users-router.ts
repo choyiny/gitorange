@@ -1,16 +1,14 @@
 import { OpenAPIHono, createRoute, z } from '@hono/zod-openapi';
-import { asc, desc, eq } from 'drizzle-orm';
-import { repositories } from '../db/app.schema';
+import { asc } from 'drizzle-orm';
 import { users } from '../db/auth.schema';
-import { toPublicUser, userByUsername } from '../lib/users';
+import { toPublicUser } from '../lib/users';
 import type { AppEnv } from '../variables';
 import {
   json200Response,
   json404Response,
   validationHook,
 } from './openapi-helpers';
-import { publicUserSchema, repoSchema } from './schemas';
-import { serializeRepo } from './repos-router';
+import { publicUserSchema } from './schemas';
 
 export const usersRouter = new OpenAPIHono<AppEnv>({
   defaultHook: validationHook,
@@ -44,42 +42,6 @@ usersRouter.openapi(listRoute, async (c) => {
       role: u.role ?? 'user',
       createdAt: u.createdAt.toISOString(),
     })),
-    200
-  );
-});
-
-const profileRoute = createRoute({
-  method: 'get',
-  path: '/{username}',
-  tags: ['Users'],
-  request: { params: z.object({ username: z.string() }) },
-  responses: {
-    ...json200Response(
-      z.object({
-        user: publicUserSchema.extend({ createdAt: z.string() }),
-        repositories: z.array(repoSchema),
-      }),
-      'Profile'
-    ),
-    ...json404Response,
-  },
-});
-usersRouter.openapi(profileRoute, async (c) => {
-  const db = c.get('db');
-  const user = await userByUsername(db, c.req.valid('param').username);
-  if (!user) return c.json({ error: 'Not Found' }, 404);
-  const repos = await db
-    .select()
-    .from(repositories)
-    .where(eq(repositories.ownerId, user.id))
-    .orderBy(desc(repositories.updatedAt))
-    .all();
-  const owner = toPublicUser(user);
-  return c.json(
-    {
-      user: { ...owner, createdAt: user.createdAt.toISOString() },
-      repositories: repos.map((r) => serializeRepo(r, owner)),
-    },
     200
   );
 });

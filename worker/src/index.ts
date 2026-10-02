@@ -12,6 +12,7 @@ import { reposRouter } from './routers/repos-router';
 import { setupRouter } from './routers/setup-router';
 import { tokensRouter } from './routers/tokens-router';
 import { usersRouter } from './routers/users-router';
+import { namespacesRouter, teamRouter } from './routers/teams-router';
 import type { AppEnv } from './variables';
 
 const app = new OpenAPIHono<AppEnv>();
@@ -40,6 +41,10 @@ app.route('/api/repos', pullsRouter);
 app.use('/api/users/*', requireAuth);
 app.use('/api/users', requireAuth);
 app.route('/api/users', usersRouter);
+app.use('/api/team', requireAuth);
+app.route('/api/team', teamRouter);
+app.use('/api/namespaces/*', requireAuth);
+app.route('/api/namespaces', namespacesRouter);
 app.use('/api/tokens/*', requireAuth);
 app.use('/api/tokens', requireAuth);
 app.route('/api/tokens', tokensRouter);

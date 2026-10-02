@@ -3,6 +3,7 @@ import { and, desc, eq, isNull } from 'drizzle-orm';
 import { invitations } from '../db/app.schema';
 import { users } from '../db/auth.schema';
 import { sendInviteEmail } from '../lib/email';
+import { namespaceTaken } from '../lib/namespaces';
 import { hashToken, randomToken } from '../lib/tokens';
 import { requireAdmin } from '../auth/guards';
 import type { AppEnv } from '../variables';
@@ -214,11 +215,8 @@ invitesRouter.openapi(acceptRoute, async (c) => {
   const invite = await findValidInvite(db, body.token);
   if (!invite)
     return c.json({ error: 'This invitation is invalid or has expired' }, 400);
-  const taken = await db
-    .select({ id: users.id })
-    .from(users)
-    .where(eq(users.username, body.username.toLowerCase()))
-    .get();
+  // Usernames share the URL namespace with the team slug.
+  const taken = await namespaceTaken(db, body.username);
   if (taken)
     return c.json(
       { error: `Username ${body.username} is not available.` },

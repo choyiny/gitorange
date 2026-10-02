@@ -4,6 +4,8 @@ import { drizzleAdapter } from 'better-auth/adapters/drizzle';
 import { drizzle } from 'drizzle-orm/d1';
 import { schema } from '../db/schema';
 import { isValidUsername } from '../lib/usernames';
+import { APIError } from 'better-auth/api';
+import { namespaceTaken } from '../lib/namespaces';
 
 function createAuth(env?: CloudflareBindings) {
   // Real DB at runtime; empty object during CLI schema generation (env is undefined).
@@ -38,6 +40,27 @@ function createAuth(env?: CloudflareBindings) {
     ],
     // Database-backed so limits hold across isolates (in-memory state is per-isolate on Workers).
     rateLimit: { enabled: true, storage: 'database' },
+    databaseHooks: {
+      user: {
+        update: {
+          // Usernames share the URL namespace with the team slug; better-auth only checks users.
+          before: async (data, ctx) => {
+            const username = (data as { username?: string }).username;
+            const userId = ctx?.context.session?.user.id;
+            if (
+              username &&
+              env &&
+              (await namespaceTaken(db, username, { userId }))
+            ) {
+              throw new APIError('BAD_REQUEST', {
+                message: 'Username is not available.',
+              });
+            }
+            return { data };
+          },
+        },
+      },
+    },
     advanced: {
       cookiePrefix: 'gitorange',
       ipAddress: { ipAddressHeaders: ['cf-connecting-ip'] },

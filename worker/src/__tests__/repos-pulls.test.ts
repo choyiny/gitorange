@@ -7,7 +7,12 @@ async function withRepo() {
   const admin = await bootstrapAdmin(t);
   const res = await call(t, '/api/repos', {
     cookie: admin,
-    json: { name: 'app', description: 'demo', addReadme: true },
+    json: {
+      name: 'app',
+      description: 'demo',
+      addReadme: true,
+      visibility: 'internal',
+    },
   });
   expect(res.status).toBe(201);
   const repo = [...t.fake.repos.values()][0];

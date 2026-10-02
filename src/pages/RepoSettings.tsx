@@ -38,6 +38,19 @@ export default function RepoSettings() {
     },
     onError: (e) => setFlash({ kind: 'error', text: errorMessage(e) }),
   });
+  const changeVisibility = useMutation({
+    mutationFn: (visibility: 'private' | 'internal') =>
+      api.updateRepo(o, repo.name, { visibility }),
+    onSuccess: async (r) => {
+      setFlash({
+        kind: 'success',
+        text: `This repository is now ${r.visibility}.`,
+      });
+      await qc.invalidateQueries({ queryKey: ['repo', o] });
+      await qc.invalidateQueries({ queryKey: qk.repos });
+    },
+    onError: (e) => setFlash({ kind: 'error', text: errorMessage(e) }),
+  });
   const addCollab = useMutation({
     mutationFn: (u: string) => api.addCollaborator(o, repo.name, u),
     onSuccess: () => {
@@ -140,8 +153,9 @@ export default function RepoSettings() {
         <div className="Subhead mt-6" id="access">
           <h2 className="Subhead-heading">Collaborators</h2>
           <div className="Subhead-description">
-            Every member can read this repository. Collaborators can also push
-            branches and merge pull requests.
+            {repo.visibility === 'private'
+              ? 'Collaborators can see this private repository, push branches, and merge pull requests.'
+              : 'Every member can read this repository. Collaborators can also push branches and merge pull requests.'}
           </div>
         </div>
         <div className="Box mb-3">
@@ -196,6 +210,32 @@ export default function RepoSettings() {
             Add collaborator
           </button>
         </form>
+
+        <div className="Subhead mt-6" id="visibility">
+          <h2 className="Subhead-heading">Visibility</h2>
+          <div className="Subhead-description">
+            {repo.ownerType === 'team'
+              ? 'Team repositories are always visible to every member.'
+              : repo.visibility === 'private'
+                ? 'Private: only you, collaborators, and site admins can see this repository.'
+                : 'Internal: every member of this instance can see this repository.'}
+          </div>
+        </div>
+        {repo.ownerType === 'user' && (
+          <div className="mb-6">
+            <button
+              className="btn"
+              disabled={changeVisibility.isPending}
+              onClick={() =>
+                changeVisibility.mutate(
+                  repo.visibility === 'private' ? 'internal' : 'private'
+                )
+              }
+            >
+              {repo.visibility === 'private' ? 'Make internal' : 'Make private'}
+            </button>
+          </div>
+        )}
 
         <div className="Subhead">
           <h2 className="Subhead-heading color-fg-danger">Danger Zone</h2>

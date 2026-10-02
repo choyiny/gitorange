@@ -43,14 +43,17 @@ export function Avatar({
   user,
   size = 20,
   className = '',
+  square = false,
 }: {
   user: { username: string; image?: string | null };
   size?: number;
   className?: string;
+  /** Teams get GitHub's rounded-square organization avatar; people get a circle. */
+  square?: boolean;
 }) {
   return (
     <span
-      className={`avatar avatar-user ${className}`}
+      className={`avatar ${square ? '' : 'avatar-user'} ${className}`}
       style={{
         width: size,
         height: size,

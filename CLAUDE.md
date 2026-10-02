@@ -16,7 +16,10 @@ and better-auth. Git storage is **Cloudflare Artifacts**: one Artifacts repo per
   from the smart-HTTP ref advertisement. Merges are computed in the worker (three-way tree merge in
   `worker/src/git/service.ts`) and written as a packfile pushed over `git-receive-pack`
   with compare-and-swap on the base ref.
-- Access: every member reads every repo; owner, site admins, and collaborators push and merge.
+- Access (`worker/src/lib/repos.ts` — `permissionsFor` and the list filter `visibleTo` must agree): personal repos are
+  private (owner, collaborators, site admins) or internal; team repos (`repositories.team_id`, one shared `teams` row) are
+  always internal. Owner/creator, site admins, and collaborators push and merge. Usernames and the team slug share the URL
+  namespace (`worker/src/lib/namespaces.ts`).
 - Git LFS (`worker/src/lfs-http.ts`, `worker/src/lib/lfs.ts`): Batch API at `/<owner>/<repo>.git/info/lfs/...`,
   sharing the git endpoint's auth. Bytes go client ↔ R2 directly via pre-signed URLs (needs the
   `R2_ACCESS_KEY_ID`/`R2_SECRET_ACCESS_KEY` secrets); D1 `lfs_objects` holds bare R2 keys, never URLs. One copy

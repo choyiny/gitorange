@@ -12,6 +12,7 @@ const TABLES = [
   'pull_requests',
   'repository_collaborators',
   'repositories',
+  'teams',
   'personal_access_tokens',
   'invitations',
   'sessions',

@@ -66,7 +66,7 @@ async function setup() {
   const admin = await bootstrapAdmin(t);
   await call(t, '/api/repos', {
     cookie: admin,
-    json: { name: 'app', addReadme: true },
+    json: { name: 'app', addReadme: true, visibility: 'internal' },
   });
   const repoId = [...t.fake.repos.values()][0].name.slice(2);
   return { t, admin, token: await pat(t, admin), repoId };

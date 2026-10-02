@@ -4,6 +4,7 @@ import {
   lfsObjects,
   pullRequests,
   repositories,
+  teams,
   repositoryCollaborators,
   type Repository,
 } from '../db/app.schema';
@@ -12,9 +13,14 @@ import { decoder } from '../git/bytes';
 import type { GitService } from '../git/service';
 import {
   REPO_NAME_RE,
+  getTeam,
   gitFor,
   loadRepo,
   normalizeRepoName,
+  teamNamespace,
+  userNamespace,
+  visibleTo,
+  type Namespace,
   type RepoEnv,
 } from '../lib/repos';
 import {
@@ -48,17 +54,38 @@ import {
 
 const MAX_FILE_VIEW = 1024 * 1024;
 
-export function serializeRepo(r: Repository, owner: PublicUser) {
+export function serializeRepo(r: Repository, ns: Namespace) {
   return {
     id: r.id,
-    owner,
+    owner: { id: ns.id, username: ns.username, name: ns.name, image: ns.image },
+    ownerType: ns.kind,
+    visibility: r.visibility,
     name: r.name,
-    fullName: `${owner.username}/${r.name}`,
+    fullName: `${ns.username}/${r.name}`,
     description: r.description,
     defaultBranch: r.defaultBranch,
     createdAt: r.createdAt.toISOString(),
     updatedAt: r.updatedAt.toISOString(),
   };
+}
+
+/** The same name may exist once per namespace: per user for personal repos, per team for team repos. */
+async function nameTaken(
+  db: RepoEnv['Variables']['db'],
+  repo: { ownerId: string; teamId: string | null },
+  name: string
+) {
+  const scope = repo.teamId
+    ? eq(repositories.teamId, repo.teamId)
+    : and(
+        eq(repositories.ownerId, repo.ownerId),
+        sql`${repositories.teamId} IS NULL`
+      );
+  return !!(await db
+    .select({ id: repositories.id })
+    .from(repositories)
+    .where(and(scope, eq(repositories.name, name)))
+    .get());
 }
 
 /** Splits "feature/x/src/a.ts" into the longest matching branch name and the remaining path. */
@@ -98,13 +125,20 @@ const listRoute = createRoute({
 reposRouter.openapi(listRoute, async (c) => {
   const db = c.get('db');
   const rows = await db
-    .select({ repo: repositories, owner: users })
+    .select({ repo: repositories, owner: users, team: teams })
     .from(repositories)
     .innerJoin(users, eq(users.id, repositories.ownerId))
+    .leftJoin(teams, eq(teams.id, repositories.teamId))
+    .where(visibleTo(c.get('user')!))
     .orderBy(desc(repositories.updatedAt))
     .all();
   return c.json(
-    rows.map((r) => serializeRepo(r.repo, toPublicUser(r.owner))),
+    rows.map((r) =>
+      serializeRepo(
+        r.repo,
+        r.team ? teamNamespace(r.team) : userNamespace(r.owner)
+      )
+    ),
     200
   );
 });
@@ -121,6 +155,9 @@ const createRepoRoute = createRoute({
             name: z.string().min(1).max(100),
             description: z.string().max(350).optional(),
             addReadme: z.boolean().default(false),
+            // Personal repos default to private; team repos are always visible to every member.
+            owner: z.enum(['user', 'team']).default('user'),
+            visibility: z.enum(['private', 'internal']).default('private'),
           }),
         },
       },
@@ -145,19 +182,31 @@ reposRouter.openapi(createRepoRoute, async (c) => {
   ) {
     return c.json({ error: 'Repository name is invalid' }, 400);
   }
-  const dupe = await db
-    .select({ id: repositories.id })
-    .from(repositories)
-    .where(and(eq(repositories.ownerId, user.id), eq(repositories.name, name)))
-    .get();
-  if (dupe)
-    return c.json({ error: 'Name already exists on this account' }, 409);
+  const team = body.owner === 'team' ? await getTeam(db) : null;
+  if (body.owner === 'team' && !team)
+    return c.json(
+      {
+        error:
+          'There is no team yet. A site admin can create one in Site admin.',
+      },
+      400
+    );
+  if (await nameTaken(db, { ownerId: user.id, teamId: team?.id ?? null }, name))
+    return c.json(
+      {
+        error: `${team ? team.name : 'You'} already ${team ? 'has' : 'have'} a repository named ${name}`,
+      },
+      409
+    );
+  const ns = team ? teamNamespace(team) : userNamespace(user);
 
   const id = crypto.randomUUID();
   const now = new Date();
   const row: Repository = {
     id,
     ownerId: user.id,
+    teamId: team?.id ?? null,
+    visibility: team ? 'internal' : body.visibility,
     name,
     description: body.description?.trim() || null,
     defaultBranch: 'main',
@@ -169,7 +218,7 @@ reposRouter.openapi(createRepoRoute, async (c) => {
   // Storage first: if the D1 insert then fails, roll the Artifacts repo back.
   await c.env.ARTIFACTS.create(row.artifactsName, {
     setDefaultBranch: 'main',
-    description: `${user.username}/${name}`,
+    description: `${ns.username}/${name}`,
   });
   try {
     await db.insert(repositories).values(row);
@@ -190,7 +239,7 @@ reposRouter.openapi(createRepoRoute, async (c) => {
       'Initial commit'
     );
   }
-  return c.json(serializeRepo(row, toPublicUser(user)), 201);
+  return c.json(serializeRepo(row, ns), 201);
 });
 
 // ── one repo ─────────────────────────────────────────────────────────────────
@@ -215,7 +264,7 @@ const getRepoRoute = createRoute({
 });
 reposRouter.openapi(getRepoRoute, async (c) => {
   const repo = c.get('repo');
-  const owner = toPublicUser(c.get('repoOwner'));
+  const ns = c.get('namespace');
   const branches = await c.get('git').branches();
   const open = await c
     .get('db')
@@ -230,9 +279,9 @@ reposRouter.openapi(getRepoRoute, async (c) => {
     .get();
   return c.json(
     {
-      ...serializeRepo(repo, owner),
+      ...serializeRepo(repo, ns),
       permissions: c.get('perms'),
-      cloneUrl: `${new URL(c.req.url).origin}/${owner.username}/${repo.name}.git`,
+      cloneUrl: `${new URL(c.req.url).origin}/${ns.username}/${repo.name}.git`,
       empty: branches.length === 0,
       branches,
       openPullCount: Number(open?.n ?? 0),
@@ -254,6 +303,7 @@ const updateRepoRoute = createRoute({
             name: z.string().min(1).max(100).optional(),
             description: z.string().max(350).nullable().optional(),
             defaultBranch: z.string().min(1).optional(),
+            visibility: z.enum(['private', 'internal']).optional(),
           }),
         },
       },
@@ -278,29 +328,27 @@ reposRouter.openapi(updateRepoRoute, async (c) => {
     const name = normalizeRepoName(body.name);
     if (!REPO_NAME_RE.test(name))
       return c.json({ error: 'Repository name is invalid' }, 400);
-    const dupe = await db
-      .select({ id: repositories.id })
-      .from(repositories)
-      .where(
-        and(eq(repositories.ownerId, repo.ownerId), eq(repositories.name, name))
-      )
-      .get();
-    if (dupe)
-      return c.json({ error: 'Name already exists on this account' }, 409);
+    if (await nameTaken(db, repo, name))
+      return c.json({ error: 'Name already exists in this namespace' }, 409);
     patch.name = name;
   }
   if (body.description !== undefined)
     patch.description = body.description?.trim() || null;
+  if (body.visibility !== undefined && body.visibility !== repo.visibility) {
+    if (repo.teamId)
+      return c.json(
+        { error: 'Team repositories are always visible to every member' },
+        400
+      );
+    patch.visibility = body.visibility;
+  }
   if (body.defaultBranch !== undefined) {
     if (!(await c.get('git').resolve(body.defaultBranch)))
       return c.json({ error: 'Branch not found' }, 400);
     patch.defaultBranch = body.defaultBranch;
   }
   await db.update(repositories).set(patch).where(eq(repositories.id, repo.id));
-  return c.json(
-    serializeRepo({ ...repo, ...patch }, toPublicUser(c.get('repoOwner'))),
-    200
-  );
+  return c.json(serializeRepo({ ...repo, ...patch }, c.get('namespace')), 200);
 });
 
 const deleteRepoRoute = createRoute({

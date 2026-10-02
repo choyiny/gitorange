@@ -21,6 +21,8 @@ export const repoSchema = z
     owner: publicUserSchema,
     name: z.string(),
     fullName: z.string(),
+    ownerType: z.enum(['user', 'team']),
+    visibility: z.enum(['private', 'internal']),
     description: z.string().nullable(),
     defaultBranch: z.string(),
     createdAt: z.string(),

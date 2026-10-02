@@ -6,15 +6,32 @@ import {
   uniqueIndex,
   primaryKey,
 } from 'drizzle-orm/sqlite-core';
+import { sql } from 'drizzle-orm';
 import { users } from './auth.schema';
+
+// The instance's one shared team. Its slug shares the URL namespace with usernames
+// (`/<slug>/<repo>`), so the two must never collide. Created by an admin in Site admin.
+export const teams = sqliteTable('teams', {
+  id: text('id').primaryKey(),
+  slug: text('slug').notNull().unique(),
+  name: text('name').notNull(),
+  createdAt: integer('created_at', { mode: 'timestamp' }).notNull(),
+});
 
 export const repositories = sqliteTable(
   'repositories',
   {
     id: text('id').primaryKey(),
+    // The owning user for personal repositories; the creator for team repositories.
     ownerId: text('owner_id')
       .notNull()
       .references(() => users.id, { onDelete: 'cascade' }),
+    // Set ⇒ a team repository, addressed as /<team slug>/<name>.
+    teamId: text('team_id').references(() => teams.id),
+    // private: owner, collaborators, and site admins only. internal: every member can read.
+    visibility: text('visibility', { enum: ['private', 'internal'] })
+      .notNull()
+      .default('internal'),
     name: text('name').notNull(),
     description: text('description'),
     defaultBranch: text('default_branch').notNull().default('main'),
@@ -25,7 +42,13 @@ export const repositories = sqliteTable(
     updatedAt: integer('updated_at', { mode: 'timestamp' }).notNull(),
   },
   (t) => [
-    uniqueIndex('repositories_owner_name_uq').on(t.ownerId, t.name),
+    // Names are unique per namespace: per user for personal repos, per team for team repos.
+    uniqueIndex('repositories_personal_name_uq')
+      .on(t.ownerId, t.name)
+      .where(sql`team_id IS NULL`),
+    uniqueIndex('repositories_team_name_uq')
+      .on(t.teamId, t.name)
+      .where(sql`team_id IS NOT NULL`),
     index('repositories_updated_idx').on(t.updatedAt),
   ]
 );
@@ -152,5 +175,6 @@ export const lfsObjects = sqliteTable(
 );
 
 export type Repository = typeof repositories.$inferSelect;
+export type Team = typeof teams.$inferSelect;
 export type LfsObject = typeof lfsObjects.$inferSelect;
 export type PullRequest = typeof pullRequests.$inferSelect;

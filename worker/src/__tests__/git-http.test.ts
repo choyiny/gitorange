@@ -41,7 +41,7 @@ async function setup() {
   const admin = await bootstrapAdmin(t);
   await call(t, '/api/repos', {
     cookie: admin,
-    json: { name: 'app', addReadme: true },
+    json: { name: 'app', addReadme: true, visibility: 'internal' },
   });
   return { t, admin };
 }

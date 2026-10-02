@@ -1,8 +1,8 @@
 import { useState } from 'react';
-import { useNavigate } from 'react-router-dom';
-import { useQueryClient } from '@tanstack/react-query';
-import { RepoIcon } from '@primer/octicons-react';
-import { api, qk } from '@/lib/uiApi';
+import { useNavigate, useSearchParams } from 'react-router-dom';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
+import { LockIcon, RepoIcon } from '@primer/octicons-react';
+import { api, qk, type Visibility } from '@/lib/uiApi';
 import { useCurrentUser } from '@/lib/auth';
 import { errorMessage } from '@/lib/api';
 import { Header } from '@/components/Header';
@@ -15,6 +15,14 @@ export default function NewRepo() {
   const [name, setName] = useState('');
   const [description, setDescription] = useState('');
   const [addReadme, setAddReadme] = useState(false);
+  const [params] = useSearchParams();
+  const team =
+    useQuery({ queryKey: qk.team, queryFn: api.team }).data?.team ?? null;
+  const [owner, setOwner] = useState<'user' | 'team'>(
+    params.get('owner') === 'team' ? 'team' : 'user'
+  );
+  const [visibility, setVisibility] = useState<Visibility>('private');
+  const forTeam = owner === 'team' && !!team;
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const normalized = name.trim().replace(/[^A-Za-z0-9._-]+/g, '-');
@@ -28,6 +36,8 @@ export default function NewRepo() {
         name,
         description: description || undefined,
         addReadme,
+        owner: forTeam ? 'team' : 'user',
+        visibility,
       });
       await qc.invalidateQueries({ queryKey: qk.repos });
       navigate(`/${repo.fullName}`);
@@ -56,19 +66,35 @@ export default function NewRepo() {
         <form onSubmit={submit}>
           <div className="d-flex flex-items-end mb-3" style={{ gap: 8 }}>
             <div>
-              <label className="d-block mb-1 text-bold f6">Owner *</label>
-              <button
-                type="button"
-                className="btn d-inline-flex flex-items-center"
-                style={{ gap: 6 }}
-                disabled
-              >
+              <label htmlFor="owner" className="d-block mb-1 text-bold f6">
+                Owner *
+              </label>
+              <div className="d-flex flex-items-center" style={{ gap: 6 }}>
                 <Avatar
-                  user={{ username: user.username ?? user.name }}
+                  user={
+                    forTeam
+                      ? { username: team!.slug }
+                      : { username: user.username ?? user.name }
+                  }
                   size={20}
-                />{' '}
-                {user.username}
-              </button>
+                  square={forTeam}
+                />
+                <select
+                  id="owner"
+                  className="form-select"
+                  value={forTeam ? 'team' : 'user'}
+                  onChange={(e) => setOwner(e.target.value as 'user' | 'team')}
+                  disabled={!team}
+                  title={
+                    team
+                      ? undefined
+                      : 'A site admin can create the team in Site admin'
+                  }
+                >
+                  <option value="user">{user.username}</option>
+                  {team && <option value="team">{team.slug}</option>}
+                </select>
+              </div>
             </div>
             <span className="f2 color-fg-muted pb-1">/</span>
             <div className="flex-1">
@@ -110,17 +136,54 @@ export default function NewRepo() {
             />
           </div>
           <div className="border-top py-3">
-            <div className="d-flex flex-items-start" style={{ gap: 8 }}>
-              <input type="radio" checked readOnly className="mt-1" />
-              <RepoIcon size={24} className="color-fg-muted" />
-              <div>
-                <div className="text-bold">Internal</div>
-                <div className="f6 color-fg-muted">
-                  Every member of this instance can see this repository. You and
-                  collaborators you add can push.
+            {forTeam ? (
+              <div className="d-flex flex-items-start" style={{ gap: 8 }}>
+                <RepoIcon size={24} className="color-fg-muted" />
+                <div>
+                  <div className="text-bold">Internal</div>
+                  <div className="f6 color-fg-muted">
+                    Team repositories are visible to every member of{' '}
+                    {team!.name}. You and collaborators you add can push.
+                  </div>
                 </div>
               </div>
-            </div>
+            ) : (
+              (
+                [
+                  [
+                    'private',
+                    LockIcon,
+                    'Private',
+                    'Only you, collaborators you add, and site admins can see this repository.',
+                  ],
+                  [
+                    'internal',
+                    RepoIcon,
+                    'Internal',
+                    'Every member of this instance can see this repository. You and collaborators you add can push.',
+                  ],
+                ] as const
+              ).map(([value, Icon, title, desc]) => (
+                <label
+                  key={value}
+                  className="d-flex flex-items-start mb-2"
+                  style={{ gap: 8, cursor: 'pointer' }}
+                >
+                  <input
+                    type="radio"
+                    name="visibility"
+                    className="mt-1"
+                    checked={visibility === value}
+                    onChange={() => setVisibility(value)}
+                  />
+                  <Icon size={24} className="color-fg-muted" />
+                  <span>
+                    <span className="d-block text-bold">{title}</span>
+                    <span className="d-block f6 color-fg-muted">{desc}</span>
+                  </span>
+                </label>
+              ))
+            )}
           </div>
           <div className="border-top py-3">
             <h3 className="f5 mb-2">Initialize this repository with:</h3>
