@@ -9,13 +9,14 @@ GitOrange is one Cloudflare Worker with three storage backends.
 
 The diagram's source is [`diagrams/architecture.html`](diagrams/architecture.html) (light) and [`diagrams/architecture-dark.html`](diagrams/architecture-dark.html) (dark); the PNGs are 2× screenshots of them.
 
-| Concern                                                                                   | Where it lives                                                                                          |
-| ----------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------- |
-| Git objects and refs (branches, commits, files)                                           | **Cloudflare Artifacts** — one Artifacts repo per GitOrange repository                                  |
-| Users, sessions, invitations, access tokens, repository metadata, pull requests, comments | **D1**                                                                                                  |
-| Invitation emails                                                                         | **Cloudflare Email Sending**                                                                            |
-| Git LFS file contents                                                                     | **R2**, one object per repository and oid; D1's `lfs_objects` records which objects each repository has |
-| Web interface                                                                             | React SPA in `src/`, served from the same Worker via the `ASSETS` binding                               |
+| Concern                                                                                   | Where it lives                                                                                                          |
+| ----------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------- |
+| Git objects and refs (branches, commits, files)                                           | **Cloudflare Artifacts** — one Artifacts repo per GitOrange repository                                                  |
+| Users, sessions, invitations, access tokens, repository metadata, pull requests, comments | **D1**                                                                                                                  |
+| Invitation emails                                                                         | **Cloudflare Email Sending**                                                                                            |
+| Git LFS file contents                                                                     | **R2**, one object per repository and oid; D1's `lfs_objects` records which objects each repository has                 |
+| Actions runs, jobs, and steps                                                             | **D1** (`workflow_runs`, `workflow_jobs`, `workflow_steps`); step logs in **R2**; jobs run in **Cloudflare Containers** |
+| Web interface                                                                             | React SPA in `src/`, served from the same Worker via the `ASSETS` binding                                               |
 
 Nothing about git content is copied into D1. The repository page, history, and diffs are read from Artifacts on each request.
 
@@ -47,6 +48,17 @@ Artifacts has no merge API and the binding cannot write objects, so GitOrange wr
 4. Only after the push succeeds is the pull request marked merged in D1.
 
 On merge or close, the head commit is pinned at `refs/pull/<n>/head`, so a pull request's diff stays viewable after its branch is deleted.
+
+## Actions
+
+GitOrange Actions runs `.github/workflows/*.yml` files with GitHub Actions syntax ([`worker/src/actions/`](../worker/src/actions/)).
+
+1. **Trigger.** The git endpoint snapshots the refs before a push and diffs them after it lands; an in-app merge reports its own ref update; opening a pull request triggers `pull_request`. For each moved branch or tag, [`trigger.ts`](../worker/src/actions/trigger.ts) reads the workflow files at the new commit, applies the `on:` filters (branches, tags, paths), and writes a queued run with its jobs (matrix expanded) and steps to D1 **before** starting a Cloudflare Workflow (`ACTIONS_RUN`) named after the run id. An invalid workflow file becomes a failed run with the parse error.
+2. **Execute.** The `ActionsRun` Workflow ([`executor.ts`](../worker/src/actions/executor.ts)) runs jobs in waves by `needs`, in parallel within a wave. Every status change and every job step is a durable Workflow step, so a run survives restarts. Expressions, `if:` conditions, `env` layering, step outputs, and `GITHUB_ENV`/`GITHUB_PATH` are evaluated in the Worker.
+3. **Run.** Each job gets a `JobRunner` Durable Object ([`job-runner.ts`](../worker/src/actions/job-runner.ts)) that starts its own container (scheduling policy `durable_object`, image `runner`, instance size from `runs-on`) and runs each step with `exec`. `actions/checkout` fetches the commit with a short-lived read-only Artifacts token, passed through an environment variable and masked in the log. The object keeps only the running step's output in memory for live logs, plus an alarm that destroys the container if its run disappears.
+4. **Logs.** Each finished step's log goes to R2 (`actions/<repository id>/...`); while a step runs, the logs endpoint reads it from the job's `JobRunner`. Deleting a repository deletes its logs.
+
+Cancelling terminates the Workflow and destroys the job containers. A run whose Workflow crashed is marked failed the next time someone views it.
 
 ## Git LFS
 

@@ -27,6 +27,7 @@ import {
   publicUserSchema,
 } from './schemas';
 import { compareShas } from './repos-router';
+import { onRefsUpdated, queueRuns } from '../actions/trigger';
 
 export const pullsRouter = new OpenAPIHono<RepoEnv>({
   defaultHook: validationHook,
@@ -85,6 +86,9 @@ function serializePull(
 }
 
 const pullRef = (n: number) => `refs/pull/${n}/head`;
+
+const fullName = (c: Context<RepoEnv>) =>
+  `${c.get('namespace').username}/${c.get('repo').name}`;
 
 /**
  * The two commits a PR compares. Open PRs track their live branches; once merged or
@@ -301,6 +305,17 @@ pullsRouter.openapi(createPullRoute, async (c) => {
   await git
     .setRef(pullRef(pr.number), headSha)
     .catch((e) => console.error('[pulls] pin ref failed', e));
+  c.executionCtx.waitUntil(
+    queueRuns(c.env, db, repo, fullName(c), {
+      kind: 'pull_request',
+      number: pr.number,
+      title: pr.title,
+      baseRef: pr.baseRef,
+      headRef: pr.headRef,
+      headSha,
+      actorId: author.id,
+    }).catch((e) => console.error('[actions] queue failed', e))
+  );
   return c.json(serializePull(pr, await usersById(db, [author.id])), 201);
 });
 
@@ -539,6 +554,7 @@ pullsRouter.openapi(mergeRoute, async (c) => {
       ? `${pr.title} (#${pr.number})`
       : `Merge pull request #${pr.number} from ${owner.username}/${pr.headRef}`);
   const message = body.message ?? (body.method === 'squash' ? '' : pr.title);
+  const baseBefore = (await git.refs()).get(`refs/heads/${pr.baseRef}`);
   let sha: string;
   try {
     ({ sha } = await git.merge({
@@ -583,6 +599,17 @@ pullsRouter.openapi(mergeRoute, async (c) => {
     .update(repositories)
     .set({ updatedAt: now })
     .where(eq(repositories.id, pr.repositoryId));
+  if (baseBefore)
+    c.executionCtx.waitUntil(
+      onRefsUpdated(
+        c.env,
+        db,
+        c.get('repo'),
+        fullName(c),
+        [{ ref: `refs/heads/${pr.baseRef}`, old: baseBefore, new: sha }],
+        user.id
+      )
+    );
   return c.json({ sha }, 200);
 });
 

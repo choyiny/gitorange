@@ -386,3 +386,54 @@ body {
   color: var(--color-prettylights-syntax-markup-deleted-text);
   background-color: var(--color-prettylights-syntax-markup-deleted-bg);
 }
+
+/* Actions: the spinning ring GitHub shows for in-progress runs, jobs, and steps. */
+.run-spinner {
+  display: inline-block;
+  box-sizing: border-box;
+  border: 2px solid currentColor;
+  border-top-color: transparent;
+  border-radius: 50%;
+  animation: run-spin 1s linear infinite;
+  vertical-align: text-bottom;
+}
+@keyframes run-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+/* Actions: job log pane. Logs are dark in both themes, as on GitHub. */
+.job-log {
+  background: #010409;
+  color: #e6edf3;
+  border-radius: 6px;
+}
+.job-log-step > summary {
+  list-style: none;
+  cursor: pointer;
+  color: #e6edf3;
+}
+.job-log-step > summary::-webkit-details-marker {
+  display: none;
+}
+.job-log-step > summary:hover {
+  background: #161b22;
+}
+.job-log-lines {
+  font-family:
+    ui-monospace, SFMono-Regular, 'SF Mono', Menlo, Consolas, monospace;
+  font-size: 12px;
+  line-height: 20px;
+  white-space: pre-wrap;
+  word-break: break-all;
+  color: #e6edf3;
+}
+.job-log-lines .ln {
+  display: inline-block;
+  width: 48px;
+  padding-right: 12px;
+  text-align: right;
+  color: #6e7681;
+  user-select: none;
+}

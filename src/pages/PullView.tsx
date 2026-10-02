@@ -28,6 +28,7 @@ import { DiffTotals, DiffView } from '@/components/DiffView';
 import { MarkdownEditor } from '@/components/CommentForm';
 import { Markdown } from '@/components/Markdown';
 import { Dropdown } from '@/components/Dropdown';
+import { ChecksBox } from '@/components/Checks';
 import { Spinner } from '@/components/Spinner';
 import { NotFound } from './NotFound';
 import { PrStateBadge } from './PrIcons';
@@ -425,6 +426,7 @@ function Conversation({
             This pull request was closed {timeAgo(pr.closedAt!)}
           </TimelineEvent>
         )}
+        {pr.state === 'open' && <ChecksBox repo={repo} sha={d.headSha} />}
         {pr.state === 'open' && <MergeBox repo={repo} d={d} onDone={refresh} />}
         <div className="border-top pt-3 mt-3 d-flex" style={{ gap: 16 }}>
           <Avatar

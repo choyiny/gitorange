@@ -26,6 +26,7 @@ import { CloneButton } from '@/components/CloneButton';
 import { AgentPrompt } from '@/components/AgentPrompt';
 import { CopyButton } from '@/components/CopyButton';
 import { Markdown } from '@/components/Markdown';
+import { CommitStatus } from '@/components/Checks';
 import { Spinner } from '@/components/Spinner';
 import { NotFound } from './NotFound';
 
@@ -218,6 +219,7 @@ function LatestCommitBar({ repo, data }: { repo: RepoDetail; data: Contents }) {
       >
         {firstLine(c.message)}
       </Link>
+      <CommitStatus repo={repo} sha={c.hash} />
       <Link
         to={`${base}/commit/${c.hash}`}
         className="color-fg-muted text-mono-sm"

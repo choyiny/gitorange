@@ -174,7 +174,89 @@ export const lfsObjects = sqliteTable(
   (t) => [uniqueIndex('lfs_objects_repo_oid_uq').on(t.repositoryId, t.oid)]
 );
 
+// ── Actions ──────────────────────────────────────────────────────────────────
+// A workflow run is one `.github/workflows/*.yml` file triggered by one event. Its jobs run
+// in containers driven by a Cloudflare Workflow; step logs live in R2 (`log_r2_key`).
+
+const runStatus = ['queued', 'in_progress', 'completed'] as const;
+const runConclusion = ['success', 'failure', 'cancelled', 'skipped'] as const;
+
+export const workflowRuns = sqliteTable(
+  'workflow_runs',
+  {
+    id: text('id').primaryKey(),
+    repositoryId: text('repository_id')
+      .notNull()
+      .references(() => repositories.id, { onDelete: 'cascade' }),
+    runNumber: integer('run_number').notNull(),
+    workflowPath: text('workflow_path').notNull(),
+    name: text('name').notNull(),
+    event: text('event', { enum: ['push', 'pull_request'] }).notNull(),
+    ref: text('ref').notNull(),
+    headSha: text('head_sha').notNull(),
+    // The commit subject (push) or pull request title, shown in run lists.
+    displayTitle: text('display_title').notNull(),
+    actorId: text('actor_id').references(() => users.id, {
+      onDelete: 'set null',
+    }),
+    status: text('status', { enum: runStatus }).notNull().default('queued'),
+    conclusion: text('conclusion', { enum: runConclusion }),
+    // Why the run failed before any job started, e.g. an invalid workflow file.
+    errorMessage: text('error_message'),
+    createdAt: integer('created_at', { mode: 'timestamp' }).notNull(),
+    startedAt: integer('started_at', { mode: 'timestamp' }),
+    completedAt: integer('completed_at', { mode: 'timestamp' }),
+  },
+  (t) => [
+    uniqueIndex('workflow_runs_repo_number_uq').on(t.repositoryId, t.runNumber),
+    index('workflow_runs_repo_sha_idx').on(t.repositoryId, t.headSha),
+  ]
+);
+
+export const workflowJobs = sqliteTable(
+  'workflow_jobs',
+  {
+    id: text('id').primaryKey(),
+    runId: text('run_id')
+      .notNull()
+      .references(() => workflowRuns.id, { onDelete: 'cascade' }),
+    jobKey: text('job_key').notNull(),
+    name: text('name').notNull(),
+    runsOn: text('runs_on').notNull(),
+    needs: text('needs', { mode: 'json' }).$type<string[]>().notNull(),
+    matrixValues: text('matrix_values', { mode: 'json' }).$type<
+      Record<string, unknown>
+    >(),
+    status: text('status', { enum: runStatus }).notNull().default('queued'),
+    conclusion: text('conclusion', { enum: runConclusion }),
+    startedAt: integer('started_at', { mode: 'timestamp' }),
+    completedAt: integer('completed_at', { mode: 'timestamp' }),
+  },
+  (t) => [index('workflow_jobs_run_idx').on(t.runId)]
+);
+
+export const workflowSteps = sqliteTable(
+  'workflow_steps',
+  {
+    id: text('id').primaryKey(),
+    jobId: text('job_id')
+      .notNull()
+      .references(() => workflowJobs.id, { onDelete: 'cascade' }),
+    number: integer('number').notNull(),
+    name: text('name').notNull(),
+    status: text('status', { enum: runStatus }).notNull().default('queued'),
+    conclusion: text('conclusion', { enum: runConclusion }),
+    startedAt: integer('started_at', { mode: 'timestamp' }),
+    completedAt: integer('completed_at', { mode: 'timestamp' }),
+    logR2Key: text('log_r2_key'),
+  },
+  (t) => [uniqueIndex('workflow_steps_job_number_uq').on(t.jobId, t.number)]
+);
+
 export type Repository = typeof repositories.$inferSelect;
 export type Team = typeof teams.$inferSelect;
 export type LfsObject = typeof lfsObjects.$inferSelect;
 export type PullRequest = typeof pullRequests.$inferSelect;
+export type WorkflowRun = typeof workflowRuns.$inferSelect;
+export type WorkflowJob = typeof workflowJobs.$inferSelect;
+export type WorkflowStep = typeof workflowSteps.$inferSelect;

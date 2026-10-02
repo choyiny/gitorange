@@ -10,6 +10,7 @@ import {
   CodeIcon,
   GitPullRequestIcon,
   GearIcon,
+  PlayIcon,
   RepoIcon,
 } from '@primer/octicons-react';
 import { api, qk, type RepoDetail } from '@/lib/uiApi';
@@ -88,9 +89,8 @@ export function RepoLayout() {
     return <NotFound />;
   const data = q.data;
   const base = `/${owner}/${repo}`;
-  const codeActive = !/^\/[^/]+\/[^/]+\/(pulls?|compare|settings)(\/|$)/.test(
-    pathname
-  );
+  const codeActive =
+    !/^\/[^/]+\/[^/]+\/(pulls?|compare|settings|actions)(\/|$)/.test(pathname);
   return (
     <>
       <Header
@@ -122,6 +122,7 @@ export function RepoLayout() {
                 label="Pull requests"
                 count={data?.openPullCount}
               />
+              <Tab to={`${base}/actions`} icon={<PlayIcon />} label="Actions" />
               {data?.permissions.admin && (
                 <Tab
                   to={`${base}/settings`}

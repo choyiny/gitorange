@@ -27,6 +27,8 @@ import Pulls from './pages/Pulls';
 import PullNew from './pages/PullNew';
 import PullView from './pages/PullView';
 import RepoSettings from './pages/RepoSettings';
+import RepoActions from './pages/RepoActions';
+import RunView from './pages/RunView';
 import SettingsTokens from './pages/SettingsTokens';
 import Admin from './pages/Admin';
 import { NotFound } from './pages/NotFound';
@@ -99,6 +101,12 @@ const App = () => (
                   <Route path="compare/*" element={<PullNew />} />
                   <Route path="pull/:number" element={<PullView />} />
                   <Route path="pull/:number/:tab" element={<PullView />} />
+                  <Route path="actions" element={<RepoActions />} />
+                  <Route path="actions/runs/:number" element={<RunView />} />
+                  <Route
+                    path="actions/runs/:number/job/:jobId"
+                    element={<RunView />}
+                  />
                   <Route path="settings" element={<RepoSettings />} />
                   <Route path="*" element={<NotFound inline />} />
                 </Route>

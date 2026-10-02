@@ -51,3 +51,18 @@ export function formatBytes(n: number) {
   if (n < 1024 * 1024) return `${(n / 1024).toFixed(2)} KB`;
   return `${(n / 1024 / 1024).toFixed(2)} MB`;
 }
+
+/** GitHub-style elapsed time between two instants: `45s`, `3m 12s`, `1h 4m`. */
+export function duration(
+  start: string | null,
+  end: string | null,
+  now = Date.now()
+): string {
+  if (!start) return '';
+  const ms = (end ? new Date(end).getTime() : now) - new Date(start).getTime();
+  const s = Math.max(0, Math.round(ms / 1000));
+  if (s < 60) return `${s}s`;
+  const m = Math.floor(s / 60);
+  if (m < 60) return `${m}m ${s % 60}s`;
+  return `${Math.floor(m / 60)}h ${m % 60}m`;
+}

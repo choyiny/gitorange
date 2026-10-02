@@ -7,6 +7,9 @@ await applyD1Migrations(env.DB, env.TEST_D1_MIGRATIONS);
 // Storage is shared between tests within a file, so start each test from empty tables.
 // Children before parents so foreign keys never block the delete.
 const TABLES = [
+  'workflow_steps',
+  'workflow_jobs',
+  'workflow_runs',
   'lfs_objects',
   'pull_request_comments',
   'pull_requests',

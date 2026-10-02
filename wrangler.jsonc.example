@@ -30,7 +30,24 @@
   "send_email": [{ "name": "EMAIL" }],
   // Git LFS file contents. Clients upload/download directly via pre-signed URLs, which need an
   // R2 API token: `wrangler secret put R2_ACCESS_KEY_ID` and `wrangler secret put R2_SECRET_ACCESS_KEY`.
-  "r2_buckets": [{ "binding": "LFS", "bucket_name": "gitorange-lfs" }],
+  "r2_buckets": [
+    { "binding": "LFS", "bucket_name": "gitorange-lfs" },
+    { "binding": "ACTIONS_LOGS", "bucket_name": "gitorange-actions-logs" }
+  ],
+  // GitOrange Actions. Each run is a Workflow; each job gets its own container, started by a
+  // JobRunner Durable Object (scheduling policy "durable_object"), which picks the instance size
+  // from the job's runs-on. Wrangler builds the runner image from actions/runner/Dockerfile on
+  // deploy. Step logs go to R2. Remove these four entries to deploy without Actions.
+  "containers": [
+    {
+      "class_name": "JobRunner",
+      "scheduling_policy": "durable_object",
+      "images": { "runner": { "dockerfile": "./actions/runner/Dockerfile" } }
+    }
+  ],
+  "durable_objects": { "bindings": [{ "name": "JOB_RUNNER", "class_name": "JobRunner" }] },
+  "exports": { "JobRunner": { "type": "durable-object", "storage": "sqlite" } },
+  "workflows": [{ "name": "gitorange-actions-run", "binding": "ACTIONS_RUN", "class_name": "ActionsRun" }],
   "assets": {
     "binding": "ASSETS",
     "directory": "./dist/client",
@@ -63,7 +80,20 @@
       ],
       "artifacts": [{ "binding": "ARTIFACTS", "namespace": "gitorange-dev", "remote": true }],
       "send_email": [{ "name": "EMAIL" }],
-      "r2_buckets": [{ "binding": "LFS", "bucket_name": "gitorange-lfs-dev", "remote": true }],
+      "r2_buckets": [
+        { "binding": "LFS", "bucket_name": "gitorange-lfs-dev", "remote": true },
+        { "binding": "ACTIONS_LOGS", "bucket_name": "gitorange-actions-logs-dev" }
+      ],
+      // Actions jobs run in local Docker containers in dev (Docker must be running).
+      "containers": [
+        {
+          "class_name": "JobRunner",
+          "scheduling_policy": "durable_object",
+          "images": { "runner": { "dockerfile": "./actions/runner/Dockerfile" } }
+        }
+      ],
+      "durable_objects": { "bindings": [{ "name": "JOB_RUNNER", "class_name": "JobRunner" }] },
+      "workflows": [{ "name": "gitorange-actions-run-dev", "binding": "ACTIONS_RUN", "class_name": "ActionsRun" }],
       "vars": {
         "APP_NAME": "GitOrange",
         "BASE_URL": "http://localhost:8080",

@@ -17,7 +17,20 @@
   ],
   "artifacts": [{ "binding": "ARTIFACTS", "namespace": "gitorange" }],
   "send_email": [{ "name": "EMAIL" }],
-  "r2_buckets": [{ "binding": "LFS", "bucket_name": "gitorange-lfs" }],
+  "r2_buckets": [
+    { "binding": "LFS", "bucket_name": "gitorange-lfs" },
+    { "binding": "ACTIONS_LOGS", "bucket_name": "gitorange-actions-logs" }
+  ],
+  "containers": [
+    {
+      "class_name": "JobRunner",
+      "scheduling_policy": "durable_object",
+      "images": { "runner": { "dockerfile": "./actions/runner/Dockerfile" } }
+    }
+  ],
+  "durable_objects": { "bindings": [{ "name": "JOB_RUNNER", "class_name": "JobRunner" }] },
+  "exports": { "JobRunner": { "type": "durable-object", "storage": "sqlite" } },
+  "workflows": [{ "name": "gitorange-actions-run", "binding": "ACTIONS_RUN", "class_name": "ActionsRun" }],
   "assets": {
     "binding": "ASSETS",
     "directory": "./dist/client",

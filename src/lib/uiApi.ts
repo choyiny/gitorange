@@ -158,6 +158,53 @@ export type Token = {
   createdAt: string;
 };
 
+export type RunStatus = 'queued' | 'in_progress' | 'completed';
+export type RunConclusion =
+  'success' | 'failure' | 'cancelled' | 'skipped' | null;
+export type WorkflowRun = {
+  id: string;
+  runNumber: number;
+  name: string;
+  workflowPath: string;
+  event: 'push' | 'pull_request';
+  ref: string;
+  refName: string;
+  pullRequestNumber: number | null;
+  headSha: string;
+  displayTitle: string;
+  actor: User | null;
+  status: RunStatus;
+  conclusion: RunConclusion;
+  errorMessage: string | null;
+  createdAt: string;
+  startedAt: string | null;
+  completedAt: string | null;
+};
+export type WorkflowStep = {
+  number: number;
+  name: string;
+  status: RunStatus;
+  conclusion: RunConclusion;
+  startedAt: string | null;
+  completedAt: string | null;
+};
+export type WorkflowJob = {
+  id: string;
+  jobKey: string;
+  name: string;
+  runsOn: string;
+  needs: string[];
+  status: RunStatus;
+  conclusion: RunConclusion;
+  startedAt: string | null;
+  completedAt: string | null;
+  steps: WorkflowStep[];
+};
+export type CommitRuns = {
+  state: 'success' | 'failure' | 'pending' | null;
+  runs: WorkflowRun[];
+};
+
 const r = (owner: string, repo: string) =>
   `/api/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}`;
 const q = (params: Record<string, string | number>) =>
@@ -292,6 +339,40 @@ export const api = {
       method: 'POST',
       json: body,
     }),
+  runs: (o: string, n: string, page: number, workflow?: string) =>
+    apiFetch<{
+      configured: boolean;
+      totalCount: number;
+      workflows: { path: string; name: string }[];
+      runs: WorkflowRun[];
+    }>(
+      `${r(o, n)}/actions/runs?${q(workflow ? { page, workflow } : { page })}`
+    ),
+  run: (o: string, n: string, num: number) =>
+    apiFetch<{ run: WorkflowRun; jobs: WorkflowJob[] }>(
+      `${r(o, n)}/actions/runs/${num}`
+    ),
+  stepLog: async (
+    o: string,
+    n: string,
+    num: number,
+    jobId: string,
+    step: number
+  ) => {
+    const res = await fetch(
+      `${r(o, n)}/actions/runs/${num}/jobs/${jobId}/steps/${step}/logs`,
+      { credentials: 'include' }
+    );
+    return res.ok ? res.text() : '';
+  },
+  cancelRun: (o: string, n: string, num: number) =>
+    apiFetch(`${r(o, n)}/actions/runs/${num}/cancel`, { method: 'POST' }),
+  rerun: (o: string, n: string, num: number) =>
+    apiFetch<{ runNumber: number }>(`${r(o, n)}/actions/runs/${num}/rerun`, {
+      method: 'POST',
+    }),
+  commitRuns: (o: string, n: string, sha: string) =>
+    apiFetch<CommitRuns>(`${r(o, n)}/commits/${sha}/runs`),
   comment: (o: string, n: string, num: number, body: string) =>
     apiFetch<Comment>(`${r(o, n)}/pulls/${num}/comments`, {
       method: 'POST',
@@ -328,4 +409,12 @@ export const qk = {
     ['repo', o, n, 'pull', num, 'commits'] as const,
   pullFiles: (o: string, n: string, num: number) =>
     ['repo', o, n, 'pull', num, 'files'] as const,
+  runs: (o: string, n: string, page: number, workflow: string) =>
+    ['repo', o, n, 'runs', page, workflow] as const,
+  run: (o: string, n: string, num: number) =>
+    ['repo', o, n, 'run', num] as const,
+  stepLog: (o: string, n: string, num: number, jobId: string, step: number) =>
+    ['repo', o, n, 'run', num, 'log', jobId, step] as const,
+  commitRuns: (o: string, n: string, sha: string) =>
+    ['repo', o, n, 'commit-runs', sha] as const,
 };

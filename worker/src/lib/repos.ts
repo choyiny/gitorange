@@ -89,6 +89,26 @@ export async function findRepo(db: DrizzleDB, owner: string, name: string) {
   return row ? { ...row, namespace: userNamespace(row.owner) } : undefined;
 }
 
+/** Loads a repository with the namespace it lives under (for background jobs that only have an id). */
+export async function findRepoById(db: DrizzleDB, id: string) {
+  const row = await db
+    .select({ repo: repositories, owner: users })
+    .from(repositories)
+    .innerJoin(users, eq(users.id, repositories.ownerId))
+    .where(eq(repositories.id, id))
+    .get();
+  if (!row) return undefined;
+  if (row.repo.teamId) {
+    const team = await db
+      .select()
+      .from(teams)
+      .where(eq(teams.id, row.repo.teamId))
+      .get();
+    if (team) return { ...row, namespace: teamNamespace(team) };
+  }
+  return { ...row, namespace: userNamespace(row.owner) };
+}
+
 export interface RepoPermissions {
   read: boolean;
   write: boolean;

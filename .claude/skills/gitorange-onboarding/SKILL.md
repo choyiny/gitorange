@@ -34,6 +34,14 @@ yarn --version
 
 Then `yarn install`. Use `yarn wrangler ...` for every wrangler command so the project's pinned version is used.
 
+### Checkpoint 1.5 — Docker
+
+```bash
+docker info --format '{{.ServerVersion}}'
+```
+
+Deploying builds the Actions runner image, so Docker must be running. If it isn't, ask the user to start Docker Desktop (or their Docker daemon) and wait.
+
 ### Checkpoint 2 — Cloudflare login
 
 ```bash
@@ -67,7 +75,7 @@ Ask which listed domain should send invitation emails, and the address to use (e
 
 Restate, then wait for an explicit yes:
 
-> You've confirmed account `<name>` (`<id>`) is on Workers Paid with Artifacts access, and invites will come from `<FROM_EMAIL>`. I'm about to create a D1 database named `gitorange-db` and an R2 bucket named `gitorange-lfs`, deploy a worker named `gitorange`, and set its auth secret. Ready?
+> You've confirmed account `<name>` (`<id>`) is on Workers Paid with Artifacts access, and invites will come from `<FROM_EMAIL>`. I'm about to create a D1 database named `gitorange-db` and R2 buckets named `gitorange-lfs` and `gitorange-actions-logs`, deploy a worker named `gitorange`, and set its auth secret. Ready?
 
 ## Deployment steps
 
@@ -77,14 +85,15 @@ Run straight through; pause only for decisions or credentials.
 
 Ask: custom domain (e.g. `git.example.com`, the zone must be on Cloudflare) or the free `gitorange.<subdomain>.workers.dev`? If custom, uncomment `routes` in Step 3. Record `BASE_URL` as `https://<hostname>`. For workers.dev, the exact URL is printed by the first deploy; use a placeholder now and fix it in Step 6.
 
-### Step 2: Create D1 and the LFS bucket
+### Step 2: Create D1 and the R2 buckets
 
 ```bash
 yarn wrangler d1 create gitorange-db
 yarn wrangler r2 bucket create gitorange-lfs
+yarn wrangler r2 bucket create gitorange-actions-logs
 ```
 
-Capture the `database_id`. If either already exists, get the ID from `yarn wrangler d1 list` / confirm the bucket with `yarn wrangler r2 bucket list`. No Artifacts resource needs creating: the `gitorange` namespace is created with the first repository.
+Capture the `database_id`. `gitorange-actions-logs` holds Actions step logs. If any already exists, get the ID from `yarn wrangler d1 list` / confirm the bucket with `yarn wrangler r2 bucket list`. No Artifacts resource needs creating: the `gitorange` namespace is created with the first repository.
 
 ### Step 2.5: R2 API token for Git LFS (the user does this in the dashboard)
 
@@ -112,7 +121,7 @@ Fill in the top level (production):
 
 Also replace the `FROM_EMAIL` and `R2_ACCOUNT_ID` placeholders in `env.dev.vars` so local development works later.
 
-Do not rename bindings — the code looks them up by name: `DB`, `ARTIFACTS`, `EMAIL`, `LFS`, `ASSETS`. Keep `assets.run_worker_first` as shipped; the git endpoint depends on it. `wrangler.jsonc` is gitignored; never commit it.
+Do not rename bindings — the code looks them up by name: `DB`, `ARTIFACTS`, `EMAIL`, `LFS`, `ACTIONS_LOGS`, `ACTIONS_RUN`, `JOB_RUNNER`, `ASSETS`. Keep the `containers`, `durable_objects`, `exports`, and `workflows` entries as shipped: they run GitOrange Actions. Keep `assets.run_worker_first` as shipped; the git endpoint depends on it. `wrangler.jsonc` is gitignored; never commit it.
 
 ### Step 4: Migrate and deploy
 
@@ -157,6 +166,7 @@ Report, with real values substituted:
 - Artifacts namespace `gitorange` (binding `ARTIFACTS`) — repositories appear there as they're created
 - Invitations sent from `<FROM_EMAIL>` (binding `EMAIL`)
 - R2 bucket `gitorange-lfs` (binding `LFS`) for Git LFS — R2 secrets `<set | not set yet>`
+- GitOrange Actions: Workflow `gitorange-actions-run`, `JobRunner` containers, logs in R2 bucket `gitorange-actions-logs`
 - Admin account `<username>`
 - To update later: `git pull && yarn install && yarn db:migrate:prod && yarn deploy`
 

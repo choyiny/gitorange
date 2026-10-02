@@ -24,6 +24,10 @@ and better-auth. Git storage is **Cloudflare Artifacts**: one Artifacts repo per
   sharing the git endpoint's auth. Bytes go client ↔ R2 directly via pre-signed URLs (needs the
   `R2_ACCESS_KEY_ID`/`R2_SECRET_ACCESS_KEY` secrets); D1 `lfs_objects` holds bare R2 keys, never URLs. One copy
   per repository under `lfs/<repository id>/`, deleted with the repository.
+- Actions (`worker/src/actions/`): pushes/merges/PR opens queue `workflow_runs` rows (D1, written before the Workflow starts), an
+  `ActionsRun` Workflow executes jobs, and a `JobRunner` Durable Object per job owns its container (Cloudflare Containers,
+  `durable_object` scheduling, image `actions/runner/Dockerfile`). Step logs in R2 (`ACTIONS_LOGS`). Tests drive `executeRun`
+  with a fake step and runner; `makeEnv({ actions: true })` adds fake `ACTIONS_RUN`/`JOB_RUNNER` bindings.
 - Artifacts has no local emulator: `yarn dev` runs `env.dev`, which uses the remote service in the
   `gitorange-dev` namespace. Tests use `wrangler.test.jsonc` (no remote bindings) plus an in-memory
   Artifacts fake.

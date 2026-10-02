@@ -7,6 +7,7 @@ import { injectDb } from './db/middleware';
 import { handleGitRequest, isGitRequest } from './git-http';
 import { handleLfsRequest, isLfsRequest } from './lfs-http';
 import { invitesRouter } from './routers/invites-router';
+import { actionsRouter } from './routers/actions-router';
 import { pullsRouter } from './routers/pulls-router';
 import { reposRouter } from './routers/repos-router';
 import { setupRouter } from './routers/setup-router';
@@ -38,6 +39,7 @@ app.use('/api/repos/*', requireAuth);
 app.use('/api/repos', requireAuth);
 app.route('/api/repos', reposRouter);
 app.route('/api/repos', pullsRouter);
+app.route('/api/repos', actionsRouter);
 app.use('/api/users/*', requireAuth);
 app.use('/api/users', requireAuth);
 app.route('/api/users', usersRouter);
@@ -66,6 +68,8 @@ app.onError((err, c) => {
 app.notFound((c) => c.json({ error: 'Not Found' }, 404));
 
 export { app };
+export { ActionsRun } from './actions/run-workflow';
+export { JobRunner } from './actions/job-runner';
 
 export default {
   fetch(request, env, ctx) {

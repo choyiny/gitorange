@@ -15,6 +15,7 @@ import {
   type RepoPermissions,
 } from './lib/repos';
 import { hashToken } from './lib/tokens';
+import { actionsConfigured, diffRefs, onRefsUpdated } from './actions/trigger';
 
 const GIT_PATH =
   /^\/([^/]+)\/([^/]+?)\.git\/(info\/refs|git-upload-pack|git-receive-pack)$/;
@@ -55,6 +56,8 @@ export type GitAccess = {
   db: DrizzleD1Database<typeof schema>;
   user: typeof users.$inferSelect;
   repo: Repository;
+  /** `<owner>/<name>` as the repository's canonical URL path. */
+  fullName: string;
   perms: RepoPermissions;
 };
 
@@ -99,7 +102,13 @@ export async function authenticateRepoRequest(
   const perms = found ? await permissionsFor(db, found.repo, pat.user) : null;
   if (!found || !perms?.read)
     return new Response('Repository not found.\n', { status: 404 });
-  return { db, user: pat.user, repo: found.repo, perms };
+  return {
+    db,
+    user: pat.user,
+    repo: found.repo,
+    fullName: `${found.namespace.username}/${found.repo.name}`,
+    perms,
+  };
 }
 
 /**
@@ -116,7 +125,7 @@ export async function handleGitRequest(
   const [, owner, name, endpoint] = url.pathname.match(GIT_PATH)!;
   const access = await authenticateRepoRequest(request, env, ctx, owner, name);
   if (access instanceof Response) return access;
-  const { user, repo, perms } = access;
+  const { user, repo, perms, fullName } = access;
 
   const service =
     endpoint === 'info/refs' ? url.searchParams.get('service') : endpoint;
@@ -151,6 +160,14 @@ export async function handleGitRequest(
     if (v) headers.set(h, v);
   }
   const git = gitFor(env, repo);
+  // Snapshot refs before a push so afterPush can tell which branches moved (for Actions).
+  const refsBefore =
+    isPush && request.method === 'POST' && actionsConfigured(env)
+      ? await git.client
+          .listRefs()
+          .then((ad) => ad.refs)
+          .catch(() => null)
+      : null;
   const upstream = await git.client.forward(
     `/${endpoint}${url.search}`,
     {
@@ -169,9 +186,7 @@ export async function handleGitRequest(
   if (isPush && request.method === 'POST' && upstream.ok) {
     // Receive-pack responses are small status reports; buffer so we can sync metadata after the push lands.
     const body = await upstream.arrayBuffer();
-    ctx.waitUntil(
-      afterPush(env, repo.id, repo.defaultBranch, repo.artifactsName)
-    );
+    ctx.waitUntil(afterPush(env, repo.id, user.id, refsBefore, fullName));
     return new Response(body, {
       status: upstream.status,
       headers: respHeaders,
@@ -183,32 +198,50 @@ export async function handleGitRequest(
   });
 }
 
-/** Bumps `updated_at` and adopts the first pushed branch as default if the default doesn't exist. */
+/**
+ * Bumps `updated_at`, adopts the first pushed branch as default if the default doesn't exist,
+ * and queues Actions runs for the refs the push moved.
+ */
 async function afterPush(
   env: CloudflareBindings,
   repoId: string,
-  defaultBranch: string,
-  artifactsName: string
+  actorId: string,
+  refsBefore: Map<string, string> | null,
+  fullName: string
 ) {
   const db = drizzle(env.DB, { schema });
   const patch: { updatedAt: Date; defaultBranch?: string } = {
     updatedAt: new Date(),
   };
+  const repo = await db
+    .select()
+    .from(repositories)
+    .where(eq(repositories.id, repoId))
+    .get();
+  if (!repo) return;
+  let refsAfter: Map<string, string> | null = null;
   try {
-    const repo = await db
-      .select()
-      .from(repositories)
-      .where(eq(repositories.id, repoId))
-      .get();
-    if (repo) {
-      const branches = await gitFor(env, { ...repo, artifactsName }).branches();
-      if (branches.length && !branches.some((b) => b.name === defaultBranch)) {
-        patch.defaultBranch =
-          branches.find((b) => b.name === 'main')?.name ?? branches[0].name;
-      }
+    const git = gitFor(env, repo);
+    refsAfter = await git.refs();
+    const branches = await git.branches();
+    if (
+      branches.length &&
+      !branches.some((b) => b.name === repo.defaultBranch)
+    ) {
+      patch.defaultBranch =
+        branches.find((b) => b.name === 'main')?.name ?? branches[0].name;
     }
   } catch (e) {
     console.error('[git] post-push sync failed', e);
   }
   await db.update(repositories).set(patch).where(eq(repositories.id, repoId));
+  if (refsBefore && refsAfter)
+    await onRefsUpdated(
+      env,
+      db,
+      repo,
+      fullName,
+      diffRefs(refsBefore, refsAfter),
+      actorId
+    );
 }

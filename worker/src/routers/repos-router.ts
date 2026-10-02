@@ -23,6 +23,7 @@ import {
   type Namespace,
   type RepoEnv,
 } from '../lib/repos';
+import { deleteRepositoryLogs } from '../actions/trigger';
 import {
   LFS_NOT_CONFIGURED,
   OID_RE,
@@ -370,6 +371,7 @@ reposRouter.openapi(deleteRepoRoute, async (c) => {
   await c.env.ARTIFACTS.delete(repo.artifactsName);
   // LFS rows cascade with the repository; their R2 bytes have to go explicitly.
   await deleteRepositoryObjects(c.env, repo.id);
+  await deleteRepositoryLogs(c.env, repo.id);
   return c.json({ ok: true as const }, 200);
 });
 

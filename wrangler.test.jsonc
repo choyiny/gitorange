@@ -17,7 +17,12 @@
       "migrations_dir": "migrations",
     },
   ],
-  "r2_buckets": [{ "binding": "LFS", "bucket_name": "gitorange-lfs-test" }],
+  "r2_buckets": [
+    { "binding": "LFS", "bucket_name": "gitorange-lfs-test" },
+    { "binding": "ACTIONS_LOGS", "bucket_name": "gitorange-actions-logs-test" },
+  ],
+  // No Actions containers or Workflow here: tests inject a fake ACTIONS_RUN and drive the
+  // executor directly with a fake runner.
   "assets": {
     "binding": "ASSETS",
     "directory": "./dist/client",

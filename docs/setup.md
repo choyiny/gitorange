@@ -8,6 +8,7 @@ Deploy GitOrange to your own Cloudflare account. This takes about 15 minutes, mo
 - **Artifacts** is in open beta and available on Workers Paid. Confirm with `yarn wrangler artifacts namespaces list` — it should print a table or "No Artifacts namespaces found".
 - A domain onboarded to [Cloudflare Email Sending](https://dash.cloudflare.com/?to=/:account/email-service), used as the sender for invitation emails.
 - Node.js v20+ and yarn.
+- Docker, running, when you deploy: Wrangler builds the Actions runner image (`actions/runner/Dockerfile`).
 
 ## 1. Clone and install
 
@@ -24,14 +25,15 @@ yarn wrangler login
 yarn wrangler whoami   # note your account ID
 ```
 
-## 3. Create the D1 database and the LFS bucket
+## 3. Create the D1 database and the R2 buckets
 
 ```bash
 yarn wrangler d1 create gitorange-db
 yarn wrangler r2 bucket create gitorange-lfs
+yarn wrangler r2 bucket create gitorange-actions-logs
 ```
 
-Copy the `database_id` it prints. You don't need to create anything in Artifacts: the namespace is created automatically with the first repository.
+Copy the `database_id` it prints. The second bucket holds Actions step logs. You don't need to create anything in Artifacts: the namespace is created automatically with the first repository.
 
 Git LFS clients upload and download directly to R2 with pre-signed URLs, which need an R2 API token. In the dashboard, open **R2 → Manage API tokens → Create API token**, choose **Object Read & Write**, scope it to the `gitorange-lfs` bucket, and keep the **Access Key ID** and **Secret Access Key** for step 6.
 

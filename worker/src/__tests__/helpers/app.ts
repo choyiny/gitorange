@@ -2,8 +2,43 @@ import { env } from 'cloudflare:test';
 import { app } from '../../index';
 import { createFakeArtifacts } from './fake-artifacts';
 
-export function makeEnv() {
+/** Stand-ins for the Actions Workflow and JobRunner bindings: they record what was asked. */
+function fakeActions() {
+  const started: { id: string; params: unknown }[] = [];
+  const terminated: string[] = [];
+  const destroyed: string[] = [];
+  const instanceStatus = new Map<string, string>();
+  const live = new Map<string, string>();
+  const ACTIONS_RUN = {
+    create: async (opts: { id: string; params: unknown }) => {
+      started.push(opts);
+      return { id: opts.id };
+    },
+    get: async (id: string) => ({
+      id,
+      status: async () => ({ status: instanceStatus.get(id) ?? 'running' }),
+      terminate: async () => void terminated.push(id),
+    }),
+  };
+  const JOB_RUNNER = {
+    getByName: (jobId: string) => ({
+      live: async (step: number) => live.get(`${jobId}:${step}`) ?? null,
+      destroy: async () => void destroyed.push(jobId),
+    }),
+  };
+  return {
+    bindings: { ACTIONS_RUN, JOB_RUNNER },
+    started,
+    terminated,
+    destroyed,
+    instanceStatus,
+    live,
+  };
+}
+
+export function makeEnv(opts: { actions?: boolean } = {}) {
   const fake = createFakeArtifacts();
+  const actions = fakeActions();
   const sent: { to: unknown; subject: string; text?: string }[] = [];
   const testEnv = {
     ...env,
@@ -12,17 +47,24 @@ export function makeEnv() {
       send: async (m: { to: unknown; subject: string; text?: string }) =>
         void sent.push(m),
     },
+    ...(opts.actions ? actions.bindings : {}),
   } as unknown as CloudflareBindings;
-  return { env: testEnv, fake, sent };
+  // Background work (ctx.waitUntil) is collected so tests can await it with settle().
+  const waits: Promise<unknown>[] = [];
+  const ctx = {
+    waitUntil: (p: Promise<unknown>) => void waits.push(p),
+    passThroughOnException: () => {},
+    props: {},
+  } as unknown as ExecutionContext;
+  return { env: testEnv, fake, sent, actions, ctx, waits };
 }
 
 export type TestEnv = ReturnType<typeof makeEnv>;
 
-const ctx = {
-  waitUntil: () => {},
-  passThroughOnException: () => {},
-  props: {},
-} as unknown as ExecutionContext;
+/** Waits for everything the app handed to ctx.waitUntil so far. */
+export async function settle(t: TestEnv) {
+  while (t.waits.length) await Promise.all(t.waits.splice(0));
+}
 
 export async function call(
   t: TestEnv,
@@ -43,7 +85,7 @@ export async function call(
     headers,
     body: opts.json !== undefined ? JSON.stringify(opts.json) : undefined,
   });
-  return app.fetch(req, t.env, ctx);
+  return app.fetch(req, t.env, t.ctx);
 }
 
 export async function signIn(
