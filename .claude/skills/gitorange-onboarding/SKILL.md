@@ -17,7 +17,9 @@ Tell the user this before touching anything, so they can back out cheaply:
 
 - **~15 minutes**, longer if their sending domain still needs DNS verification.
 - **One decision**: which hostname the instance runs on (custom domain or `*.workers.dev`), and which email domain sends invitations.
-- **Cost**: the Cloudflare **Workers Paid** plan (~$5/month) is required, because Artifacts is not on Workers Free. It includes 10,000 Artifacts operations and 1 GB of storage per month; beyond that, $0.15 per 1,000 operations and $0.50 per GB-month.
+- **Cost**: the Cloudflare **Workers Paid** plan (about 5 USD/month) is required, because Artifacts is not on Workers Free. It includes 10,000 Artifacts operations and 1 GB of storage per month; beyond that, 0.15 USD per 1,000 operations and 0.50 USD per GB-month.
+
+<!-- Never write a dollar sign followed by a digit in this file: Claude Code replaces those with the skill arguments. Write amounts as "5 USD". -->
 
 ## Preflight checkpoints (hard gates)
 
