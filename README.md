@@ -13,6 +13,8 @@
 
 There is no VM, no disk to back up, and no git daemon to patch. Repositories live in [Cloudflare Artifacts](https://developers.cloudflare.com/artifacts/), Cloudflare's git-compatible storage. Everything else lives in D1.
 
+**Bring your GitHub Actions workflows.** GitOrange runs the `.github/workflows/*.yml` files you already have, with the same syntax, on [Cloudflare Containers](https://developers.cloudflare.com/containers/). No runners to host. Typical build-and-test workflows (checkout, set up Node, install, test) work unchanged. Repository secrets aren't supported yet. See [what's supported](#github-actions-compatibility).
+
 <img alt="A repository page in GitOrange" src="docs/screenshots/repository.jpg" />
 
 ## Who this is for
@@ -64,7 +66,7 @@ Full docs live in **[docs/](docs/README.md)**: [Setup](docs/setup.md) · [Config
 - **Git LFS** — large files are stored in Cloudflare R2 and transferred directly between `git lfs` and R2 through short-lived signed URLs (up to 5 GB per file). The web UI shows, previews, and downloads LFS files.
 - **Pull requests** — open, comment, close, and reopen; view commits and files changed; merge with a merge commit or squash; delete the branch after merging.
 - **Personal and team repositories** — personal repositories (`/<you>/<repo>`) are private by default: only you, collaborators you add, and site admins can see them, and you can make one internal so every member can read it. Repositories under the shared team (`/<team>/<repo>`, created by a site admin) are visible to every member.
-- **Actions** — CI from the same `.github/workflows/*.yml` files as GitHub Actions. Pushes and pull requests start runs; each job runs in its own Linux container on Cloudflare Containers, with live logs, re-runs, cancel, and a checks box on pull requests. Supported today: `run` steps, `actions/checkout`, `actions/setup-node`, `needs`, `if`, matrix builds, expressions, step and job outputs, `GITHUB_ENV`/`GITHUB_OUTPUT`/`GITHUB_PATH`. Other `uses:` actions fail with a clear message.
+- **GitHub Actions workflows** — your existing `.github/workflows/*.yml` files run as-is on pushes and pull requests. Each job gets its own Linux container on Cloudflare Containers, with live logs, re-runs, cancel, and a checks box on pull requests. See [GitHub Actions compatibility](#github-actions-compatibility).
 - **Access control** — the owner (or a team repository's creator), site admins, and collaborators added in repository settings can push and merge; other members can read what they can see and comment.
 
 Intentionally not here yet: issues, forks, code review comments, and search. See the [roadmap](#roadmap).
@@ -86,10 +88,25 @@ GitOrange is young. Before you rely on it, know that:
 - **Large diffs are truncated.** A diff shows at most 300 files, and files over ~512 KB (or binary files) are listed without their contents. File views skip highlighting above 300 KB and stop rendering above 1 MB (use **Raw**).
 - **Very long histories are approximated.** Merge bases and pull request commit lists walk up to ~2,000 commits, which can mislabel commits on repositories with deep histories between branches.
 - **LFS files are capped at 5 GB, and there's no file locking.** `git lfs lock` reports that locking isn't supported. LFS objects stay in R2 until their repository is deleted, even if no commit references them anymore.
-- **Actions runs a subset of GitHub Actions.** No marketplace actions besides `actions/checkout` and `actions/setup-node`, no secrets yet, no caching or artifacts, no service containers, no `schedule` or `workflow_dispatch` triggers, and no matrix `include`/`exclude`. Jobs run as root on Debian with Node.js 24; there's no per-repository concurrency limit yet.
+- **No Actions secrets yet**, and not every GitHub Actions feature runs. See [GitHub Actions compatibility](#github-actions-compatibility).
 - **No forks.** Pull requests are between branches of the same repository; contributors need to be collaborators.
 - **The first visitor becomes the admin.** Until the admin account exists, anyone who can reach the URL can claim it. Complete setup right after deploying, before sharing the URL.
 - **Artifacts is in beta.** It's open to every Workers Paid account, but its APIs may still change.
+
+## GitHub Actions compatibility
+
+GitOrange reads the same workflow syntax as GitHub Actions. Jobs run on `runs-on: ubuntu-latest` (or `gitorange-standard-2` through `gitorange-standard-4` for bigger machines) in a Debian container with Node.js 24, git, Python, and build tools preinstalled.
+
+| Works today                                                                                    | Not yet                                                                                                                      |
+| ---------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------- |
+| `on: push` and `pull_request`, with `branches`, `tags`, and `paths` filters                    | **Secrets** (`secrets.*`) and `GITHUB_TOKEN`                                                                                 |
+| `run` steps (`bash`, `sh`, `python`, `node` shells), `working-directory`, `defaults.run`       | Marketplace actions other than the two built in: `actions/cache`, `upload-artifact`, `docker/*`, … fail with a clear message |
+| `actions/checkout` and `actions/setup-node`                                                    | `schedule`, `workflow_dispatch`, and other triggers                                                                          |
+| `needs`, `if:` with `success()`/`failure()`/`always()`, `continue-on-error`, `timeout-minutes` | Matrix `include`/`exclude`, reusable workflows, `services`, job `container`                                                  |
+| Matrix builds, `${{ }}` expressions, `env` at every level                                      | Windows and macOS runners                                                                                                    |
+| Step and job outputs, `GITHUB_ENV`, `GITHUB_OUTPUT`, `GITHUB_PATH`                             | Concurrency limits, caching, and artifacts                                                                                   |
+
+A workflow that uses something unsupported fails with a message saying what to change, rather than silently doing the wrong thing.
 
 ## How much does it cost?
 
