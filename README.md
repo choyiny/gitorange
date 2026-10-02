@@ -67,15 +67,12 @@ Intentionally not here yet: issues, forks, code review comments, Actions, and se
 
 ## Architecture at a glance
 
-```
- git CLI ──HTTPS + token──┐                              ┌── D1: users, invites, tokens,
-                          ▼                              │       repos, pull requests
- browser ──────────► GitOrange Worker ───────────────────┼── Artifacts: one git repo per
-                     (API + React SPA + git endpoint)     │       GitOrange repository
-                                                         └── Email Sending: invitations
-```
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/diagrams/architecture-dark.png">
+  <img alt="Browsers and git clients talk to one GitOrange Cloudflare Worker, which serves the API, the web app, and the git endpoint. The Worker keeps metadata in D1, stores every repository in Cloudflare Artifacts, and sends invitations through Email Sending — all inside your Cloudflare account." src="docs/diagrams/architecture.png">
+</picture>
 
-One Worker serves the API, the React interface, and the git endpoint on one origin. For git traffic it checks your token and permissions, then streams the request to Artifacts using a short-lived token scoped to that one repository. Merges are computed inside the Worker and pushed back as ordinary git objects. See [Architecture](docs/architecture.md) for details.
+Everything runs as a single Cloudflare Worker — no git server to operate. Git traffic is authenticated with a personal access token, then streamed to Artifacts with a short-lived token scoped to that one repository; merges are computed inside the Worker and pushed back as ordinary git objects. See [Architecture](docs/architecture.md) for the full breakdown.
 
 ## How much does it cost?
 

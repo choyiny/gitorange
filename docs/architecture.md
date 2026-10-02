@@ -2,6 +2,13 @@
 
 GitOrange is one Cloudflare Worker with three storage backends.
 
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="diagrams/architecture-dark.png">
+  <img alt="Browsers and git clients talk to one GitOrange Cloudflare Worker, which keeps metadata in D1, stores repositories in Cloudflare Artifacts, and sends invitations through Email Sending." src="diagrams/architecture.png">
+</picture>
+
+The diagram's source is [`diagrams/architecture.html`](diagrams/architecture.html) (light) and [`diagrams/architecture-dark.html`](diagrams/architecture-dark.html) (dark); the PNGs are 2× screenshots of them.
+
 | Concern                                                                                   | Where it lives                                                            |
 | ----------------------------------------------------------------------------------------- | ------------------------------------------------------------------------- |
 | Git objects and refs (branches, commits, files)                                           | **Cloudflare Artifacts** — one Artifacts repo per GitOrange repository    |

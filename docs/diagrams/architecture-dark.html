@@ -1,0 +1,687 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>GitOrange architecture (dark)</title>
+    <link
+      href="https://fonts.googleapis.com/css2?family=Mona+Sans:wght@400;600&family=Geist+Mono:wght@400;500&display=swap"
+      rel="stylesheet"
+    />
+    <style>
+      * {
+        margin: 0;
+        padding: 0;
+      }
+      html,
+      body {
+        background: #0d1117;
+      }
+      svg {
+        display: block;
+      }
+    </style>
+  </head>
+  <body>
+    <svg
+      xmlns="http://www.w3.org/2000/svg"
+      viewBox="0 0 960 432"
+      width="960"
+      height="432"
+      role="img"
+      aria-labelledby="gitorange-architecture-dark-title gitorange-architecture-dark-desc"
+    >
+      <title id="gitorange-architecture-dark-title">
+        GitOrange architecture
+      </title>
+      <desc id="gitorange-architecture-dark-desc">
+        Browsers and git clients talk to a single GitOrange Cloudflare Worker,
+        which serves the API, the web app, and the git endpoint, and stores
+        metadata in D1, git repositories in Cloudflare Artifacts, and sends
+        invitations through Email Sending.
+      </desc>
+      <defs>
+        <marker
+          id="gitorange-architecture-dark-arrow"
+          markerWidth="8"
+          markerHeight="6"
+          refX="7"
+          refY="3"
+          orient="auto"
+        >
+          <polygon points="0 0, 8 3, 0 6" fill="#9198a1" />
+        </marker>
+        <marker
+          id="gitorange-architecture-dark-arrow-accent"
+          markerWidth="8"
+          markerHeight="6"
+          refX="7"
+          refY="3"
+          orient="auto"
+        >
+          <polygon points="0 0, 8 3, 0 6" fill="#f6821f" />
+        </marker>
+        <marker
+          id="gitorange-architecture-dark-arrow-link"
+          markerWidth="8"
+          markerHeight="6"
+          refX="7"
+          refY="3"
+          orient="auto"
+        >
+          <polygon points="0 0, 8 3, 0 6" fill="#4493f8" />
+        </marker>
+      </defs>
+      <rect width="100%" height="100%" fill="#0d1117" />
+      <!-- zone: everything inside one Cloudflare account -->
+      <rect
+        x="256"
+        y="32"
+        width="672"
+        height="336"
+        rx="8"
+        fill="rgba(240,246,252,0.02)"
+        stroke="rgba(240,246,252,0.12)"
+        stroke-width="0.8"
+      />
+      <rect x="272" y="36" width="152" height="12" rx="2" fill="#0d1117" />
+      <text
+        x="348"
+        y="45"
+        fill="#8b949e"
+        font-size="7"
+        font-family="'Geist Mono', ui-monospace, monospace"
+        text-anchor="middle"
+        letter-spacing="0.14em"
+      >
+        YOUR CLOUDFLARE ACCOUNT
+      </text>
+      <g>
+        <!-- clients → worker (left edge, fanned at y=184 / y=216) -->
+        <path
+          d="M192,132 H224 Q232,132 232,140 V176 Q232,184 240,184 H336"
+          fill="none"
+          stroke="#4493f8"
+          stroke-width="1.2"
+          marker-end="url(#gitorange-architecture-dark-arrow-link)"
+        />
+        <path
+          d="M192,268 H224 Q232,268 232,260 V224 Q232,216 240,216 H336"
+          fill="none"
+          stroke="#4493f8"
+          stroke-width="1.2"
+          marker-end="url(#gitorange-architecture-dark-arrow-link)"
+        />
+        <!-- worker → services (right edge, fanned at y=172 / 200 / 228) -->
+        <path
+          d="M536,172 H588 Q596,172 596,164 V108 Q596,100 604,100 H656"
+          fill="none"
+          stroke="#9198a1"
+          stroke-width="1.2"
+          marker-end="url(#gitorange-architecture-dark-arrow)"
+        />
+        <line
+          x1="536"
+          y1="200"
+          x2="656"
+          y2="200"
+          stroke="#f6821f"
+          stroke-width="1.2"
+          marker-end="url(#gitorange-architecture-dark-arrow-accent)"
+        />
+        <path
+          d="M536,228 H588 Q596,228 596,236 V292 Q596,300 604,300 H656"
+          fill="none"
+          stroke="#9198a1"
+          stroke-width="1"
+          stroke-dasharray="4,3"
+          marker-end="url(#gitorange-architecture-dark-arrow)"
+        />
+        <rect x="260" y="164" width="56" height="12" rx="2" fill="#0d1117" />
+        <text
+          x="288"
+          y="173"
+          fill="#8b949e"
+          font-size="8"
+          font-family="'Geist Mono', ui-monospace, monospace"
+          text-anchor="middle"
+          letter-spacing="0.06em"
+        >
+          WEB · API
+        </text>
+        <rect x="256" y="196" width="64" height="12" rx="2" fill="#0d1117" />
+        <text
+          x="288"
+          y="205"
+          fill="#8b949e"
+          font-size="8"
+          font-family="'Geist Mono', ui-monospace, monospace"
+          text-anchor="middle"
+          letter-spacing="0.06em"
+        >
+          GIT · TOKEN
+        </text>
+        <rect x="616" y="80" width="28" height="12" rx="2" fill="#0d1117" />
+        <text
+          x="630"
+          y="89"
+          fill="#8b949e"
+          font-size="8"
+          font-family="'Geist Mono', ui-monospace, monospace"
+          text-anchor="middle"
+          letter-spacing="0.06em"
+        >
+          SQL
+        </text>
+        <rect x="564" y="180" width="64" height="12" rx="2" fill="#0d1117" />
+        <text
+          x="596"
+          y="189"
+          fill="#8b949e"
+          font-size="8"
+          font-family="'Geist Mono', ui-monospace, monospace"
+          text-anchor="middle"
+          letter-spacing="0.06em"
+        >
+          READ · PUSH
+        </text>
+        <rect x="614" y="280" width="32" height="12" rx="2" fill="#0d1117" />
+        <text
+          x="630"
+          y="289"
+          fill="#8b949e"
+          font-size="8"
+          font-family="'Geist Mono', ui-monospace, monospace"
+          text-anchor="middle"
+          letter-spacing="0.06em"
+        >
+          SEND
+        </text>
+      </g>
+      <g>
+        <rect x="32" y="96" width="160" height="72" rx="6" fill="#0d1117" />
+        <rect
+          x="32"
+          y="96"
+          width="160"
+          height="72"
+          rx="6"
+          fill="rgba(145,152,161,0.10)"
+          stroke="#8b949e"
+          stroke-width="1"
+        />
+        <rect
+          x="40"
+          y="104"
+          width="48"
+          height="12"
+          rx="2"
+          fill="transparent"
+          stroke="#8b949e"
+          stroke-opacity="0.5"
+          stroke-width="0.8"
+        />
+        <text
+          x="64"
+          y="113"
+          fill="#9198a1"
+          font-size="7"
+          font-family="'Geist Mono', ui-monospace, monospace"
+          text-anchor="middle"
+          letter-spacing="0.08em"
+        >
+          CLIENT
+        </text>
+        <text
+          x="112"
+          y="140"
+          fill="#f0f6fc"
+          font-size="12"
+          font-weight="600"
+          font-family="'Mona Sans', -apple-system, 'Segoe UI', sans-serif"
+          text-anchor="middle"
+        >
+          Browser
+        </text>
+        <text
+          x="112"
+          y="156"
+          fill="#9198a1"
+          font-size="9"
+          font-family="'Geist Mono', ui-monospace, monospace"
+          text-anchor="middle"
+        >
+          GitHub-style UI
+        </text>
+        <rect x="32" y="232" width="160" height="72" rx="6" fill="#0d1117" />
+        <rect
+          x="32"
+          y="232"
+          width="160"
+          height="72"
+          rx="6"
+          fill="rgba(145,152,161,0.10)"
+          stroke="#8b949e"
+          stroke-width="1"
+        />
+        <rect
+          x="40"
+          y="240"
+          width="48"
+          height="12"
+          rx="2"
+          fill="transparent"
+          stroke="#8b949e"
+          stroke-opacity="0.5"
+          stroke-width="0.8"
+        />
+        <text
+          x="64"
+          y="249"
+          fill="#9198a1"
+          font-size="7"
+          font-family="'Geist Mono', ui-monospace, monospace"
+          text-anchor="middle"
+          letter-spacing="0.08em"
+        >
+          CLIENT
+        </text>
+        <text
+          x="112"
+          y="276"
+          fill="#f0f6fc"
+          font-size="12"
+          font-weight="600"
+          font-family="'Mona Sans', -apple-system, 'Segoe UI', sans-serif"
+          text-anchor="middle"
+        >
+          git
+        </text>
+        <text
+          x="112"
+          y="292"
+          fill="#9198a1"
+          font-size="9"
+          font-family="'Geist Mono', ui-monospace, monospace"
+          text-anchor="middle"
+        >
+          clone · push
+        </text>
+        <rect x="336" y="144" width="200" height="112" rx="6" fill="#0d1117" />
+        <rect
+          x="336"
+          y="144"
+          width="200"
+          height="112"
+          rx="6"
+          fill="rgba(246,130,31,0.14)"
+          stroke="#f6821f"
+          stroke-width="1"
+        />
+        <rect
+          x="344"
+          y="152"
+          width="48"
+          height="12"
+          rx="2"
+          fill="transparent"
+          stroke="#f6821f"
+          stroke-opacity="0.5"
+          stroke-width="0.8"
+        />
+        <text
+          x="368"
+          y="161"
+          fill="#ffa657"
+          font-size="7"
+          font-family="'Geist Mono', ui-monospace, monospace"
+          text-anchor="middle"
+          letter-spacing="0.08em"
+        >
+          WORKER
+        </text>
+        <text
+          x="436"
+          y="196"
+          fill="#f0f6fc"
+          font-size="12"
+          font-weight="600"
+          font-family="'Mona Sans', -apple-system, 'Segoe UI', sans-serif"
+          text-anchor="middle"
+        >
+          GitOrange Worker
+        </text>
+        <text
+          x="436"
+          y="212"
+          fill="#9198a1"
+          font-size="9"
+          font-family="'Geist Mono', ui-monospace, monospace"
+          text-anchor="middle"
+        >
+          API + React SPA
+        </text>
+        <text
+          x="436"
+          y="224"
+          fill="#9198a1"
+          font-size="9"
+          font-family="'Geist Mono', ui-monospace, monospace"
+          text-anchor="middle"
+        >
+          git smart-HTTP proxy
+        </text>
+        <text
+          x="436"
+          y="236"
+          fill="#9198a1"
+          font-size="9"
+          font-family="'Geist Mono', ui-monospace, monospace"
+          text-anchor="middle"
+        >
+          /&lt;owner&gt;/&lt;repo&gt;.git
+        </text>
+        <rect x="656" y="64" width="240" height="72" rx="6" fill="#0d1117" />
+        <rect
+          x="656"
+          y="64"
+          width="240"
+          height="72"
+          rx="6"
+          fill="rgba(240,246,252,0.05)"
+          stroke="#9198a1"
+          stroke-width="1"
+        />
+        <rect
+          x="664"
+          y="72"
+          width="28"
+          height="12"
+          rx="2"
+          fill="transparent"
+          stroke="#9198a1"
+          stroke-opacity="0.5"
+          stroke-width="0.8"
+        />
+        <text
+          x="678"
+          y="81"
+          fill="#9198a1"
+          font-size="7"
+          font-family="'Geist Mono', ui-monospace, monospace"
+          text-anchor="middle"
+          letter-spacing="0.08em"
+        >
+          D1
+        </text>
+        <text
+          x="776"
+          y="108"
+          fill="#f0f6fc"
+          font-size="12"
+          font-weight="600"
+          font-family="'Mona Sans', -apple-system, 'Segoe UI', sans-serif"
+          text-anchor="middle"
+        >
+          D1 database
+        </text>
+        <text
+          x="776"
+          y="124"
+          fill="#9198a1"
+          font-size="9"
+          font-family="'Geist Mono', ui-monospace, monospace"
+          text-anchor="middle"
+        >
+          users · invites · tokens · PRs
+        </text>
+        <rect x="656" y="164" width="240" height="72" rx="6" fill="#0d1117" />
+        <rect
+          x="656"
+          y="164"
+          width="240"
+          height="72"
+          rx="6"
+          fill="rgba(240,246,252,0.05)"
+          stroke="#9198a1"
+          stroke-width="1"
+        />
+        <rect
+          x="664"
+          y="172"
+          width="32"
+          height="12"
+          rx="2"
+          fill="transparent"
+          stroke="#9198a1"
+          stroke-opacity="0.5"
+          stroke-width="0.8"
+        />
+        <text
+          x="680"
+          y="181"
+          fill="#9198a1"
+          font-size="7"
+          font-family="'Geist Mono', ui-monospace, monospace"
+          text-anchor="middle"
+          letter-spacing="0.08em"
+        >
+          GIT
+        </text>
+        <text
+          x="776"
+          y="208"
+          fill="#f0f6fc"
+          font-size="12"
+          font-weight="600"
+          font-family="'Mona Sans', -apple-system, 'Segoe UI', sans-serif"
+          text-anchor="middle"
+        >
+          Cloudflare Artifacts
+        </text>
+        <text
+          x="776"
+          y="224"
+          fill="#9198a1"
+          font-size="9"
+          font-family="'Geist Mono', ui-monospace, monospace"
+          text-anchor="middle"
+        >
+          one git repo per repository
+        </text>
+        <rect x="656" y="264" width="240" height="72" rx="6" fill="#0d1117" />
+        <rect
+          x="656"
+          y="264"
+          width="240"
+          height="72"
+          rx="6"
+          fill="rgba(240,246,252,0.03)"
+          stroke="rgba(240,246,252,0.30)"
+          stroke-width="1"
+          stroke-dasharray="4,3"
+        />
+        <rect
+          x="664"
+          y="272"
+          width="44"
+          height="12"
+          rx="2"
+          fill="transparent"
+          stroke="rgba(240,246,252,0.30)"
+          stroke-opacity="0.5"
+          stroke-width="0.8"
+        />
+        <text
+          x="686"
+          y="281"
+          fill="#9198a1"
+          font-size="7"
+          font-family="'Geist Mono', ui-monospace, monospace"
+          text-anchor="middle"
+          letter-spacing="0.08em"
+        >
+          EMAIL
+        </text>
+        <text
+          x="776"
+          y="308"
+          fill="#f0f6fc"
+          font-size="12"
+          font-weight="600"
+          font-family="'Mona Sans', -apple-system, 'Segoe UI', sans-serif"
+          text-anchor="middle"
+        >
+          Email Sending
+        </text>
+        <text
+          x="776"
+          y="324"
+          fill="#9198a1"
+          font-size="9"
+          font-family="'Geist Mono', ui-monospace, monospace"
+          text-anchor="middle"
+        >
+          invitation emails
+        </text>
+      </g>
+      <g>
+        <line
+          x1="32"
+          y1="384"
+          x2="928"
+          y2="384"
+          stroke="rgba(240,246,252,0.15)"
+          stroke-width="0.8"
+        />
+        <text
+          x="32"
+          y="410"
+          fill="#9198a1"
+          font-size="8"
+          font-family="'Geist Mono', ui-monospace, monospace"
+          letter-spacing="0.14em"
+        >
+          LEGEND
+        </text>
+        <rect
+          x="112"
+          y="400"
+          width="16"
+          height="12"
+          rx="2"
+          fill="rgba(246,130,31,0.14)"
+          stroke="#f6821f"
+          stroke-width="1"
+        />
+        <text
+          x="136"
+          y="410"
+          fill="#9198a1"
+          font-size="8"
+          font-family="'Geist Mono', ui-monospace, monospace"
+          letter-spacing="0.06em"
+        >
+          THE WORKER
+        </text>
+        <rect
+          x="240"
+          y="400"
+          width="16"
+          height="12"
+          rx="2"
+          fill="rgba(145,152,161,0.10)"
+          stroke="#8b949e"
+          stroke-width="1"
+        />
+        <text
+          x="264"
+          y="410"
+          fill="#9198a1"
+          font-size="8"
+          font-family="'Geist Mono', ui-monospace, monospace"
+          letter-spacing="0.06em"
+        >
+          CLIENT
+        </text>
+        <rect
+          x="344"
+          y="400"
+          width="16"
+          height="12"
+          rx="2"
+          fill="rgba(240,246,252,0.05)"
+          stroke="#9198a1"
+          stroke-width="1"
+        />
+        <text
+          x="368"
+          y="410"
+          fill="#9198a1"
+          font-size="8"
+          font-family="'Geist Mono', ui-monospace, monospace"
+          letter-spacing="0.06em"
+        >
+          STORAGE
+        </text>
+        <rect
+          x="456"
+          y="400"
+          width="16"
+          height="12"
+          rx="2"
+          fill="rgba(240,246,252,0.03)"
+          stroke="rgba(240,246,252,0.30)"
+          stroke-width="1"
+          stroke-dasharray="4,3"
+        />
+        <text
+          x="480"
+          y="410"
+          fill="#9198a1"
+          font-size="8"
+          font-family="'Geist Mono', ui-monospace, monospace"
+          letter-spacing="0.06em"
+        >
+          OUTBOUND SERVICE
+        </text>
+        <line
+          x1="616"
+          y1="406"
+          x2="648"
+          y2="406"
+          stroke="#4493f8"
+          stroke-width="1.2"
+        />
+        <text
+          x="656"
+          y="410"
+          fill="#9198a1"
+          font-size="8"
+          font-family="'Geist Mono', ui-monospace, monospace"
+          letter-spacing="0.06em"
+        >
+          USER TRAFFIC
+        </text>
+        <line
+          x1="776"
+          y1="406"
+          x2="808"
+          y2="406"
+          stroke="#f6821f"
+          stroke-width="1.2"
+        />
+        <text
+          x="816"
+          y="410"
+          fill="#9198a1"
+          font-size="8"
+          font-family="'Geist Mono', ui-monospace, monospace"
+          letter-spacing="0.06em"
+        >
+          GIT STORAGE
+        </text>
+      </g>
+    </svg>
+  </body>
+</html>
