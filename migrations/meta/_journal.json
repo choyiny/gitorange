@@ -15,6 +15,13 @@
       "when": 1790901597778,
       "tag": "0001_zippy_gambit",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "6",
+      "when": 1790914676048,
+      "tag": "0002_brave_mother_askani",
+      "breakpoints": true
     }
   ]
 }

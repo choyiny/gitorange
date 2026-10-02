@@ -131,5 +131,26 @@ export const pullRequestComments = sqliteTable(
   (t) => [index('pull_request_comments_pr_idx').on(t.pullRequestId)]
 );
 
+// Git LFS objects. Bytes live in R2 under `r2_key` (a bare key, never a URL); a row exists only
+// once the upload is confirmed in R2. One copy per repository, so deleting a repo deletes its prefix.
+export const lfsObjects = sqliteTable(
+  'lfs_objects',
+  {
+    id: text('id').primaryKey(),
+    repositoryId: text('repository_id')
+      .notNull()
+      .references(() => repositories.id, { onDelete: 'cascade' }),
+    oid: text('oid').notNull(),
+    size: integer('size').notNull(),
+    r2Key: text('r2_key').notNull(),
+    uploadedById: text('uploaded_by_id').references(() => users.id, {
+      onDelete: 'set null',
+    }),
+    createdAt: integer('created_at', { mode: 'timestamp' }).notNull(),
+  },
+  (t) => [uniqueIndex('lfs_objects_repo_oid_uq').on(t.repositoryId, t.oid)]
+);
+
 export type Repository = typeof repositories.$inferSelect;
+export type LfsObject = typeof lfsObjects.$inferSelect;
 export type PullRequest = typeof pullRequests.$inferSelect;

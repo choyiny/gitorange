@@ -60,6 +60,7 @@ Full docs live in **[docs/](docs/README.md)**: [Setup](docs/setup.md) · [Config
 - **Unlimited repositories** — create empty or with a README; browse files, Markdown READMEs, history, and per-commit diffs.
 - **Syntax highlighting** — GitHub's color scheme for 35+ languages in file views and diffs, in light and dark mode.
 - **Git over HTTPS** — `git clone https://your-host/<owner>/<repo>.git` with a personal access token as the password.
+- **Git LFS** — large files are stored in Cloudflare R2 and transferred directly between `git lfs` and R2 through short-lived signed URLs (up to 5 GB per file). The web UI shows, previews, and downloads LFS files.
 - **Pull requests** — open, comment, close, and reopen; view commits and files changed; merge with a merge commit or squash; delete the branch after merging.
 - **Access control** — every member can read every repository; the owner, site admins, and collaborators added in repository settings can push and merge.
 
@@ -72,7 +73,7 @@ Intentionally not here yet: issues, forks, code review comments, Actions, and se
   <img alt="Browsers and git clients talk to one GitOrange Cloudflare Worker, which serves the API, the web app, and the git endpoint. The Worker keeps metadata in D1, stores every repository in Cloudflare Artifacts, and sends invitations through Email Sending — all inside your Cloudflare account." src="docs/diagrams/architecture.png">
 </picture>
 
-Everything runs as a single Cloudflare Worker — no git server to operate. Git traffic is authenticated with a personal access token, then streamed to Artifacts with a short-lived token scoped to that one repository; merges are computed inside the Worker and pushed back as ordinary git objects. See [Architecture](docs/architecture.md) for the full breakdown.
+Everything runs as a single Cloudflare Worker — no git server to operate. Git LFS files live in R2 and never pass through the Worker. Git traffic is authenticated with a personal access token, then streamed to Artifacts with a short-lived token scoped to that one repository; merges are computed inside the Worker and pushed back as ordinary git objects. See [Architecture](docs/architecture.md) for the full breakdown.
 
 ## Known limitations
 
@@ -81,13 +82,14 @@ GitOrange is young. Before you rely on it, know that:
 - **Merge conflicts are resolved locally.** Merging is file-level: if both branches changed the same file, the pull request reports a conflict and you merge `main` into your branch locally, then push. There's no in-browser conflict editor or line-level auto-merge yet.
 - **Large diffs are truncated.** A diff shows at most 300 files, and files over ~512 KB (or binary files) are listed without their contents. File views skip highlighting above 300 KB and stop rendering above 1 MB (use **Raw**).
 - **Very long histories are approximated.** Merge bases and pull request commit lists walk up to ~2,000 commits, which can mislabel commits on repositories with deep histories between branches.
+- **LFS files are capped at 5 GB, and there's no file locking.** `git lfs lock` reports that locking isn't supported. LFS objects stay in R2 until their repository is deleted, even if no commit references them anymore.
 - **No forks.** Pull requests are between branches of the same repository; contributors need to be collaborators.
 - **The first visitor becomes the admin.** Until the admin account exists, anyone who can reach the URL can claim it. Complete setup right after deploying, before sharing the URL.
 - **Artifacts is in beta.** It's open to every Workers Paid account, but its APIs may still change.
 
 ## How much does it cost?
 
-**$5/month** for the Cloudflare Workers Paid plan, which Artifacts requires. Included each month: 10,000 Artifacts operations (a clone, fetch, push, or repo creation) and 1 GB of repository storage. Beyond that, Artifacts bills $0.15 per 1,000 operations and $0.50 per GB-month ([pricing](https://developers.cloudflare.com/artifacts/platform/pricing/)). D1 and Email Sending usage for a small team stays within the plan's included amounts.
+**$5/month** for the Cloudflare Workers Paid plan, which Artifacts requires. Included each month: 10,000 Artifacts operations (a clone, fetch, push, or repo creation) and 1 GB of repository storage. Beyond that, Artifacts bills $0.15 per 1,000 operations and $0.50 per GB-month ([pricing](https://developers.cloudflare.com/artifacts/platform/pricing/)). Git LFS storage is R2: the first 10 GB-month is free, then $0.015 per GB-month, and downloads are free ([pricing](https://developers.cloudflare.com/r2/pricing/)). D1 and Email Sending usage for a small team stays within the plan's included amounts.
 
 ## Roadmap
 

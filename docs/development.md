@@ -10,7 +10,8 @@
 ```bash
 yarn install
 cp wrangler.jsonc.example wrangler.jsonc   # set account_id and env.dev values
-cp .dev.vars.example .dev.vars             # set BETTER_AUTH_SECRET
+cp .dev.vars.example .dev.vars             # set BETTER_AUTH_SECRET (and R2_* for Git LFS)
+yarn wrangler r2 bucket create gitorange-lfs-dev   # only if you'll use Git LFS locally
 yarn db:migrate:local
 yarn dev                                   # http://localhost:8080
 ```

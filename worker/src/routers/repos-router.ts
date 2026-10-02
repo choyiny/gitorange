@@ -1,6 +1,7 @@
 import { OpenAPIHono, createRoute, z } from '@hono/zod-openapi';
 import { and, desc, eq, sql } from 'drizzle-orm';
 import {
+  lfsObjects,
   pullRequests,
   repositories,
   repositoryCollaborators,
@@ -16,6 +17,14 @@ import {
   normalizeRepoName,
   type RepoEnv,
 } from '../lib/repos';
+import {
+  LFS_NOT_CONFIGURED,
+  OID_RE,
+  deleteRepositoryObjects,
+  lfsConfigured,
+  parseLfsPointer,
+  presign,
+} from '../lib/lfs';
 import { toPublicUser, userByUsername, type PublicUser } from '../lib/users';
 import {
   json200Response,
@@ -24,6 +33,7 @@ import {
   json403Response,
   json404Response,
   json409Response,
+  errorSchema,
   okSchema,
   validationHook,
 } from './openapi-helpers';
@@ -310,6 +320,8 @@ reposRouter.openapi(deleteRepoRoute, async (c) => {
   const repo = c.get('repo');
   await c.get('db').delete(repositories).where(eq(repositories.id, repo.id));
   await c.env.ARTIFACTS.delete(repo.artifactsName);
+  // LFS rows cascade with the repository; their R2 bytes have to go explicitly.
+  await deleteRepositoryObjects(c.env, repo.id);
   return c.json({ ok: true as const }, 200);
 });
 
@@ -449,6 +461,10 @@ const contentsSchema = z.object({
       binary: z.boolean(),
       tooLarge: z.boolean(),
       text: z.string().nullable(),
+      // Set when the blob is a Git LFS pointer; `stored` says whether the content was uploaded.
+      lfs: z
+        .object({ oid: z.string(), size: z.number(), stored: z.boolean() })
+        .nullable(),
     })
     .optional(),
 });
@@ -520,6 +536,26 @@ reposRouter.openapi(contentsRoute, async (c) => {
   const bytes = (await git.blob(entry.entry.hash)) ?? new Uint8Array();
   const binary = bytes.subarray(0, 8000).includes(0);
   const tooLarge = bytes.length > MAX_FILE_VIEW;
+  const pointer =
+    !binary && bytes.length <= 1024
+      ? parseLfsPointer(decoder.decode(bytes))
+      : null;
+  const lfs = pointer
+    ? {
+        ...pointer,
+        stored: !!(await c
+          .get('db')
+          .select({ id: lfsObjects.id })
+          .from(lfsObjects)
+          .where(
+            and(
+              eq(lfsObjects.repositoryId, repo.id),
+              eq(lfsObjects.oid, pointer.oid)
+            )
+          )
+          .get()),
+      }
+    : null;
   return c.json(
     {
       ...base,
@@ -530,6 +566,7 @@ reposRouter.openapi(contentsRoute, async (c) => {
         binary,
         tooLarge,
         text: binary || tooLarge ? null : decoder.decode(bytes),
+        lfs,
       },
     },
     200
@@ -584,6 +621,45 @@ reposRouter.openapi(rawRoute, async (c) => {
       'Content-Security-Policy': "default-src 'none'; sandbox",
     },
   }) as never;
+});
+
+const lfsDownloadRoute = createRoute({
+  method: 'get',
+  path: '/{owner}/{repo}/lfs/{oid}',
+  tags: ['Contents'],
+  request: {
+    params: ownerRepoParams.extend({ oid: z.string().regex(OID_RE) }),
+    query: z.object({ filename: z.string().max(255).optional() }),
+  },
+  responses: {
+    302: { description: 'Redirect to a short-lived download URL' },
+    ...json404Response,
+    501: {
+      content: { 'application/json': { schema: errorSchema } },
+      description: 'LFS not configured',
+    },
+  },
+});
+reposRouter.openapi(lfsDownloadRoute, async (c) => {
+  if (!lfsConfigured(c.env)) return c.json({ error: LFS_NOT_CONFIGURED }, 501);
+  const { oid } = c.req.valid('param');
+  const row = await c
+    .get('db')
+    .select()
+    .from(lfsObjects)
+    .where(
+      and(
+        eq(lfsObjects.repositoryId, c.get('repo').id),
+        eq(lfsObjects.oid, oid)
+      )
+    )
+    .get();
+  if (!row) return c.json({ error: 'LFS object not found' }, 404);
+  // Minted after the permission check (loadRepo) and never stored.
+  const url = await presign(c.env, row.r2Key, 'GET', {
+    filename: c.req.valid('query').filename,
+  });
+  return c.redirect(url, 302);
 });
 
 // ── history ──────────────────────────────────────────────────────────────────

@@ -9,12 +9,13 @@ GitOrange is one Cloudflare Worker with three storage backends.
 
 The diagram's source is [`diagrams/architecture.html`](diagrams/architecture.html) (light) and [`diagrams/architecture-dark.html`](diagrams/architecture-dark.html) (dark); the PNGs are 2× screenshots of them.
 
-| Concern                                                                                   | Where it lives                                                            |
-| ----------------------------------------------------------------------------------------- | ------------------------------------------------------------------------- |
-| Git objects and refs (branches, commits, files)                                           | **Cloudflare Artifacts** — one Artifacts repo per GitOrange repository    |
-| Users, sessions, invitations, access tokens, repository metadata, pull requests, comments | **D1**                                                                    |
-| Invitation emails                                                                         | **Cloudflare Email Sending**                                              |
-| Web interface                                                                             | React SPA in `src/`, served from the same Worker via the `ASSETS` binding |
+| Concern                                                                                   | Where it lives                                                                                          |
+| ----------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------- |
+| Git objects and refs (branches, commits, files)                                           | **Cloudflare Artifacts** — one Artifacts repo per GitOrange repository                                  |
+| Users, sessions, invitations, access tokens, repository metadata, pull requests, comments | **D1**                                                                                                  |
+| Invitation emails                                                                         | **Cloudflare Email Sending**                                                                            |
+| Git LFS file contents                                                                     | **R2**, one object per repository and oid; D1's `lfs_objects` records which objects each repository has |
+| Web interface                                                                             | React SPA in `src/`, served from the same Worker via the `ASSETS` binding                               |
 
 Nothing about git content is copied into D1. The repository page, history, and diffs are read from Artifacts on each request.
 
@@ -46,6 +47,18 @@ Artifacts has no merge API and the binding cannot write objects, so GitOrange wr
 4. Only after the push succeeds is the pull request marked merged in D1.
 
 On merge or close, the head commit is pinned at `refs/pull/<n>/head`, so a pull request's diff stays viewable after its branch is deleted.
+
+## Git LFS
+
+`https://host/<owner>/<repo>.git/info/lfs/...` implements the Git LFS [Batch API](https://github.com/git-lfs/git-lfs/blob/main/docs/api/batch.md) with the `basic` transfer adapter ([`worker/src/lfs-http.ts`](../worker/src/lfs-http.ts)). It shares the git endpoint's token authentication and repository permissions: any member can download, writers can upload.
+
+1. `git lfs` posts a batch of `{oid, size}` objects.
+2. For uploads, the worker returns a 15-minute pre-signed R2 `PUT` URL, signed together with an `x-amz-checksum-sha256` header equal to the oid so R2 rejects content that doesn't hash to it. For downloads it returns a pre-signed `GET`. Bytes never pass through the worker.
+3. After uploading, the client calls `verify`. The worker checks that R2 holds the object at the declared size (and checksum), then records it in `lfs_objects`. Batch responses also adopt objects that are in R2 but were never verified.
+
+URLs are minted per request after the permission check and never stored; D1 keeps only the bare R2 key. Objects are stored once per repository (`lfs/<repository id>/<oid>`), so deleting a repository deletes its prefix. Locking isn't implemented: listing and verifying locks return empty, and creating one returns 501.
+
+In the web UI, a file whose blob is an LFS pointer shows the real size, an image preview, and a download link that redirects to a pre-signed URL.
 
 ## Access model
 

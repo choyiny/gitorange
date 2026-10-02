@@ -60,6 +60,8 @@ export type Contents = {
     binary: boolean;
     tooLarge: boolean;
     text: string | null;
+    /** Set when the file is a Git LFS pointer; `stored` says whether the content was uploaded. */
+    lfs: { oid: string; size: number; stored: boolean } | null;
   };
 };
 export type Hunk = {
@@ -223,6 +225,8 @@ export const api = {
     apiFetch<Record<string, Commit>>(
       `${r(o, n)}/tree-commits?${q({ ref, path })}`
     ),
+  lfsUrl: (o: string, n: string, oid: string, filename?: string) =>
+    `${r(o, n)}/lfs/${oid}${filename ? `?${q({ filename })}` : ''}`,
   rawUrl: (o: string, n: string, ref: string, path: string) =>
     `${r(o, n)}/raw?${q({ ref, path })}`,
   commits: (o: string, n: string, ref: string, page: number) =>

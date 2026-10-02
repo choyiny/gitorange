@@ -272,6 +272,52 @@ function TreeView({ repo, data }: { repo: RepoDetail; data: Contents }) {
   );
 }
 
+const IMAGE_RE = /\.(png|jpe?g|gif|webp|avif|bmp|ico)$/i;
+
+/** A file whose content lives in Git LFS: show the real file, not the pointer text. */
+function LfsFileView({ repo, data }: { repo: RepoDetail; data: Contents }) {
+  const f = data.file!;
+  const lfs = f.lfs!;
+  const name = f.path.split('/').pop()!;
+  const download = api.lfsUrl(repo.owner.username, repo.name, lfs.oid, name);
+  const preview = api.lfsUrl(repo.owner.username, repo.name, lfs.oid);
+  return (
+    <div className="Box mb-4">
+      <LatestCommitBar repo={repo} data={data} />
+      <div className="Box-header d-flex flex-items-center flex-justify-between py-2">
+        <span
+          className="f6 color-fg-muted text-mono d-inline-flex flex-items-center"
+          style={{ gap: 6 }}
+        >
+          {formatBytes(lfs.size)}
+          <span className="Label">Stored with Git LFS</span>
+        </span>
+        {lfs.stored && (
+          <a href={download} className="btn btn-sm">
+            Download
+          </a>
+        )}
+      </div>
+      <div className="p-6 text-center color-fg-muted">
+        {!lfs.stored ? (
+          <>
+            This file is tracked with Git LFS, but its content hasn't been
+            uploaded to this server. Push it with{' '}
+            <code>git lfs push --all origin</code>.
+          </>
+        ) : IMAGE_RE.test(name) ? (
+          <img src={preview} alt={name} style={{ maxWidth: '100%' }} />
+        ) : (
+          <>
+            This file is stored with Git LFS. <a href={download}>Download it</a>{' '}
+            to view it.
+          </>
+        )}
+      </div>
+    </div>
+  );
+}
+
 function BlobView({ repo, data }: { repo: RepoDetail; data: Contents }) {
   const f = data.file!;
   const lines = f.text?.split('\n') ?? [];
@@ -404,6 +450,8 @@ export default function RepoCode() {
         <div className="flex-1" style={{ minWidth: 0 }}>
           {data.kind === 'tree' ? (
             <TreeView repo={repo} data={data} />
+          ) : data.file?.lfs ? (
+            <LfsFileView repo={repo} data={data} />
           ) : (
             <BlobView repo={repo} data={data} />
           )}

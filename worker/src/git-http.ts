@@ -1,9 +1,19 @@
 import { drizzle } from 'drizzle-orm/d1';
 import { eq } from 'drizzle-orm';
 import { schema } from './db/schema';
-import { personalAccessTokens, repositories } from './db/app.schema';
+import {
+  personalAccessTokens,
+  repositories,
+  type Repository,
+} from './db/app.schema';
+import type { DrizzleD1Database } from 'drizzle-orm/d1';
 import { users } from './db/auth.schema';
-import { findRepo, gitFor, permissionsFor } from './lib/repos';
+import {
+  findRepo,
+  gitFor,
+  permissionsFor,
+  type RepoPermissions,
+} from './lib/repos';
 import { hashToken } from './lib/tokens';
 
 const GIT_PATH =
@@ -41,24 +51,29 @@ function parseBasic(
   }
 }
 
+export type GitAccess = {
+  db: DrizzleD1Database<typeof schema>;
+  user: typeof users.$inferSelect;
+  repo: Repository;
+  perms: RepoPermissions;
+};
+
 /**
- * Git smart-HTTP endpoint: `https://host/<owner>/<repo>.git`. Authenticates the user with a
- * personal access token, authorizes against the repo, then streams the request to the
- * Artifacts remote with a short-lived repo-scoped token. Artifacts credentials never leave the worker.
+ * Shared front door for the git and Git LFS endpoints: authenticates a personal access token
+ * (Basic auth, token in either slot like GitHub) and resolves read access to the repository.
+ * Returns the access context, or the Response to send (401 challenge / 404).
  */
-export async function handleGitRequest(
+export async function authenticateRepoRequest(
   request: Request,
   env: CloudflareBindings,
-  ctx: ExecutionContext
-): Promise<Response> {
-  const url = new URL(request.url);
-  const [, owner, name, endpoint] = url.pathname.match(GIT_PATH)!;
+  ctx: ExecutionContext,
+  owner: string,
+  name: string
+): Promise<GitAccess | Response> {
   const realm = env.APP_NAME || 'GitOrange';
   const db = drizzle(env.DB, { schema });
-
   const creds = parseBasic(request.headers.get('Authorization'));
   if (!creds) return unauthorized(realm);
-  // Like GitHub, accept the token in either slot.
   const token =
     creds.pass && creds.pass !== 'x-oauth-basic' ? creds.pass : creds.user;
   const pat = await db
@@ -80,11 +95,28 @@ export async function handleGitRequest(
       .where(eq(personalAccessTokens.id, pat.pat.id))
       .run()
   );
-
   const found = await findRepo(db, owner, name);
   const perms = found ? await permissionsFor(db, found.repo, pat.user) : null;
   if (!found || !perms?.read)
     return new Response('Repository not found.\n', { status: 404 });
+  return { db, user: pat.user, repo: found.repo, perms };
+}
+
+/**
+ * Git smart-HTTP endpoint: `https://host/<owner>/<repo>.git`. Authenticates the user with a
+ * personal access token, authorizes against the repo, then streams the request to the
+ * Artifacts remote with a short-lived repo-scoped token. Artifacts credentials never leave the worker.
+ */
+export async function handleGitRequest(
+  request: Request,
+  env: CloudflareBindings,
+  ctx: ExecutionContext
+): Promise<Response> {
+  const url = new URL(request.url);
+  const [, owner, name, endpoint] = url.pathname.match(GIT_PATH)!;
+  const access = await authenticateRepoRequest(request, env, ctx, owner, name);
+  if (access instanceof Response) return access;
+  const { user, repo, perms } = access;
 
   const service =
     endpoint === 'info/refs' ? url.searchParams.get('service') : endpoint;
@@ -102,7 +134,7 @@ export async function handleGitRequest(
   const isPush = service === 'git-receive-pack';
   if (isPush && !perms.write) {
     return new Response(
-      `Permission to ${owner}/${name}.git denied to ${pat.user.username}.\n`,
+      `Permission to ${owner}/${name}.git denied to ${user.username}.\n`,
       { status: 403 }
     );
   }
@@ -118,7 +150,7 @@ export async function handleGitRequest(
     const v = request.headers.get(h);
     if (v) headers.set(h, v);
   }
-  const git = gitFor(env, found.repo);
+  const git = gitFor(env, repo);
   const upstream = await git.client.forward(
     `/${endpoint}${url.search}`,
     {
@@ -138,12 +170,7 @@ export async function handleGitRequest(
     // Receive-pack responses are small status reports; buffer so we can sync metadata after the push lands.
     const body = await upstream.arrayBuffer();
     ctx.waitUntil(
-      afterPush(
-        env,
-        found.repo.id,
-        found.repo.defaultBranch,
-        found.repo.artifactsName
-      )
+      afterPush(env, repo.id, repo.defaultBranch, repo.artifactsName)
     );
     return new Response(body, {
       status: upstream.status,

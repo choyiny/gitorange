@@ -5,6 +5,7 @@ import { createAuth } from './auth';
 import { requireAuth } from './auth/guards';
 import { injectDb } from './db/middleware';
 import { handleGitRequest, isGitRequest } from './git-http';
+import { handleLfsRequest, isLfsRequest } from './lfs-http';
 import { invitesRouter } from './routers/invites-router';
 import { pullsRouter } from './routers/pulls-router';
 import { reposRouter } from './routers/repos-router';
@@ -65,6 +66,7 @@ export default {
   fetch(request, env, ctx) {
     const url = new URL(request.url);
     if (isGitRequest(url)) return handleGitRequest(request, env, ctx);
+    if (isLfsRequest(url)) return handleLfsRequest(request, env, ctx);
     return app.fetch(request, env, ctx);
   },
 } satisfies ExportedHandler<CloudflareBindings>;

@@ -17,6 +17,10 @@ and better-auth. Git storage is **Cloudflare Artifacts**: one Artifacts repo per
   `worker/src/git/service.ts`) and written as a packfile pushed over `git-receive-pack`
   with compare-and-swap on the base ref.
 - Access: every member reads every repo; owner, site admins, and collaborators push and merge.
+- Git LFS (`worker/src/lfs-http.ts`, `worker/src/lib/lfs.ts`): Batch API at `/<owner>/<repo>.git/info/lfs/...`,
+  sharing the git endpoint's auth. Bytes go client ↔ R2 directly via pre-signed URLs (needs the
+  `R2_ACCESS_KEY_ID`/`R2_SECRET_ACCESS_KEY` secrets); D1 `lfs_objects` holds bare R2 keys, never URLs. One copy
+  per repository under `lfs/<repository id>/`, deleted with the repository.
 - Artifacts has no local emulator: `yarn dev` runs `env.dev`, which uses the remote service in the
   `gitorange-dev` namespace. Tests use `wrangler.test.jsonc` (no remote bindings) plus an in-memory
   Artifacts fake.

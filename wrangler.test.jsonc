@@ -17,6 +17,7 @@
       "migrations_dir": "migrations",
     },
   ],
+  "r2_buckets": [{ "binding": "LFS", "bucket_name": "gitorange-lfs-test" }],
   "assets": {
     "binding": "ASSETS",
     "directory": "./dist/client",
@@ -26,5 +27,7 @@
     "APP_NAME": "GitOrange",
     "FROM_EMAIL": "test@example.com",
     "BASE_URL": "http://test.local",
+    "R2_ACCOUNT_ID": "0123456789abcdef0123456789abcdef",
+    "LFS_BUCKET_NAME": "gitorange-lfs-test",
   },
 }

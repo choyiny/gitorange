@@ -11,27 +11,31 @@ Binding names are load-bearing — the worker looks them up by exact name. Resou
 | `d1_databases[].binding` | `"DB"`         | Users, invitations, tokens, repositories, pull requests, comments |
 | `artifacts[].binding`    | `"ARTIFACTS"`  | Git storage. `namespace` groups this instance's repositories      |
 | `send_email[].name`      | `"EMAIL"`      | Outbound invitation email via Cloudflare Email Sending            |
+| `r2_buckets[].binding`   | `"LFS"`        | Git LFS file contents, keyed `lfs/<repository id>/<oid>`          |
 | `assets.binding`         | `"ASSETS"`     | The built React app in `dist/client`                              |
 
 Keep `assets.run_worker_first` as shipped: the git endpoint (`/<owner>/<repo>.git/...`) and `/api/*` must reach the worker before static asset handling.
 
 ## Variables
 
-| Variable     | Example                   | Purpose                                                                                        |
-| ------------ | ------------------------- | ---------------------------------------------------------------------------------------------- |
-| `APP_NAME`   | `GitOrange`               | Name shown in emails and the git auth realm                                                    |
-| `BASE_URL`   | `https://git.example.com` | Public origin; used for auth and trusted origins. Cookies are `Secure` when this is `https://` |
-| `FROM_EMAIL` | `noreply@example.com`     | Sender for invitation emails; its domain must be onboarded to Email Sending                    |
+| Variable          | Example                   | Purpose                                                                                                       |
+| ----------------- | ------------------------- | ------------------------------------------------------------------------------------------------------------- |
+| `APP_NAME`        | `GitOrange`               | Name shown in emails and the git auth realm                                                                   |
+| `BASE_URL`        | `https://git.example.com` | Public origin; used for auth and trusted origins. Cookies are `Secure` when this is `https://`                |
+| `FROM_EMAIL`      | `noreply@example.com`     | Sender for invitation emails; its domain must be onboarded to Email Sending                                   |
+| `R2_ACCOUNT_ID`   | `0123…cdef`               | Account that owns the LFS bucket; pre-signed URLs point at `https://<R2_ACCOUNT_ID>.r2.cloudflarestorage.com` |
+| `LFS_BUCKET_NAME` | `gitorange-lfs`           | The LFS bucket's name; must match `r2_buckets[].bucket_name` (a binding doesn't expose its name)              |
 
 ## Secrets
 
-| Secret               | How to set                                                                                                                               |
-| -------------------- | ---------------------------------------------------------------------------------------------------------------------------------------- |
-| `BETTER_AUTH_SECRET` | Production: `wrangler secret put BETTER_AUTH_SECRET`. Local: `.dev.vars` (see `.dev.vars.example`). Generate with `openssl rand -hex 32` |
+| Secret                                     | How to set                                                                                                                                                                                                |
+| ------------------------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `BETTER_AUTH_SECRET`                       | Production: `wrangler secret put BETTER_AUTH_SECRET`. Local: `.dev.vars` (see `.dev.vars.example`). Generate with `openssl rand -hex 32`                                                                  |
+| `R2_ACCESS_KEY_ID`, `R2_SECRET_ACCESS_KEY` | S3-compatible credentials of an R2 API token with **Object Read & Write** on the LFS bucket, used only to sign short-lived LFS URLs. Without them Git LFS answers "not configured"; everything else works |
 
 ## Environments
 
-The top level of `wrangler.jsonc` is production (`yarn deploy`). The `env.dev` block is what `yarn dev` runs: a local D1 database, and Artifacts in a separate `gitorange-dev` namespace (Artifacts has no local emulator), so development never touches production repositories.
+The top level of `wrangler.jsonc` is production (`yarn deploy`). The `env.dev` block is what `yarn dev` runs: a local D1 database, and Artifacts in a separate `gitorange-dev` namespace (Artifacts has no local emulator), so development never touches production repositories. Likewise, dev LFS files go to a separate `gitorange-lfs-dev` bucket (a real one, since pre-signed URLs must reach R2).
 
 ## Other config files
 

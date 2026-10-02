@@ -17,6 +17,7 @@
   ],
   "artifacts": [{ "binding": "ARTIFACTS", "namespace": "gitorange" }],
   "send_email": [{ "name": "EMAIL" }],
+  "r2_buckets": [{ "binding": "LFS", "bucket_name": "gitorange-lfs" }],
   "assets": {
     "binding": "ASSETS",
     "directory": "./dist/client",
@@ -27,6 +28,8 @@
   "vars": {
     "APP_NAME": "GitOrange",
     "BASE_URL": "http://localhost:8080",
-    "FROM_EMAIL": "noreply@example.com"
+    "FROM_EMAIL": "noreply@example.com",
+    "R2_ACCOUNT_ID": "00000000000000000000000000000000",
+    "LFS_BUCKET_NAME": "gitorange-lfs"
   }
 }

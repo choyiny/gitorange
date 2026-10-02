@@ -24,13 +24,16 @@ yarn wrangler login
 yarn wrangler whoami   # note your account ID
 ```
 
-## 3. Create the D1 database
+## 3. Create the D1 database and the LFS bucket
 
 ```bash
 yarn wrangler d1 create gitorange-db
+yarn wrangler r2 bucket create gitorange-lfs
 ```
 
 Copy the `database_id` it prints. You don't need to create anything in Artifacts: the namespace is created automatically with the first repository.
+
+Git LFS clients upload and download directly to R2 with pre-signed URLs, which need an R2 API token. In the dashboard, open **R2 → Manage API tokens → Create API token**, choose **Object Read & Write**, scope it to the `gitorange-lfs` bucket, and keep the **Access Key ID** and **Secret Access Key** for step 6.
 
 ## 4. Configure `wrangler.jsonc`
 
@@ -44,6 +47,7 @@ Fill in:
 - `d1_databases[0].database_id` — from step 3.
 - `vars.BASE_URL` — the public URL, e.g. `https://git.example.com` (or your `*.workers.dev` URL).
 - `vars.FROM_EMAIL` — an address on your Email Sending domain, e.g. `noreply@example.com`.
+- `vars.R2_ACCOUNT_ID` — your account ID again (pre-signed LFS URLs point at `https://<account>.r2.cloudflarestorage.com`).
 - `routes` — uncomment and set `pattern` to your hostname if you're using a custom domain.
 
 `wrangler.jsonc` is gitignored, so your IDs stay out of the repository. See [Configuration](configuration.md) for every key.
@@ -55,13 +59,15 @@ yarn db:migrate:prod
 yarn deploy
 ```
 
-## 6. Set the auth secret
+## 6. Set the secrets
 
 ```bash
 openssl rand -hex 32 | yarn wrangler secret put BETTER_AUTH_SECRET
+yarn wrangler secret put R2_ACCESS_KEY_ID       # paste the R2 token's Access Key ID
+yarn wrangler secret put R2_SECRET_ACCESS_KEY   # paste its Secret Access Key
 ```
 
-Setting a secret rolls out a new version of the worker; sign-in fails until this is done.
+Setting a secret rolls out a new version of the worker; sign-in fails until `BETTER_AUTH_SECRET` is set, and Git LFS answers "not configured" until both R2 secrets are set.
 
 ## 7. Create the admin account
 
@@ -78,6 +84,18 @@ Then:
    git push -u origin main   # username: anything, password: the token
    ```
 
+## Using Git LFS
+
+Nothing to configure per repository. With [git-lfs](https://git-lfs.com) installed:
+
+```bash
+git lfs install                 # once per machine
+git lfs track "*.psd"           # in your repository
+git add .gitattributes design.psd
+git commit -m "Add design file"
+git push                        # uses the same token as git
+```
+
 ## Updating
 
 ```bash
@@ -93,3 +111,5 @@ yarn deploy
 - **Invitation emails never arrive** — `FROM_EMAIL`'s domain isn't verified in Email Sending. The admin page always shows the invite link too, so you can share it directly in the meantime.
 - **`git push` returns 403** — you aren't the repository owner, a site admin, or a collaborator. The owner can add you under the repository's **Settings → Collaborators**.
 - **`git clone` keeps asking for a password** — use a personal access token, not your account password.
+- **`git lfs push` says LFS isn't configured** — set `R2_ACCESS_KEY_ID` and `R2_SECRET_ACCESS_KEY` (step 6).
+- **LFS uploads fail with `403 SignatureDoesNotMatch` or `AccessDenied`** — the R2 token doesn't have Object Read & Write on the bucket named in `LFS_BUCKET_NAME`, or `R2_ACCOUNT_ID` is wrong.

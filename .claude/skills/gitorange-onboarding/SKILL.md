@@ -67,7 +67,7 @@ Ask which listed domain should send invitation emails, and the address to use (e
 
 Restate, then wait for an explicit yes:
 
-> You've confirmed account `<name>` (`<id>`) is on Workers Paid with Artifacts access, and invites will come from `<FROM_EMAIL>`. I'm about to create a D1 database named `gitorange-db`, deploy a worker named `gitorange`, and set its auth secret. Ready?
+> You've confirmed account `<name>` (`<id>`) is on Workers Paid with Artifacts access, and invites will come from `<FROM_EMAIL>`. I'm about to create a D1 database named `gitorange-db` and an R2 bucket named `gitorange-lfs`, deploy a worker named `gitorange`, and set its auth secret. Ready?
 
 ## Deployment steps
 
@@ -77,13 +77,24 @@ Run straight through; pause only for decisions or credentials.
 
 Ask: custom domain (e.g. `git.example.com`, the zone must be on Cloudflare) or the free `gitorange.<subdomain>.workers.dev`? If custom, uncomment `routes` in Step 3. Record `BASE_URL` as `https://<hostname>`. For workers.dev, the exact URL is printed by the first deploy; use a placeholder now and fix it in Step 6.
 
-### Step 2: Create D1
+### Step 2: Create D1 and the LFS bucket
 
 ```bash
 yarn wrangler d1 create gitorange-db
+yarn wrangler r2 bucket create gitorange-lfs
 ```
 
-Capture the `database_id`. If it already exists, get the ID from `yarn wrangler d1 list`. No Artifacts resource needs creating: the `gitorange` namespace is created with the first repository.
+Capture the `database_id`. If either already exists, get the ID from `yarn wrangler d1 list` / confirm the bucket with `yarn wrangler r2 bucket list`. No Artifacts resource needs creating: the `gitorange` namespace is created with the first repository.
+
+### Step 2.5: R2 API token for Git LFS (the user does this in the dashboard)
+
+Git LFS hands clients pre-signed R2 URLs, which need S3-compatible credentials. Wrangler can't create them, so ask the user to:
+
+1. Open https://dash.cloudflare.com/?to=/:account/r2/api-tokens → **Create API token**.
+2. Permission **Object Read & Write**, scoped to **Apply to specific buckets only → gitorange-lfs**.
+3. Keep the **Access Key ID** and **Secret Access Key** for Step 5. Never ask them to paste the values into the chat.
+
+If they want to skip LFS for now, continue: everything else works, and Git LFS answers "not configured" until the two secrets are set.
 
 ### Step 3: Write `wrangler.jsonc`
 
@@ -97,10 +108,11 @@ Fill in the top level (production):
 - `d1_databases[0].database_id`
 - `routes` — uncomment with the custom hostname, keep `custom_domain: true` (custom domain only)
 - `vars.BASE_URL`, `vars.FROM_EMAIL`
+- `vars.R2_ACCOUNT_ID` — the same account ID (keep `LFS_BUCKET_NAME` as `gitorange-lfs` unless they named the bucket differently)
 
-Also replace the `FROM_EMAIL` placeholder in `env.dev.vars` so local development works later.
+Also replace the `FROM_EMAIL` and `R2_ACCOUNT_ID` placeholders in `env.dev.vars` so local development works later.
 
-Do not rename bindings — the code looks them up by name: `DB`, `ARTIFACTS`, `EMAIL`, `ASSETS`. Keep `assets.run_worker_first` as shipped; the git endpoint depends on it. `wrangler.jsonc` is gitignored; never commit it.
+Do not rename bindings — the code looks them up by name: `DB`, `ARTIFACTS`, `EMAIL`, `LFS`, `ASSETS`. Keep `assets.run_worker_first` as shipped; the git endpoint depends on it. `wrangler.jsonc` is gitignored; never commit it.
 
 ### Step 4: Migrate and deploy
 
@@ -117,6 +129,13 @@ openssl rand -hex 32 | yarn wrangler secret put BETTER_AUTH_SECRET
 
 The worker exists now, so this applies non-interactively and rolls out a new version with the secret. Sign-in fails until this step runs.
 
+If they created the R2 token in Step 2.5, have the user set both values themselves (each prompts for the value, so the secret never passes through the chat):
+
+```
+! yarn wrangler secret put R2_ACCESS_KEY_ID
+! yarn wrangler secret put R2_SECRET_ACCESS_KEY
+```
+
 ### Step 6: Fix `BASE_URL` for workers.dev (workers.dev only)
 
 If they chose workers.dev, set `vars.BASE_URL` to the URL `yarn deploy` printed and run `yarn deploy` again. Auth rejects requests from origins that don't match `BASE_URL`.
@@ -126,7 +145,8 @@ If they chose workers.dev, set `vars.BASE_URL` to the URL `yarn deploy` printed 
 1. Open `BASE_URL`. It must show **Welcome to GitOrange**. Tell the user: **the account created here becomes the site admin, and setup closes forever after** — do it now, before sharing the URL.
 2. Have them create a repository with **Add a README file** checked. If creation fails with an Artifacts error, recheck Checkpoint 4 and `account_id`.
 3. Have them create a token (avatar → **Personal access tokens**) and run `git clone <BASE_URL>/<username>/<repo>.git`, using the token as the password.
-4. Have them invite themselves at a second address (**+ → Invite member**) and confirm the email arrives. If it doesn't, the `FROM_EMAIL` domain isn't verified for Email Sending — the invite link on the admin page still works meanwhile.
+4. If the R2 secrets are set and they have [git-lfs](https://git-lfs.com) installed: in the clone, `git lfs install && git lfs track "*.bin"`, add a file, commit, and `git push`. The file's page in the UI should say **Stored with Git LFS** and offer a download.
+5. Have them invite themselves at a second address (**+ → Invite member**) and confirm the email arrives. If it doesn't, the `FROM_EMAIL` domain isn't verified for Email Sending — the invite link on the admin page still works meanwhile.
 
 ## Completion summary
 
@@ -136,6 +156,7 @@ Report, with real values substituted:
 - D1 database `gitorange-db` (binding `DB`), migrations applied
 - Artifacts namespace `gitorange` (binding `ARTIFACTS`) — repositories appear there as they're created
 - Invitations sent from `<FROM_EMAIL>` (binding `EMAIL`)
+- R2 bucket `gitorange-lfs` (binding `LFS`) for Git LFS — R2 secrets `<set | not set yet>`
 - Admin account `<username>`
 - To update later: `git pull && yarn install && yarn db:migrate:prod && yarn deploy`
 
@@ -146,3 +167,5 @@ Report, with real values substituted:
 - **Custom domain shows a Cloudflare error page** — `routes` wasn't uncommented, or the zone isn't on this Cloudflare account.
 - **Invitation email never arrives** — `FROM_EMAIL`'s domain isn't verified in Email Sending; check `yarn wrangler email sending list`.
 - **`git push` 403** — the user isn't owner, site admin, or collaborator on that repository.
+- **`git lfs push` says LFS isn't configured** — `R2_ACCESS_KEY_ID` / `R2_SECRET_ACCESS_KEY` aren't set.
+- **LFS upload fails with `SignatureDoesNotMatch` / `AccessDenied`** — the R2 token lacks Object Read & Write on the bucket, or `R2_ACCOUNT_ID` / `LFS_BUCKET_NAME` don't match it.

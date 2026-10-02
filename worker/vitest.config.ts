@@ -18,6 +18,9 @@ export default defineConfig({
         bindings: {
           TEST_D1_MIGRATIONS: d1Migrations,
           BETTER_AUTH_SECRET: 'test-secret-not-used-in-any-real-deployment',
+          // Fake R2 S3 credentials: pre-signing is pure HMAC, so tests can check URLs offline.
+          R2_ACCESS_KEY_ID: 'test-access-key-id',
+          R2_SECRET_ACCESS_KEY: 'test-secret-access-key',
         },
       },
     }),

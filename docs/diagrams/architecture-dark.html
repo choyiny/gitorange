@@ -25,9 +25,9 @@
   <body>
     <svg
       xmlns="http://www.w3.org/2000/svg"
-      viewBox="0 0 960 432"
+      viewBox="0 0 960 448"
       width="960"
-      height="432"
+      height="448"
       role="img"
       aria-labelledby="gitorange-architecture-dark-title gitorange-architecture-dark-desc"
     >
@@ -37,8 +37,9 @@
       <desc id="gitorange-architecture-dark-desc">
         Browsers and git clients talk to a single GitOrange Cloudflare Worker,
         which serves the API, the web app, and the git endpoint, and stores
-        metadata in D1, git repositories in Cloudflare Artifacts, and sends
-        invitations through Email Sending.
+        metadata in D1, git repositories in Cloudflare Artifacts, and Git LFS
+        files in R2 (which git clients reach directly through signed URLs), and
+        sends invitations through Email Sending.
       </desc>
       <defs>
         <marker
@@ -78,7 +79,7 @@
         x="256"
         y="32"
         width="672"
-        height="336"
+        height="352"
         rx="8"
         fill="rgba(240,246,252,0.02)"
         stroke="rgba(240,246,252,0.12)"
@@ -106,7 +107,7 @@
           marker-end="url(#gitorange-architecture-dark-arrow-link)"
         />
         <path
-          d="M192,268 H224 Q232,268 232,260 V224 Q232,216 240,216 H336"
+          d="M192,256 H224 Q232,256 232,248 V224 Q232,216 240,216 H336"
           fill="none"
           stroke="#4493f8"
           stroke-width="1.2"
@@ -128,6 +129,23 @@
           stroke="#f6821f"
           stroke-width="1.2"
           marker-end="url(#gitorange-architecture-dark-arrow-accent)"
+        />
+        <!-- LFS: git ↔ R2 directly via signed URLs; the worker only signs and verifies -->
+        <path
+          d="M192,280 H296 Q304,280 304,288 V320 Q304,328 312,328 H336"
+          fill="none"
+          stroke="#4493f8"
+          stroke-width="1.2"
+          marker-end="url(#gitorange-architecture-dark-arrow-link)"
+        />
+        <line
+          x1="436"
+          y1="256"
+          x2="436"
+          y2="292"
+          stroke="#9198a1"
+          stroke-width="1.2"
+          marker-end="url(#gitorange-architecture-dark-arrow)"
         />
         <path
           d="M536,228 H588 Q596,228 596,236 V292 Q596,300 604,300 H656"
@@ -196,6 +214,29 @@
           letter-spacing="0.06em"
         >
           SEND
+        </text>
+        <rect x="224" y="260" width="56" height="12" rx="2" fill="#0d1117" />
+        <text
+          x="252"
+          y="269"
+          fill="#8b949e"
+          font-size="8"
+          font-family="'Geist Mono', ui-monospace, monospace"
+          text-anchor="middle"
+          letter-spacing="0.06em"
+        >
+          LFS FILES
+        </text>
+        <rect x="444" y="268" width="84" height="12" rx="2" fill="#0d1117" />
+        <text
+          x="448"
+          y="277"
+          fill="#8b949e"
+          font-size="8"
+          font-family="'Geist Mono', ui-monospace, monospace"
+          letter-spacing="0.06em"
+        >
+          SIGN · VERIFY
         </text>
       </g>
       <g>
@@ -544,19 +585,73 @@
         >
           invitation emails
         </text>
+        <rect x="336" y="296" width="200" height="72" rx="6" fill="#0d1117" />
+        <rect
+          x="336"
+          y="296"
+          width="200"
+          height="72"
+          rx="6"
+          fill="rgba(240,246,252,0.05)"
+          stroke="#9198a1"
+          stroke-width="1"
+        />
+        <rect
+          x="344"
+          y="304"
+          width="28"
+          height="12"
+          rx="2"
+          fill="transparent"
+          stroke="#9198a1"
+          stroke-opacity="0.5"
+          stroke-width="0.8"
+        />
+        <text
+          x="358"
+          y="313"
+          fill="#9198a1"
+          font-size="7"
+          font-family="'Geist Mono', ui-monospace, monospace"
+          text-anchor="middle"
+          letter-spacing="0.08em"
+        >
+          R2
+        </text>
+        <text
+          x="436"
+          y="340"
+          fill="#f0f6fc"
+          font-size="12"
+          font-weight="600"
+          font-family="'Mona Sans', -apple-system, 'Segoe UI', sans-serif"
+          text-anchor="middle"
+        >
+          R2 bucket
+        </text>
+        <text
+          x="436"
+          y="356"
+          fill="#9198a1"
+          font-size="9"
+          font-family="'Geist Mono', ui-monospace, monospace"
+          text-anchor="middle"
+        >
+          Git LFS files
+        </text>
       </g>
       <g>
         <line
           x1="32"
-          y1="384"
+          y1="400"
           x2="928"
-          y2="384"
+          y2="400"
           stroke="rgba(240,246,252,0.15)"
           stroke-width="0.8"
         />
         <text
           x="32"
-          y="410"
+          y="426"
           fill="#9198a1"
           font-size="8"
           font-family="'Geist Mono', ui-monospace, monospace"
@@ -566,7 +661,7 @@
         </text>
         <rect
           x="112"
-          y="400"
+          y="416"
           width="16"
           height="12"
           rx="2"
@@ -576,7 +671,7 @@
         />
         <text
           x="136"
-          y="410"
+          y="426"
           fill="#9198a1"
           font-size="8"
           font-family="'Geist Mono', ui-monospace, monospace"
@@ -586,7 +681,7 @@
         </text>
         <rect
           x="240"
-          y="400"
+          y="416"
           width="16"
           height="12"
           rx="2"
@@ -596,7 +691,7 @@
         />
         <text
           x="264"
-          y="410"
+          y="426"
           fill="#9198a1"
           font-size="8"
           font-family="'Geist Mono', ui-monospace, monospace"
@@ -606,7 +701,7 @@
         </text>
         <rect
           x="344"
-          y="400"
+          y="416"
           width="16"
           height="12"
           rx="2"
@@ -616,7 +711,7 @@
         />
         <text
           x="368"
-          y="410"
+          y="426"
           fill="#9198a1"
           font-size="8"
           font-family="'Geist Mono', ui-monospace, monospace"
@@ -626,7 +721,7 @@
         </text>
         <rect
           x="456"
-          y="400"
+          y="416"
           width="16"
           height="12"
           rx="2"
@@ -637,7 +732,7 @@
         />
         <text
           x="480"
-          y="410"
+          y="426"
           fill="#9198a1"
           font-size="8"
           font-family="'Geist Mono', ui-monospace, monospace"
@@ -647,15 +742,15 @@
         </text>
         <line
           x1="616"
-          y1="406"
+          y1="422"
           x2="648"
-          y2="406"
+          y2="422"
           stroke="#4493f8"
           stroke-width="1.2"
         />
         <text
           x="656"
-          y="410"
+          y="426"
           fill="#9198a1"
           font-size="8"
           font-family="'Geist Mono', ui-monospace, monospace"
@@ -665,15 +760,15 @@
         </text>
         <line
           x1="776"
-          y1="406"
+          y1="422"
           x2="808"
-          y2="406"
+          y2="422"
           stroke="#f6821f"
           stroke-width="1.2"
         />
         <text
           x="816"
-          y="410"
+          y="426"
           fill="#9198a1"
           font-size="8"
           font-family="'Geist Mono', ui-monospace, monospace"

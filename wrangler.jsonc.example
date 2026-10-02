@@ -28,6 +28,9 @@
   // Invitation emails. FROM_EMAIL's domain must be onboarded to Cloudflare Email Sending:
   // https://dash.cloudflare.com/?to=/:account/email-service
   "send_email": [{ "name": "EMAIL" }],
+  // Git LFS file contents. Clients upload/download directly via pre-signed URLs, which need an
+  // R2 API token: `wrangler secret put R2_ACCESS_KEY_ID` and `wrangler secret put R2_SECRET_ACCESS_KEY`.
+  "r2_buckets": [{ "binding": "LFS", "bucket_name": "gitorange-lfs" }],
   "assets": {
     "binding": "ASSETS",
     "directory": "./dist/client",
@@ -40,7 +43,10 @@
     "APP_NAME": "GitOrange",
     // Public URL of the instance; used in invite links and auth redirects.
     "BASE_URL": "https://<your-deployed-host>",
-    "FROM_EMAIL": "noreply@<your-email-sending-domain>"
+    "FROM_EMAIL": "noreply@<your-email-sending-domain>",
+    // Where pre-signed LFS URLs point: https://<R2_ACCOUNT_ID>.r2.cloudflarestorage.com/<LFS_BUCKET_NAME>
+    "R2_ACCOUNT_ID": "<your-cloudflare-account-id>",
+    "LFS_BUCKET_NAME": "gitorange-lfs"
   },
   // BETTER_AUTH_SECRET is a secret: `wrangler secret put BETTER_AUTH_SECRET` (prod) / .dev.vars (dev).
 
@@ -57,10 +63,13 @@
       ],
       "artifacts": [{ "binding": "ARTIFACTS", "namespace": "gitorange-dev", "remote": true }],
       "send_email": [{ "name": "EMAIL" }],
+      "r2_buckets": [{ "binding": "LFS", "bucket_name": "gitorange-lfs-dev", "remote": true }],
       "vars": {
         "APP_NAME": "GitOrange",
         "BASE_URL": "http://localhost:8080",
-        "FROM_EMAIL": "noreply@<your-email-sending-domain>"
+        "FROM_EMAIL": "noreply@<your-email-sending-domain>",
+        "R2_ACCOUNT_ID": "<your-cloudflare-account-id>",
+        "LFS_BUCKET_NAME": "gitorange-lfs-dev"
       }
     }
   }
