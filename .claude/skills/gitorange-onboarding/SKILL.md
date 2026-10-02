@@ -51,7 +51,7 @@ CLOUDFLARE_ACCOUNT_ID=<id> yarn wrangler artifacts namespaces list
 ```
 
 - A table or "No Artifacts namespaces found" → access is enabled.
-- `Access denied [code: 10004]` → the account isn't in the Artifacts closed beta. Stop: they must request access at https://forms.gle/DwBoPRa3CWQ8ajFp7 and come back once approved. Nothing else in GitOrange works without it.
+- `Access denied [code: 10004]` → Artifacts (open beta, Workers Paid) isn't usable from this login. Check, in order: the account ID is the one they chose, the account is on Workers Paid (Checkpoint 3), and the wrangler login has Artifacts scopes (`! yarn wrangler login` again). Stop until this check passes — nothing else in GitOrange works without Artifacts.
 
 ### Checkpoint 5 — Email Sending domain
 
@@ -139,7 +139,7 @@ Report, with real values substituted:
 
 ## Common issues
 
-- **`Access denied [code: 10004]`** — no Artifacts beta access on that account, or `account_id` points at a different account than the one with access.
+- **`Access denied [code: 10004]`** — wrong `account_id`, account not on Workers Paid, or a wrangler login without Artifacts scopes.
 - **Auth errors / "invalid origin" after deploy** — `BASE_URL` doesn't match the URL in the browser (common on workers.dev before Step 6).
 - **Custom domain shows a Cloudflare error page** — `routes` wasn't uncommented, or the zone isn't on this Cloudflare account.
 - **Invitation email never arrives** — `FROM_EMAIL`'s domain isn't verified in Email Sending; check `yarn wrangler email sending list`.

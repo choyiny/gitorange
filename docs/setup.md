@@ -5,7 +5,7 @@ Deploy GitOrange to your own Cloudflare account. This takes about 15 minutes, mo
 ## Prerequisites
 
 - A Cloudflare account on the **Workers Paid** plan (Artifacts is not available on Workers Free).
-- **Artifacts access.** Artifacts is in closed beta; [request access](https://forms.gle/DwBoPRa3CWQ8ajFp7). Confirm with `yarn wrangler artifacts namespaces list` — an "Access denied" error means the account isn't enrolled yet.
+- **Artifacts** is in open beta and available on Workers Paid. Confirm with `yarn wrangler artifacts namespaces list` — it should print a table or "No Artifacts namespaces found".
 - A domain onboarded to [Cloudflare Email Sending](https://dash.cloudflare.com/?to=/:account/email-service), used as the sender for invitation emails.
 - Node.js v20+ and yarn.
 
@@ -89,7 +89,7 @@ yarn deploy
 
 ## Troubleshooting
 
-- **`Access denied [code: 10004]` from Artifacts** — the account isn't enrolled in the Artifacts beta, or `account_id` points at a different account.
+- **`Access denied [code: 10004]` from Artifacts** — `account_id` points at a different account than the one you're logged into, the account isn't on Workers Paid, or your API token lacks Artifacts permissions (re-run `yarn wrangler login`).
 - **Invitation emails never arrive** — `FROM_EMAIL`'s domain isn't verified in Email Sending. The admin page always shows the invite link too, so you can share it directly in the meantime.
 - **`git push` returns 403** — you aren't the repository owner, a site admin, or a collaborator. The owner can add you under the repository's **Settings → Collaborators**.
 - **`git clone` keeps asking for a password** — use a personal access token, not your account password.

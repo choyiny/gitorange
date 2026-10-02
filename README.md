@@ -17,11 +17,11 @@ There is no VM, no disk to back up, and no git daemon to patch. Repositories liv
 
 ## Who this is for
 
-Small teams that want their code on infrastructure they control, with GitHub's familiar UI, and don't want to operate a GitHub Enterprise Server or GitLab instance. If you have a Cloudflare account on the Workers Paid plan with access to Artifacts, you can run GitOrange for a few dollars a month.
+Small teams that want their code on infrastructure they control, with GitHub's familiar UI, and don't want to operate a GitHub Enterprise Server or GitLab instance. If you have a Cloudflare account on the Workers Paid plan, you can run GitOrange for a few dollars a month.
 
 ## Quickstart
 
-**Prerequisites:** a Cloudflare account on the **Workers Paid** plan with **Artifacts** access ([closed beta — request access](https://forms.gle/DwBoPRa3CWQ8ajFp7)), a domain onboarded to [Cloudflare Email Sending](https://developers.cloudflare.com/email-service/) for invitation emails, and [Node.js](https://nodejs.org/) v20+ with yarn.
+**Prerequisites:** a Cloudflare account on the **Workers Paid** plan (required for [Artifacts](https://developers.cloudflare.com/artifacts/), currently in open beta), a domain onboarded to [Cloudflare Email Sending](https://developers.cloudflare.com/email-service/) for invitation emails, and [Node.js](https://nodejs.org/) v20+ with yarn.
 
 The fastest path is the Claude Code onboarding skill. It checks your account, creates the D1 database, fills in your config, sets secrets, runs migrations, and deploys:
 
@@ -83,7 +83,7 @@ GitOrange is young. Before you rely on it, know that:
 - **Very long histories are approximated.** Merge bases and pull request commit lists walk up to ~2,000 commits, which can mislabel commits on repositories with deep histories between branches.
 - **No forks.** Pull requests are between branches of the same repository; contributors need to be collaborators.
 - **The first visitor becomes the admin.** Until the admin account exists, anyone who can reach the URL can claim it. Complete setup right after deploying, before sharing the URL.
-- **Artifacts is in closed beta.** Your Cloudflare account needs Artifacts access, and its APIs may change.
+- **Artifacts is in beta.** It's open to every Workers Paid account, but its APIs may still change.
 
 ## How much does it cost?
 

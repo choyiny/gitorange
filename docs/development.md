@@ -3,7 +3,7 @@
 ## Prerequisites
 
 - Node.js v20+ and yarn
-- `yarn wrangler login` on a Cloudflare account with Artifacts access. Artifacts has no local emulator, so `yarn dev` talks to the real service (namespace `gitorange-dev`). D1 is local.
+- `yarn wrangler login` on a Cloudflare account on Workers Paid (Artifacts is in open beta there). Artifacts has no local emulator, so `yarn dev` talks to the real service (namespace `gitorange-dev`). D1 is local.
 
 ## First run
 
