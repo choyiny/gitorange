@@ -23,7 +23,8 @@ export default defineConfig({
     }),
   ],
   test: {
-    include: ['worker/src/__tests__/**/*.test.ts'],
+    // Worker suites, plus pure-logic SPA modules (no DOM) such as the syntax highlighter.
+    include: ['worker/src/__tests__/**/*.test.ts', 'src/lib/**/*.test.ts'],
     setupFiles: ['./worker/test/setup.ts'],
   },
 });

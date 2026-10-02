@@ -582,11 +582,12 @@ export default function PullView() {
         >
           <PrStateBadge state={pr.state} />
           <span className="color-fg-muted">
+            {/* Like GitHub: a merged PR credits whoever merged it; otherwise the author. */}
             <Link
-              to={`/${pr.author.username}`}
+              to={`/${(pr.mergedBy ?? pr.author).username}`}
               className="text-bold color-fg-muted"
             >
-              {pr.author.username}
+              {(pr.mergedBy ?? pr.author).username}
             </Link>{' '}
             {pr.state === 'merged' ? (
               <>

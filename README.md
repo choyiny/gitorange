@@ -58,11 +58,12 @@ Full docs live in **[docs/](docs/README.md)**: [Setup](docs/setup.md) · [Config
 - **First-run setup** — the first visitor creates the site admin. After that, sign-up is closed.
 - **Email invitations** — admins invite teammates by email (or copy the link); invites are single-use and expire in 7 days.
 - **Unlimited repositories** — create empty or with a README; browse files, Markdown READMEs, history, and per-commit diffs.
+- **Syntax highlighting** — GitHub's color scheme for 35+ languages in file views and diffs, in light and dark mode.
 - **Git over HTTPS** — `git clone https://your-host/<owner>/<repo>.git` with a personal access token as the password.
 - **Pull requests** — open, comment, close, and reopen; view commits and files changed; merge with a merge commit or squash; delete the branch after merging.
 - **Access control** — every member can read every repository; the owner, site admins, and collaborators added in repository settings can push and merge.
 
-Intentionally not here yet: issues, forks, code review comments, Actions, search, and syntax highlighting. See the [roadmap](#roadmap).
+Intentionally not here yet: issues, forks, code review comments, Actions, and search. See the [roadmap](#roadmap).
 
 ## Architecture at a glance
 
@@ -84,7 +85,7 @@ One Worker serves the API, the React interface, and the git endpoint on one orig
 
 - Issues
 - Line comments and reviews on pull requests
-- Syntax highlighting and code search
+- Code search
 - Organizations and teams
 
 ## Contributing

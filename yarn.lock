@@ -1823,6 +1823,11 @@ get-tsconfig@^4.7.0:
   dependencies:
     resolve-pkg-maps "^1.0.0"
 
+highlight.js@^11.12.0:
+  version "11.12.0"
+  resolved "https://registry.yarnpkg.com/highlight.js/-/highlight.js-11.12.0.tgz#470d918fd556a76debc40fe5e4b540b6b9cb9890"
+  integrity sha512-nbfWpyRMcMrPMmDwJB+dhX/eiaPKtc2RB+0QZskqJ3WjRA/FDS0e9hZrx8EC/lbEv8gXy98FcDbNa/dspAaJMg==
+
 hono@^4.12:
   version "4.13.12"
   resolved "https://registry.yarnpkg.com/hono/-/hono-4.13.12.tgz#457b70c1c04d915ff555ad71e6da1eadd1e16b3e"

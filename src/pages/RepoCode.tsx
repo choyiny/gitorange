@@ -15,6 +15,8 @@ import {
 } from '@primer/octicons-react';
 import { api, qk, type Contents, type RepoDetail } from '@/lib/uiApi';
 import { firstLine, formatBytes, shortSha, timeAgo } from '@/lib/format';
+import { languageFor } from '@/lib/languages';
+import { useHighlighter } from '@/lib/useHighlight';
 import { ApiError } from '@/lib/api';
 import { Avatar } from '@/components/Avatar';
 import { BranchSelect } from '@/components/BranchSelect';
@@ -276,6 +278,12 @@ function BlobView({ repo, data }: { repo: RepoDetail; data: Contents }) {
   if (lines.length && lines[lines.length - 1] === '') lines.pop();
   const raw = api.rawUrl(repo.owner.username, repo.name, data.ref, data.path);
   const isMarkdown = /\.(md|markdown)$/i.test(f.path) && f.text !== null;
+  const language = languageFor(f.path);
+  const highlighted = useHighlighter(
+    !!language && f.text !== null && !isMarkdown,
+    (h) => h.highlightLines(f.text!, language!),
+    [f.text, language]
+  );
   return (
     <div className="Box mb-4">
       <LatestCommitBar repo={repo} data={data} />
@@ -321,7 +329,14 @@ function BlobView({ repo, data }: { repo: RepoDetail; data: Contents }) {
               {lines.map((l, i) => (
                 <tr key={i} id={`L${i + 1}`}>
                   <td className="blob-num">{i + 1}</td>
-                  <td className="blob-code">{l}</td>
+                  {highlighted?.[i] !== undefined ? (
+                    <td
+                      className="blob-code"
+                      dangerouslySetInnerHTML={{ __html: highlighted[i] }}
+                    />
+                  ) : (
+                    <td className="blob-code">{l}</td>
+                  )}
                 </tr>
               ))}
             </tbody>

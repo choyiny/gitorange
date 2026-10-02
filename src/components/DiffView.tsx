@@ -5,6 +5,8 @@ import {
   FileIcon,
 } from '@primer/octicons-react';
 import type { FileDiff } from '@/lib/uiApi';
+import { languageFor } from '@/lib/languages';
+import { useHighlighter } from '@/lib/useHighlight';
 
 function DiffStat({
   additions,
@@ -53,6 +55,13 @@ export function DiffTotals({ files }: { files: FileDiff[] }) {
 
 function FileBlock({ file }: { file: FileDiff }) {
   const [open, setOpen] = useState(true);
+  const language = languageFor(file.path);
+  const highlighted = useHighlighter(
+    !!language && open && file.hunks.length > 0,
+    (h) =>
+      file.hunks.map((hunk) => h.highlightHunkLines(hunk.lines, language!)),
+    [file, language, open]
+  );
   const rows: JSX.Element[] = [];
   file.hunks.forEach((h, hi) => {
     let o = h.oldStart;
@@ -75,7 +84,13 @@ function FileBlock({ file }: { file: FileDiff }) {
             <span className="user-select-none color-fg-muted mr-1">
               {kind === ' ' ? ' ' : kind}
             </span>
-            {line.slice(1)}
+            {highlighted?.[hi]?.[li] != null ? (
+              <span
+                dangerouslySetInnerHTML={{ __html: highlighted[hi][li]! }}
+              />
+            ) : (
+              line.slice(1)
+            )}
           </td>
         </tr>
       );
