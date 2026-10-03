@@ -34,5 +34,6 @@
     "BASE_URL": "http://test.local",
     "R2_ACCOUNT_ID": "0123456789abcdef0123456789abcdef",
     "LFS_BUCKET_NAME": "gitorange-lfs-test",
+    "RESOLVER_MODEL": "@cf/zai-org/glm-5.3",
   },
 }

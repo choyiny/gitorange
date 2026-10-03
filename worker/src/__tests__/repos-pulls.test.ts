@@ -191,15 +191,17 @@ describe('pull requests', () => {
     const headSha = repo.refs.get('refs/heads/feature')!;
     const merge = await call(t, '/api/repos/octocat/app/pulls/1/merge', {
       cookie: admin,
-      json: { method: 'merge' },
+      json: {},
     });
     expect(merge.status).toBe(200);
     const { sha } = (await merge.json()) as { sha: string };
 
+    // Rebase and merge: one commit on top of the base, so history stays linear.
     expect(repo.refs.get('refs/heads/main')).toBe(sha);
     expect(repo.refs.get('refs/pull/1/head')).toBe(headSha);
     const commit = repo.parseCommit(sha)!;
-    expect(commit.parents).toEqual([baseBefore, headSha]);
+    expect(commit.parents).toEqual([baseBefore]);
+    expect(commit.message).toBe('Greet (#1)');
     expect(repo.parseTree(commit.treeHash)!.map((e) => e.name)).toEqual([
       'LICENSE',
       'README.md',
@@ -260,7 +262,7 @@ describe('pull requests', () => {
     expect(detail.conflicts).toEqual(['README.md']);
     const res = await call(t, '/api/repos/octocat/app/pulls/1/merge', {
       cookie: admin,
-      json: { method: 'merge' },
+      json: { method: 'rebase' },
     });
     expect(res.status).toBe(409);
   });

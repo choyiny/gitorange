@@ -425,20 +425,24 @@ export function diffRefs(
   return out;
 }
 
-/** Deletes every step log of a repository (its rows go with the repository via cascade). */
+/**
+ * Deletes every log a repository has in R2 — Actions step logs and AI merge-resolution
+ * transcripts. Their rows go with the repository via cascade.
+ */
 export async function deleteRepositoryLogs(
   env: CloudflareBindings,
   repositoryId: string
 ) {
-  let cursor: string | undefined;
-  do {
-    const page = await env.ACTIONS_LOGS.list({
-      prefix: `actions/${repositoryId}/`,
-      cursor,
-      limit: 1000,
-    });
-    if (page.objects.length)
-      await env.ACTIONS_LOGS.delete(page.objects.map((o) => o.key));
-    cursor = page.truncated ? page.cursor : undefined;
-  } while (cursor);
+  for (const prefix of [
+    `actions/${repositoryId}/`,
+    `merge-resolutions/${repositoryId}/`,
+  ]) {
+    let cursor: string | undefined;
+    do {
+      const page = await env.ACTIONS_LOGS.list({ prefix, cursor, limit: 1000 });
+      if (page.objects.length)
+        await env.ACTIONS_LOGS.delete(page.objects.map((o) => o.key));
+      cursor = page.truncated ? page.cursor : undefined;
+    } while (cursor);
+  }
 }

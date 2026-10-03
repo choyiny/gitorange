@@ -1,14 +1,22 @@
 import { OpenAPIHono, createRoute, z } from '@hono/zod-openapi';
 import type { Context } from 'hono';
-import { and, asc, desc, eq, sql } from 'drizzle-orm';
+import { and, asc, desc, eq, inArray, sql } from 'drizzle-orm';
 import {
+  mergeResolutions,
   pullRequestComments,
   pullRequests,
   repositories,
+  type MergeResolution,
   type PullRequest,
 } from '../db/app.schema';
 import { MergeConflictError, type GitService } from '../git/service';
-import { GitPushError } from '../git/remote';
+import { GitPushError, ZERO_SHA } from '../git/remote';
+import { makeCommit } from '../git/objects';
+import {
+  latestResolution,
+  resolutionConfigured,
+  startResolution,
+} from '../merge/resolution';
 import { loadRepo, type RepoEnv } from '../lib/repos';
 import { usersById, type PublicUser } from '../lib/users';
 import {
@@ -28,6 +36,7 @@ import {
 } from './schemas';
 import { compareShas } from './repos-router';
 import { onRefsUpdated, queueRuns } from '../actions/trigger';
+import { autoResolveConflicts, ensureResolution } from '../merge/auto';
 
 export const pullsRouter = new OpenAPIHono<RepoEnv>({
   defaultHook: validationHook,
@@ -305,6 +314,13 @@ pullsRouter.openapi(createPullRoute, async (c) => {
   await git
     .setRef(pullRef(pr.number), headSha)
     .catch((e) => console.error('[pulls] pin ref failed', e));
+  // A PR opened against a moved base may already conflict.
+  c.executionCtx.waitUntil(
+    ensureResolution(c.env, db, git, pr, {
+      base: baseSha,
+      head: headSha,
+    }).catch((e) => console.error('[merge] auto-resolve failed', e))
+  );
   c.executionCtx.waitUntil(
     queueRuns(c.env, db, repo, fullName(c), {
       kind: 'pull_request',
@@ -318,6 +334,53 @@ pullsRouter.openapi(createPullRoute, async (c) => {
   );
   return c.json(serializePull(pr, await usersById(db, [author.id])), 201);
 });
+
+const resolutionSchema = z
+  .object({
+    id: z.string(),
+    status: z.enum([
+      'queued',
+      'running',
+      'proposed',
+      'applied',
+      'rejected',
+      'failed',
+    ]),
+    model: z.string(),
+    baseSha: z.string(),
+    headSha: z.string(),
+    resultSha: z.string().nullable(),
+    conflictedPaths: z.array(z.string()),
+    touchedExtraPaths: z.array(z.string()),
+    explanation: z.string().nullable(),
+    errorMessage: z.string().nullable(),
+    durationMs: z.number().nullable(),
+    /** The branches moved since this attempt, so it can no longer be applied. */
+    stale: z.boolean(),
+    createdAt: z.string(),
+  })
+  .openapi('MergeResolution');
+
+function serializeResolution(
+  r: MergeResolution,
+  shas: { base: string; head: string } | null
+) {
+  return {
+    id: r.id,
+    status: r.status,
+    model: r.model,
+    baseSha: r.baseSha,
+    headSha: r.headSha,
+    resultSha: r.resultSha,
+    conflictedPaths: r.conflictedPaths,
+    touchedExtraPaths: r.touchedExtraPaths ?? [],
+    explanation: r.explanation,
+    errorMessage: r.errorMessage,
+    durationMs: r.durationMs,
+    stale: !shas || shas.base !== r.baseSha || shas.head !== r.headSha,
+    createdAt: r.createdAt.toISOString(),
+  };
+}
 
 // ── one PR ───────────────────────────────────────────────────────────────────
 
@@ -345,6 +408,12 @@ const getPullRoute = createRoute({
         commitCount: z.number(),
         mergeable: z.boolean().nullable(),
         conflicts: z.array(z.string()),
+        /** Every conflict is a text conflict, so AI can try to resolve them. */
+        conflictsResolvable: z.boolean(),
+        /** The conflicts are resolved by a valid AI resolution, which merging will land. */
+        resolvedByAi: z.boolean(),
+        aiResolution: z.boolean(),
+        resolution: resolutionSchema.nullable(),
         canMerge: z.boolean(),
       }),
       'Pull request'
@@ -374,14 +443,36 @@ pullsRouter.openapi(getPullRoute, async (c) => {
   ]);
   let mergeable: boolean | null = null;
   let conflicts: string[] = [];
+  let conflictsResolvable = false;
+  let resolvedByAi = false;
   let commitCount = 0;
+  const resolution = await latestResolution(db, pr.id);
   if (shas) {
     const commits = await git.commitsBetween(shas.base, shas.head);
     commitCount = commits.length;
     if (pr.state === 'open') {
-      const plan = await git.planMerge(shas.base, shas.head);
-      mergeable = !plan.upToDate && plan.conflicts.length === 0;
+      const plan = await git.planMerge(shas.base, shas.head, {
+        collectConflictFiles: true,
+      });
       conflicts = plan.upToDate ? [] : plan.conflicts;
+      resolvedByAi =
+        conflicts.length > 0 &&
+        resolution?.status === 'proposed' &&
+        resolution.baseSha === shas.base &&
+        resolution.headSha === shas.head;
+      mergeable = !plan.upToDate && (conflicts.length === 0 || resolvedByAi);
+      conflictsResolvable =
+        !plan.upToDate &&
+        plan.conflicts.length > 0 &&
+        plan.conflictFiles.length === plan.conflicts.length;
+      // Backstop for any trigger that was missed (or a PR that conflicted before AI resolution
+      // existed): seeing a PR with unresolved text conflicts makes sure an attempt exists.
+      if (conflictsResolvable && !resolvedByAi)
+        c.executionCtx.waitUntil(
+          ensureResolution(c.env, db, git, pr, shas).catch((e) =>
+            console.error('[merge] auto-resolve failed', e)
+          )
+        );
     }
   }
   return c.json(
@@ -400,6 +491,10 @@ pullsRouter.openapi(getPullRoute, async (c) => {
       commitCount,
       mergeable,
       conflicts,
+      conflictsResolvable,
+      aiResolution: resolutionConfigured(c.env),
+      resolvedByAi,
+      resolution: resolution ? serializeResolution(resolution, shas) : null,
       canMerge: c.get('perms').write,
     },
     200
@@ -465,6 +560,20 @@ pullsRouter.openapi(updatePullRoute, async (c) => {
     .update(pullRequests)
     .set(patch)
     .where(eq(pullRequests.id, pr.id));
+  if (patch.state === 'open') {
+    // A reopened PR may conflict with everything that landed while it was closed.
+    const shas = await pullShas(c.get('git'), { ...pr, state: 'open' });
+    if (shas)
+      c.executionCtx.waitUntil(
+        ensureResolution(
+          c.env,
+          c.get('db'),
+          c.get('git'),
+          { ...pr, state: 'open' },
+          shas
+        ).catch((e) => console.error('[merge] auto-resolve failed', e))
+      );
+  }
   return c.json({ ok: true as const }, 200);
 });
 
@@ -517,9 +626,13 @@ const mergeRoute = createRoute({
       content: {
         'application/json': {
           schema: z.object({
-            method: z.enum(['merge', 'squash']).default('merge'),
+            // One way to merge: squash the pull request and rebase it onto the latest base,
+            // keeping history linear. `squash` is accepted as an alias.
+            method: z.enum(['rebase', 'squash']).default('rebase'),
             title: z.string().max(256).optional(),
             message: z.string().max(65536).optional(),
+            /** Land a proposed AI conflict resolution instead of merging the branches. */
+            resolutionId: z.string().optional(),
           }),
         },
       },
@@ -548,27 +661,90 @@ pullsRouter.openapi(mergeRoute, async (c) => {
   const headSha = await git.resolve(pr.headRef);
   if (!headSha)
     return c.json({ error: 'The head branch no longer exists' }, 400);
-  const title =
-    body.title?.trim() ||
-    (body.method === 'squash'
-      ? `${pr.title} (#${pr.number})`
-      : `Merge pull request #${pr.number} from ${owner.username}/${pr.headRef}`);
-  const message = body.message ?? (body.method === 'squash' ? '' : pr.title);
-  const baseBefore = (await git.refs()).get(`refs/heads/${pr.baseRef}`);
+  const title = body.title?.trim() || `${pr.title} (#${pr.number})`;
+  const message = body.message ?? '';
+  const author = {
+    name: user.name,
+    email: user.email,
+    timestamp: Math.floor(Date.now() / 1000),
+  };
+  const fullMessage = message ? `${title}\n\n${message}` : title;
+  const refsBefore = await git.refs();
+  const baseBefore = refsBefore.get(`refs/heads/${pr.baseRef}`);
   let sha: string;
+  let appliedResolution: string | null = null;
   try {
-    ({ sha } = await git.merge({
-      base: pr.baseRef,
-      head: pr.headRef,
-      method: body.method,
-      message: message ? `${title}\n\n${message}` : title,
-      author: {
-        name: user.name,
-        email: user.email,
-        timestamp: Math.floor(Date.now() / 1000),
-      },
-      extraRefs: [{ ref: pullRef(pr.number), sha: headSha }],
-    }));
+    // A valid AI resolution for the current commits is part of the pull request: merging
+    // lands it, whether or not the caller names it.
+    let resolutionId = body.resolutionId;
+    if (!resolutionId) {
+      const latest = await latestResolution(db, pr.id);
+      if (
+        latest?.status === 'proposed' &&
+        latest.baseSha === baseBefore &&
+        latest.headSha === headSha
+      )
+        resolutionId = latest.id;
+    }
+    if (resolutionId) {
+      const row = await db
+        .select()
+        .from(mergeResolutions)
+        .where(
+          and(
+            eq(mergeResolutions.id, resolutionId),
+            eq(mergeResolutions.pullRequestId, pr.id)
+          )
+        )
+        .get();
+      if (!row || row.status !== 'proposed' || !row.resultSha)
+        return c.json({ error: 'This resolution is no longer available' }, 400);
+      if (row.baseSha !== baseBefore || row.headSha !== headSha)
+        return c.json(
+          {
+            error:
+              'The branches changed since this resolution was made. Resolve the conflicts again.',
+          },
+          409
+        );
+      const resolved = await git.commit(row.resultSha);
+      if (!resolved)
+        return c.json({ error: 'Resolution commit is missing' }, 400);
+      // The resolved tree and its objects are already stored (on the resolution's side ref);
+      // landing is one new commit and a compare-and-swap of the base branch.
+      const commit = await makeCommit({
+        tree: resolved.treeHash,
+        parents: [row.baseSha],
+        author,
+        message: fullMessage,
+      });
+      await git.client.push(
+        [
+          {
+            ref: `refs/heads/${pr.baseRef}`,
+            old: row.baseSha,
+            new: commit.sha,
+          },
+          {
+            ref: pullRef(pr.number),
+            old: refsBefore.get(pullRef(pr.number)) ?? ZERO_SHA,
+            new: headSha,
+          },
+        ],
+        [commit]
+      );
+      sha = commit.sha;
+      appliedResolution = row.id;
+    } else {
+      ({ sha } = await git.merge({
+        base: pr.baseRef,
+        head: pr.headRef,
+        method: 'squash',
+        message: fullMessage,
+        author,
+        extraRefs: [{ ref: pullRef(pr.number), sha: headSha }],
+      }));
+    }
   } catch (e) {
     if (e instanceof MergeConflictError)
       return c.json({ error: e.message }, 409);
@@ -582,6 +758,11 @@ pullsRouter.openapi(mergeRoute, async (c) => {
       400
     );
   }
+  if (appliedResolution)
+    await db
+      .update(mergeResolutions)
+      .set({ status: 'applied', decidedAt: new Date() })
+      .where(eq(mergeResolutions.id, appliedResolution));
   const now = new Date();
   // The git push is the commit point; record it only after it succeeded.
   await db
@@ -601,6 +782,12 @@ pullsRouter.openapi(mergeRoute, async (c) => {
     .where(eq(repositories.id, pr.repositoryId));
   if (baseBefore)
     c.executionCtx.waitUntil(
+      autoResolveConflicts(c.env, c.get('repo'), [
+        { ref: `refs/heads/${pr.baseRef}`, old: baseBefore, new: sha },
+      ])
+    );
+  if (baseBefore)
+    c.executionCtx.waitUntil(
       onRefsUpdated(
         c.env,
         db,
@@ -611,6 +798,75 @@ pullsRouter.openapi(mergeRoute, async (c) => {
       )
     );
   return c.json({ sha }, 200);
+});
+
+// ── AI conflict resolution ───────────────────────────────────────────────────
+
+const startResolutionRoute = createRoute({
+  method: 'post',
+  path: '/{owner}/{repo}/pulls/{number}/resolutions',
+  tags: ['Pull requests'],
+  request: { params: numberParams },
+  responses: {
+    ...json201Response(resolutionSchema, 'Resolution started'),
+    ...json400Response,
+    ...json403Response,
+    ...json404Response,
+    ...json409Response,
+  },
+});
+pullsRouter.openapi(startResolutionRoute, async (c) => {
+  if (!c.get('perms').write)
+    return c.json({ error: 'You do not have permission to merge' }, 403);
+  const pr = await getPull(c, c.req.valid('param').number);
+  if (!pr) return c.json({ error: 'Not Found' }, 404);
+  if (pr.state !== 'open')
+    return c.json({ error: 'Pull request is not open' }, 400);
+  const shas = await pullShas(c.get('git'), pr);
+  if (!shas) return c.json({ error: 'The head branch no longer exists' }, 400);
+  const result = await startResolution(
+    c.env,
+    c.get('db'),
+    c.get('git'),
+    pr,
+    shas,
+    c.get('user')!.id
+  );
+  if (!result.ok) return c.json({ error: result.error }, result.status);
+  return c.json(serializeResolution(result.resolution, shas), 201);
+});
+
+const rejectResolutionRoute = createRoute({
+  method: 'post',
+  path: '/{owner}/{repo}/pulls/{number}/resolutions/{id}/reject',
+  tags: ['Pull requests'],
+  request: { params: numberParams.extend({ id: z.string() }) },
+  responses: {
+    ...json200Response(z.object({ ok: z.literal(true) }), 'Discarded'),
+    ...json403Response,
+    ...json404Response,
+  },
+});
+pullsRouter.openapi(rejectResolutionRoute, async (c) => {
+  if (!c.get('perms').write)
+    return c.json({ error: 'You do not have permission to merge' }, 403);
+  const { number, id } = c.req.valid('param');
+  const pr = await getPull(c, number);
+  if (!pr) return c.json({ error: 'Not Found' }, 404);
+  const updated = await c
+    .get('db')
+    .update(mergeResolutions)
+    .set({ status: 'rejected', decidedAt: new Date() })
+    .where(
+      and(
+        eq(mergeResolutions.id, id),
+        eq(mergeResolutions.pullRequestId, pr.id),
+        inArray(mergeResolutions.status, ['proposed', 'failed'])
+      )
+    )
+    .returning({ id: mergeResolutions.id });
+  if (!updated.length) return c.json({ error: 'Not Found' }, 404);
+  return c.json({ ok: true as const }, 200);
 });
 
 // ── comments ─────────────────────────────────────────────────────────────────

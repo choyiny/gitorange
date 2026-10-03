@@ -17,6 +17,8 @@ import {
 import { hashToken } from './lib/tokens';
 import { appName } from './lib/app-name';
 import { actionsConfigured, diffRefs, onRefsUpdated } from './actions/trigger';
+import { autoResolveConflicts } from './merge/auto';
+import { resolutionConfigured } from './merge/resolution';
 
 const GIT_PATH =
   /^\/([^/]+)\/([^/]+?)\.git\/(info\/refs|git-upload-pack|git-receive-pack)$/;
@@ -163,7 +165,9 @@ export async function handleGitRequest(
   const git = gitFor(env, repo);
   // Snapshot refs before a push so afterPush can tell which branches moved (for Actions).
   const refsBefore =
-    isPush && request.method === 'POST' && actionsConfigured(env)
+    isPush &&
+    request.method === 'POST' &&
+    (actionsConfigured(env) || resolutionConfigured(env))
       ? await git.client
           .listRefs()
           .then((ad) => ad.refs)
@@ -201,7 +205,8 @@ export async function handleGitRequest(
 
 /**
  * Bumps `updated_at`, adopts the first pushed branch as default if the default doesn't exist,
- * and queues Actions runs for the refs the push moved.
+ * queues Actions runs for the refs the push moved, and starts AI resolution for pull requests
+ * the push put into conflict.
  */
 async function afterPush(
   env: CloudflareBindings,
@@ -236,13 +241,9 @@ async function afterPush(
     console.error('[git] post-push sync failed', e);
   }
   await db.update(repositories).set(patch).where(eq(repositories.id, repoId));
-  if (refsBefore && refsAfter)
-    await onRefsUpdated(
-      env,
-      db,
-      repo,
-      fullName,
-      diffRefs(refsBefore, refsAfter),
-      actorId
-    );
+  if (refsBefore && refsAfter) {
+    const updates = diffRefs(refsBefore, refsAfter);
+    await onRefsUpdated(env, db, repo, fullName, updates, actorId);
+    await autoResolveConflicts(env, repo, updates);
+  }
 }

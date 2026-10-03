@@ -9,7 +9,6 @@ import {
   GitMergeIcon,
   GitPullRequestClosedIcon,
   AlertIcon,
-  TriangleDownIcon,
   GitBranchIcon,
 } from '@primer/octicons-react';
 import {
@@ -27,8 +26,8 @@ import { CommitList } from '@/components/CommitList';
 import { DiffTotals, DiffView } from '@/components/DiffView';
 import { MarkdownEditor } from '@/components/CommentForm';
 import { Markdown } from '@/components/Markdown';
-import { Dropdown } from '@/components/Dropdown';
 import { ChecksBox } from '@/components/Checks';
+import { AiResolution } from '@/components/AiResolution';
 import { Spinner } from '@/components/Spinner';
 import { NotFound } from './NotFound';
 import { PrStateBadge } from './PrIcons';
@@ -119,19 +118,14 @@ function MergeBox({
   onDone: () => void;
 }) {
   const pr = d.pull;
-  const [method, setMethod] = useState<'merge' | 'squash'>('merge');
   const [confirming, setConfirming] = useState(false);
   const [title, setTitle] = useState('');
   const [message, setMessage] = useState('');
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const open = () => {
-    setTitle(
-      method === 'squash'
-        ? `${pr.title} (#${pr.number})`
-        : `Merge pull request #${pr.number} from ${repo.owner.username}/${pr.headRef}`
-    );
-    setMessage(method === 'squash' ? '' : pr.title);
+    setTitle(`${pr.title} (#${pr.number})`);
+    setMessage('');
     setConfirming(true);
   };
   const merge = async () => {
@@ -139,7 +133,6 @@ function MergeBox({
     setError(null);
     try {
       await api.mergePull(repo.owner.username, repo.name, pr.number, {
-        method,
         title,
         message,
       });
@@ -151,9 +144,47 @@ function MergeBox({
       setBusy(false);
     }
   };
-  const conflict = d.mergeable === false && d.conflicts.length > 0;
-  const nothing = d.mergeable === false && !conflict;
-  const label = method === 'squash' ? 'Squash and merge' : 'Merge pull request';
+  const hasConflicts = d.conflicts.length > 0;
+  const resolving =
+    hasConflicts &&
+    (d.resolution?.status === 'running' || d.resolution?.status === 'queued') &&
+    !d.resolution.stale;
+  const conflict = hasConflicts && !d.resolvedByAi;
+  const nothing = d.mergeable === false && !hasConflicts;
+  const showAi =
+    hasConflicts && d.aiResolution && (d.conflictsResolvable || d.resolvedByAi);
+  const confirmBox = (
+    <div className="Box-row">
+      {error && <div className="flash flash-error mb-2">{error}</div>}
+      <p className="f6 color-fg-muted mb-2">
+        {d.resolvedByAi
+          ? 'The commits from this branch, with their conflicts resolved, will be squashed into one commit and added to '
+          : 'The commits from this branch will be squashed into one commit and added to '}
+        <code>{pr.baseRef}</code>, keeping its history linear.
+      </p>
+      <input
+        className="form-control width-full mb-2 text-bold"
+        value={title}
+        onChange={(e) => setTitle(e.target.value)}
+        aria-label="Commit title"
+      />
+      <textarea
+        className="form-control width-full mb-2"
+        rows={3}
+        value={message}
+        onChange={(e) => setMessage(e.target.value)}
+        aria-label="Commit message"
+      />
+      <div className="d-flex" style={{ gap: 8 }}>
+        <button className="btn btn-primary" disabled={busy} onClick={merge}>
+          {busy ? 'Merging…' : 'Confirm rebase and merge'}
+        </button>
+        <button className="btn" onClick={() => setConfirming(false)}>
+          Cancel
+        </button>
+      </div>
+    </div>
+  );
   return (
     <div className="d-flex mb-3" style={{ gap: 16 }}>
       <div
@@ -179,16 +210,24 @@ function MergeBox({
           )}
           <div>
             <h3 className="f5">
-              {conflict
-                ? 'This branch has conflicts that must be resolved'
-                : nothing
-                  ? 'This branch is up to date'
-                  : 'No conflicts with base branch'}
+              {resolving
+                ? 'Resolving conflicts with AI'
+                : conflict
+                  ? 'This branch has conflicts that must be resolved'
+                  : d.resolvedByAi
+                    ? 'Conflicts with the base branch were resolved'
+                    : nothing
+                      ? 'This branch is up to date'
+                      : 'No conflicts with base branch'}
             </h3>
             <p className="f6 color-fg-muted mb-0">
-              {conflict ? (
+              {d.resolvedByAi ? (
+                'The resolution below is part of this pull request; merging lands it.'
+              ) : conflict ? (
                 <>
-                  Resolve conflicts locally, then push to{' '}
+                  {showAi
+                    ? 'An agent resolves them automatically. You can also resolve them locally and push to '
+                    : 'Resolve conflicts locally, then push to '}
                   <code>{pr.headRef}</code>. Conflicting files:{' '}
                   {d.conflicts.map((c) => (
                     <code key={c} className="mr-1">
@@ -199,106 +238,23 @@ function MergeBox({
               ) : nothing ? (
                 'There is nothing to merge.'
               ) : (
-                'Merging can be performed automatically.'
+                'This branch can be rebased onto the base branch and merged.'
               )}
             </p>
           </div>
         </div>
-        {d.canMerge && d.mergeable && (
-          <div className="Box-row">
-            {error && <div className="flash flash-error mb-2">{error}</div>}
-            {confirming ? (
-              <div>
-                <input
-                  className="form-control width-full mb-2 text-bold"
-                  value={title}
-                  onChange={(e) => setTitle(e.target.value)}
-                />
-                <textarea
-                  className="form-control width-full mb-2"
-                  rows={3}
-                  value={message}
-                  onChange={(e) => setMessage(e.target.value)}
-                />
-                <div className="d-flex" style={{ gap: 8 }}>
-                  <button
-                    className="btn btn-primary"
-                    disabled={busy}
-                    onClick={merge}
-                  >
-                    {busy
-                      ? 'Merging…'
-                      : method === 'squash'
-                        ? 'Confirm squash and merge'
-                        : 'Confirm merge'}
-                  </button>
-                  <button className="btn" onClick={() => setConfirming(false)}>
-                    Cancel
-                  </button>
-                </div>
-              </div>
-            ) : (
-              <div className="BtnGroup d-inline-flex">
-                <button
-                  className="btn btn-primary BtnGroup-item"
-                  onClick={open}
-                >
-                  {label}
-                </button>
-                <Dropdown
-                  width={340}
-                  trigger={(_, toggle) => (
-                    <button
-                      className="btn btn-primary BtnGroup-item"
-                      aria-label="Select merge method"
-                      onClick={toggle}
-                    >
-                      <TriangleDownIcon />
-                    </button>
-                  )}
-                >
-                  {(close) => (
-                    <div className="py-1">
-                      {(
-                        [
-                          [
-                            'merge',
-                            'Create a merge commit',
-                            'All commits from this branch will be added to the base branch via a merge commit.',
-                          ],
-                          [
-                            'squash',
-                            'Squash and merge',
-                            'The 1 or more commits from this branch will be combined into one commit in the base branch.',
-                          ],
-                        ] as const
-                      ).map(([m, t, desc]) => (
-                        <button
-                          key={m}
-                          className="select-panel-item flex-items-start"
-                          onClick={() => {
-                            setMethod(m);
-                            close();
-                          }}
-                        >
-                          <span style={{ width: 16 }}>
-                            {method === m && <CheckIcon />}
-                          </span>
-                          <span>
-                            <span className="d-block text-bold">{t}</span>
-                            <span className="d-block f6 color-fg-muted">
-                              {desc}
-                            </span>
-                          </span>
-                        </button>
-                      ))}
-                    </div>
-                  )}
-                </Dropdown>
-              </div>
-            )}
-          </div>
-        )}
+        {showAi && <AiResolution repo={repo} d={d} onChange={onDone} />}
+        {d.canMerge &&
+          d.mergeable &&
+          (confirming ? (
+            confirmBox
+          ) : (
+            <div className="Box-row">
+              <button className="btn btn-primary" onClick={open}>
+                Rebase and merge
+              </button>
+            </div>
+          ))}
         {!d.canMerge && (
           <div className="Box-row f6 color-fg-muted">
             Only those with write access to this repository can merge pull
@@ -506,6 +462,21 @@ export default function PullView() {
   const q = useQuery({
     queryKey: qk.pull(o, repo.name, num),
     queryFn: () => api.pull(o, repo.name, num),
+    // Follow AI conflict resolution: while one runs, or while the PR has resolvable conflicts
+    // and an attempt is about to start on its own.
+    refetchInterval: (query) => {
+      const d = query.state.data;
+      if (!d) return false;
+      const r = d.resolution && !d.resolution.stale ? d.resolution : null;
+      if (r?.status === 'running' || r?.status === 'queued') return 3000;
+      const pending =
+        d.aiResolution &&
+        d.conflictsResolvable &&
+        !d.resolvedByAi &&
+        r?.status !== 'failed' &&
+        r?.status !== 'rejected';
+      return pending ? 5000 : false;
+    },
   });
   const commits = useQuery({
     queryKey: qk.pullCommits(o, repo.name, num),

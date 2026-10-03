@@ -20,6 +20,19 @@ function fakeActions() {
       terminate: async () => void terminated.push(id),
     }),
   };
+  // AI conflict resolution: single attempts and sweeps, recorded separately from Actions runs.
+  const resolutions: { id: string; params: unknown }[] = [];
+  const terminatedResolutions: string[] = [];
+  const MERGE_RESOLUTION = {
+    create: async (opts: { id: string; params: unknown }) => {
+      resolutions.push(opts);
+      return { id: opts.id };
+    },
+    get: async (id: string) => ({
+      id,
+      terminate: async () => void terminatedResolutions.push(id),
+    }),
+  };
   const JOB_RUNNER = {
     getByName: (jobId: string) => ({
       live: async (step: number) => live.get(`${jobId}:${step}`) ?? null,
@@ -27,10 +40,12 @@ function fakeActions() {
     }),
   };
   return {
-    bindings: { ACTIONS_RUN, JOB_RUNNER },
+    bindings: { ACTIONS_RUN, JOB_RUNNER, MERGE_RESOLUTION },
     started,
     terminated,
     destroyed,
+    resolutions,
+    terminatedResolutions,
     instanceStatus,
     live,
   };

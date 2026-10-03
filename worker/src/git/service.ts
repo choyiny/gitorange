@@ -1,4 +1,5 @@
 import { structuredPatch } from 'diff';
+import { mergeDiff3 } from 'node-diff3';
 import { decoder } from './bytes';
 import {
   makeBlob,
@@ -48,6 +49,33 @@ export interface FileDiff extends FileChange {
 
 const isTree = (e: { mode: string }) =>
   e.mode === '40000' || e.mode === '040000';
+const isRegularFile = (mode: string) => mode === '100644' || mode === '100755';
+
+/** Text merge limits: larger or binary files are left as conflicts for a human. */
+const MAX_MERGE_BYTES = 1024 * 1024;
+function isBinaryOrHuge(bytes: Uint8Array) {
+  return bytes.length > MAX_MERGE_BYTES || bytes.subarray(0, 8000).includes(0);
+}
+
+/** A file whose edits overlap: the three versions, and diff3 output with conflict markers. */
+export interface ConflictFile {
+  path: string;
+  base: string | null;
+  ours: string;
+  theirs: string;
+  withMarkers: string;
+}
+
+interface MergeState {
+  created: GitObject[];
+  conflicts: string[];
+  /** Collects details of text conflicts when set. */
+  conflictFiles?: ConflictFile[];
+  /** Final contents for conflicted paths; `null` resolves a path as deleted. */
+  resolutions?: Map<string, string | null>;
+  /** Conflict marker labels: ours, base, theirs. */
+  labels?: { a: string; o: string; b: string };
+}
 
 /** Read-and-write operations for one repo, built on the Artifacts binding plus smart HTTP. */
 export class GitService {
@@ -333,12 +361,17 @@ export class GitService {
    * Three-way merge of trees. Takes whole-file versions when only one side changed;
    * a file changed differently on both sides is a conflict (resolve locally).
    */
+  /**
+   * Three-way merges trees. Files changed on both sides are merged line by line (diff3); only
+   * truly overlapping edits, or changes that can't be merged as text (binary files, a delete
+   * against an edit, a file against a directory), become conflicts. `resolutions` supplies the
+   * final contents of conflicted paths, e.g. from AI conflict resolution.
+   */
   async mergeTrees(
     base: string | null,
     ours: string | null,
     theirs: string | null,
-    created: GitObject[],
-    conflicts: string[],
+    state: MergeState,
     prefix = ''
   ): Promise<string | null> {
     if (ours === theirs) return ours;
@@ -357,6 +390,7 @@ export class GitService {
       const be = bm.get(name);
       const oe = om.get(name);
       const te = tm.get(name);
+      const path = prefix + name;
       const same = (x?: Entry, y?: Entry) =>
         (!x && !y) || (!!x && !!y && x.hash === y.hash && x.mode === y.mode);
       let pick: Entry | undefined;
@@ -368,14 +402,14 @@ export class GitService {
           be && isTree(be) ? be.hash : null,
           oe?.hash ?? null,
           te?.hash ?? null,
-          created,
-          conflicts,
-          prefix + name + '/'
+          state,
+          path + '/'
         );
         if (hash) result.push({ name, mode: '40000', hash });
         continue;
       } else {
-        conflicts.push(prefix + name);
+        const merged = await this.mergeFile(path, be, oe, te, state);
+        if (merged) result.push({ name, mode: merged.mode, hash: merged.hash });
         continue;
       }
       if (pick)
@@ -383,12 +417,73 @@ export class GitService {
     }
     if (!result.length) return null;
     const tree = await makeTree(result);
-    created.push(tree);
+    state.created.push(tree);
     return tree.sha;
   }
 
+  /** A file both sides changed: a supplied resolution, a clean line merge, or a conflict. */
+  private async mergeFile(
+    path: string,
+    be: Entry | undefined,
+    oe: Entry | undefined,
+    te: Entry | undefined,
+    state: MergeState
+  ): Promise<{ mode: string; hash: string } | null> {
+    const resolved = state.resolutions?.get(path);
+    if (resolved !== undefined) {
+      if (resolved === null) return null; // resolved as deleted
+      const blob = await makeBlob(resolved);
+      state.created.push(blob);
+      return { mode: (oe ?? te)?.mode ?? '100644', hash: blob.sha };
+    }
+    const isFile = (e?: Entry) => !!e && isRegularFile(e.mode);
+    // Text merge needs both sides present as regular files (a base is optional: add/add).
+    if (!isFile(oe) || !isFile(te) || (be && !isFile(be))) {
+      state.conflicts.push(path);
+      return null;
+    }
+    const [bb, ob, tb] = await Promise.all([
+      be ? this.blob(be.hash) : Promise.resolve(new Uint8Array()),
+      this.blob(oe!.hash),
+      this.blob(te!.hash),
+    ]);
+    if (!bb || !ob || !tb || [bb, ob, tb].some(isBinaryOrHuge)) {
+      state.conflicts.push(path);
+      return null;
+    }
+    const text = [bb, ob, tb].map((x) => decoder.decode(x));
+    const merged = mergeDiff3(
+      text[1].split('\n'),
+      text[0].split('\n'),
+      text[2].split('\n'),
+      { label: state.labels ?? { a: 'ours', o: 'base', b: 'theirs' } }
+    );
+    // Mode: take a side's mode change (e.g. +x) when only one side made it.
+    const mode = be && oe!.mode === be.mode ? te!.mode : oe!.mode;
+    if (merged.conflict) {
+      state.conflicts.push(path);
+      state.conflictFiles?.push({
+        path,
+        base: be ? text[0] : null,
+        ours: text[1],
+        theirs: text[2],
+        withMarkers: merged.result.join('\n'),
+      });
+      return null;
+    }
+    const blob = await makeBlob(merged.result.join('\n'));
+    state.created.push(blob);
+    return { mode, hash: blob.sha };
+  }
+
   /** Computes the merged tree of `head` into `base` without writing anything. */
-  async planMerge(baseSha: string, headSha: string) {
+  async planMerge(
+    baseSha: string,
+    headSha: string,
+    options: Pick<MergeState, 'resolutions' | 'labels'> & {
+      collectConflictFiles?: boolean;
+    } = {}
+  ) {
     const mb = await this.mergeBase(baseSha, headSha);
     if (mb === headSha) return { upToDate: true as const };
     const [baseCommit, headCommit] = await Promise.all([
@@ -399,23 +494,36 @@ export class GitService {
     if (mb === baseSha) {
       return {
         upToDate: false as const,
+        mergeBase: mb,
         tree: headCommit.treeHash,
         objects: [] as GitObject[],
         conflicts: [] as string[],
+        conflictFiles: [] as ConflictFile[],
       };
     }
     const mbCommit = mb ? await this.commit(mb) : null;
-    const objects: GitObject[] = [];
-    const conflicts: string[] = [];
+    const state: MergeState = {
+      created: [],
+      conflicts: [],
+      conflictFiles: options.collectConflictFiles ? [] : undefined,
+      resolutions: options.resolutions,
+      labels: options.labels,
+    };
     const tree = await this.mergeTrees(
       mbCommit?.treeHash ?? null,
       baseCommit.treeHash,
       headCommit.treeHash,
-      objects,
-      conflicts
+      state
     );
     const emptyTree = tree ?? (await makeTree([])).sha;
-    return { upToDate: false as const, tree: emptyTree, objects, conflicts };
+    return {
+      upToDate: false as const,
+      mergeBase: mb,
+      tree: emptyTree,
+      objects: state.created,
+      conflicts: state.conflicts,
+      conflictFiles: state.conflictFiles ?? [],
+    };
   }
 
   async merge(opts: {
