@@ -43,6 +43,13 @@
       "when": 1790975362486,
       "tag": "0005_next_skullbuster",
       "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "6",
+      "when": 1791046001309,
+      "tag": "0006_groovy_silver_fox",
+      "breakpoints": true
     }
   ]
 }

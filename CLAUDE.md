@@ -32,6 +32,11 @@ and better-auth. Git storage is **Cloudflare Artifacts**: one Artifacts repo per
   (+ `jwt()`) is the OAuth 2.1 authorization server; `/mcp` verifies JWT access tokens (audience `<origin>/mcp`) locally
   and requires the user's consent row, so disconnecting an app is immediate. Discovery routes live at the origin root.
   `yarn auth:update` runs `scripts/fix-auth-schema.mjs` to patch a better-auth CLI bug in the generated schema.
+- Merging is rebase-only (squash onto the target tip). Conflicts: line-level diff3 in `GitService.mergeTrees`; text
+  conflicts are resolved automatically by AI (`worker/src/merge/`): sweep/attempt Workflow `MERGE_RESOLUTION`,
+  `MergeResolver` DO (Cloudflare Computer workspace + Pi Durable harness, model `RESOLVER_MODEL` via the `AI`
+  binding). A valid resolution (`merge_resolutions.status = 'proposed'` for the current shas) makes the PR mergeable.
+  Tests drive `executeResolution`/`executeSweep` with fake steps and a fake resolver.
 - Artifacts has no local emulator: `yarn dev` runs `env.dev`, which uses the remote service in the
   `gitorange-dev` namespace. Tests use `wrangler.test.jsonc` (no remote bindings) plus an in-memory
   Artifacts fake.

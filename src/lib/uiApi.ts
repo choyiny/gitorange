@@ -129,7 +129,28 @@ export type PullDetail = {
   commitCount: number;
   mergeable: boolean | null;
   conflicts: string[];
+  /** Every conflict is a text conflict, so AI can try to resolve them. */
+  conflictsResolvable: boolean;
+  /** The conflicts are resolved by a valid AI resolution, which merging lands. */
+  resolvedByAi: boolean;
+  aiResolution: boolean;
+  resolution: MergeResolution | null;
   canMerge: boolean;
+};
+export type MergeResolution = {
+  id: string;
+  status: 'queued' | 'running' | 'proposed' | 'applied' | 'rejected' | 'failed';
+  model: string;
+  baseSha: string;
+  headSha: string;
+  resultSha: string | null;
+  conflictedPaths: string[];
+  touchedExtraPaths: string[];
+  explanation: string | null;
+  errorMessage: string | null;
+  durationMs: number | null;
+  stale: boolean;
+  createdAt: string;
 };
 export type Invitation = {
   id: string;
@@ -364,7 +385,7 @@ export const api = {
     o: string,
     n: string,
     num: number,
-    body: { method: 'merge' | 'squash'; title?: string; message?: string }
+    body: { title?: string; message?: string; resolutionId?: string }
   ) =>
     apiFetch<{ sha: string }>(`${r(o, n)}/pulls/${num}/merge`, {
       method: 'POST',
@@ -404,6 +425,14 @@ export const api = {
     }),
   commitRuns: (o: string, n: string, sha: string) =>
     apiFetch<CommitRuns>(`${r(o, n)}/commits/${sha}/runs`),
+  startResolution: (o: string, n: string, num: number) =>
+    apiFetch<MergeResolution>(`${r(o, n)}/pulls/${num}/resolutions`, {
+      method: 'POST',
+    }),
+  rejectResolution: (o: string, n: string, num: number, id: string) =>
+    apiFetch(`${r(o, n)}/pulls/${num}/resolutions/${id}/reject`, {
+      method: 'POST',
+    }),
   comment: (o: string, n: string, num: number, body: string) =>
     apiFetch<Comment>(`${r(o, n)}/pulls/${num}/comments`, {
       method: 'POST',

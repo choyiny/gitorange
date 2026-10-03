@@ -44,7 +44,7 @@ Full docs live in **[docs/](docs/README.md)**: [Setup](docs/setup.md) · [Config
 
 ## Screenshots
 
-**Pull requests** — a conversation with Markdown comments, CI checks from Actions, a merge box that detects conflicts, and merge-commit or squash merges.
+**Pull requests** — a conversation with Markdown comments, CI checks from Actions, merge conflicts resolved by AI, and one-button rebase and merge.
 
 ![Pull request conversation](docs/screenshots/pull-request.jpg)
 
@@ -77,7 +77,8 @@ Full docs live in **[docs/](docs/README.md)**: [Setup](docs/setup.md) · [Config
 - **Work with an AI agent** — every repository offers a ready-made prompt (on an empty repo's setup page, and under **Code → AI agent**) that people who don't use git can paste into Claude Code or another coding agent. The agent sets up the repository and Git LFS on their computer, then makes changes on branches and links them to open pull requests. Their access token never passes through the agent. A second prompt imports an existing GitHub repository (every branch, tag, and Git LFS file) and can keep it in sync with GitHub.
 - **Git over HTTPS** — `git clone https://your-host/<owner>/<repo>.git` with a personal access token as the password.
 - **Git LFS** — large files are stored in Cloudflare R2 and transferred directly between `git lfs` and R2 through short-lived signed URLs (up to 5 GB per file). The web UI shows, previews, and downloads LFS files.
-- **Pull requests** — open, comment, close, and reopen; view commits and files changed; merge with a merge commit or squash; delete the branch after merging.
+- **Pull requests** — open, comment, close, and reopen; view commits and files changed; delete the branch after merging. Every merge is **rebase and merge**: the pull request is squashed into one commit on top of the latest target branch, so history stays linear.
+- **AI merge-conflict resolution** — when a pull request conflicts with its target branch, an agent resolves it on its own: no button to press. Files are first merged line by line, so only truly overlapping edits reach the model; then a [pi](https://pi.dev) agent on Workers AI (GLM-5.3 by default) combines both sides in a sandboxed filesystem ([Cloudflare Computer](https://github.com/cloudflare/computer)), told what each side was trying to do. The pull request shows its explanation and the resolved files, and merging lands them. When the target branch moves, still-valid resolutions are carried forward without another model call. A person is needed only when the model fails to produce an answer.
 - **Personal and team repositories** — personal repositories (`/<you>/<repo>`) are private by default: only you, collaborators you add, and site admins can see them, and you can make one internal so every member can read it. Repositories under the shared team (`/<team>/<repo>`, created by a site admin) are visible to every member.
 - **GitHub Actions workflows** — your existing `.github/workflows/*.yml` files run as-is on pushes and pull requests. Each job gets its own Linux container on Cloudflare Containers, with live logs, re-runs, cancel, and a checks box on pull requests. See [GitHub Actions compatibility](#github-actions-compatibility).
 - **MCP server** — connect Claude Code, Claude.ai, Cursor, Codex, or any MCP client to `https://your-host/mcp`. The client signs in through GitOrange with OAuth 2.1 (PKCE and dynamic client registration, no token to paste), the user approves it on a consent page, and it can then list, inspect, and create repositories as that user. **Settings → MCP server** shows the setup steps for each client, the available tools, and the connected apps, each of which can be disconnected instantly.
@@ -98,7 +99,7 @@ Everything runs as a single Cloudflare Worker — no git server to operate. Git 
 
 GitOrange is young. Before you rely on it, know that:
 
-- **Merge conflicts are resolved locally.** Merging is file-level: if both branches changed the same file, the pull request reports a conflict and you merge `main` into your branch locally, then push. There's no in-browser conflict editor or line-level auto-merge yet.
+- **AI resolves text conflicts only.** Binary files, and a file deleted on one side but changed on the other, still have to be resolved locally. AI resolutions aren't reviewed line by line before merging; read the explanation and the resolved files on the pull request if it matters. There's no in-browser conflict editor.
 - **Large diffs are truncated.** A diff shows at most 300 files, and files over ~512 KB (or binary files) are listed without their contents. File views skip highlighting above 300 KB and stop rendering above 1 MB (use **Raw**).
 - **Very long histories are approximated.** Merge bases and pull request commit lists walk up to ~2,000 commits, which can mislabel commits on repositories with deep histories between branches.
 - **LFS files are capped at 5 GB, and there's no file locking.** `git lfs lock` reports that locking isn't supported. LFS objects stay in R2 until their repository is deleted, even if no commit references them anymore.
@@ -124,7 +125,7 @@ A workflow that uses something unsupported fails with a message saying what to c
 
 ## How much does it cost?
 
-**$5/month** for the Cloudflare Workers Paid plan, which Artifacts requires. Included each month: 10,000 Artifacts operations (a clone, fetch, push, or repo creation) and 1 GB of repository storage. Beyond that, Artifacts bills $0.15 per 1,000 operations and $0.50 per GB-month ([pricing](https://developers.cloudflare.com/artifacts/platform/pricing/)). Git LFS storage is R2: the first 10 GB-month is free, then $0.015 per GB-month, and downloads are free ([pricing](https://developers.cloudflare.com/r2/pricing/)). Actions jobs bill as Cloudflare Containers while they run: the default `standard-1` runner (½ vCPU, 4 GiB) costs about $0.0012 per minute after the plan's included 375 vCPU-minutes and 25 GiB-hours ([pricing](https://developers.cloudflare.com/containers/pricing/)). D1 and Email Sending usage for a small team stays within the plan's included amounts.
+**$5/month** for the Cloudflare Workers Paid plan, which Artifacts requires. Included each month: 10,000 Artifacts operations (a clone, fetch, push, or repo creation) and 1 GB of repository storage. Beyond that, Artifacts bills $0.15 per 1,000 operations and $0.50 per GB-month ([pricing](https://developers.cloudflare.com/artifacts/platform/pricing/)). Git LFS storage is R2: the first 10 GB-month is free, then $0.015 per GB-month, and downloads are free ([pricing](https://developers.cloudflare.com/r2/pricing/)). Actions jobs bill as Cloudflare Containers while they run: the default `standard-1` runner (½ vCPU, 4 GiB) costs about $0.0012 per minute after the plan's included 375 vCPU-minutes and 25 GiB-hours ([pricing](https://developers.cloudflare.com/containers/pricing/)). AI conflict resolution uses [Workers AI](https://developers.cloudflare.com/workers-ai/platform/pricing/), billed per token; a typical resolution is one short agent run, and at most 5 run at once per repository. D1 and Email Sending usage for a small team stays within the plan's included amounts.
 
 ## Roadmap
 

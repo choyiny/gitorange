@@ -6,18 +6,21 @@ GitOrange reads its configuration from `wrangler.jsonc` (copied from [`wrangler.
 
 Binding names are load-bearing — the worker looks them up by exact name. Resource names and IDs can be anything.
 
-| Key                               | Required value   | What it is                                                                  |
-| --------------------------------- | ---------------- | --------------------------------------------------------------------------- |
-| `d1_databases[].binding`          | `"DB"`           | Users, invitations, tokens, repositories, pull requests, comments           |
-| `artifacts[].binding`             | `"ARTIFACTS"`    | Git storage. `namespace` groups this instance's repositories                |
-| `send_email[].name`               | `"EMAIL"`        | Outbound invitation email via Cloudflare Email Sending                      |
-| `r2_buckets[].binding`            | `"LFS"`          | Git LFS file contents, keyed `lfs/<repository id>/<oid>`                    |
-| `r2_buckets[].binding`            | `"ACTIONS_LOGS"` | Actions step logs, keyed `actions/<repository id>/<run>/<job>/<step>.log`   |
-| `workflows[].binding`             | `"ACTIONS_RUN"`  | One Workflow instance per Actions run (`class_name: "ActionsRun"`)          |
-| `durable_objects.bindings[].name` | `"JOB_RUNNER"`   | One `JobRunner` Durable Object per Actions job; it owns the job's container |
-| `assets.binding`                  | `"ASSETS"`       | The built React app in `dist/client`                                        |
+| Key                               | Required value       | What it is                                                                                                                 |
+| --------------------------------- | -------------------- | -------------------------------------------------------------------------------------------------------------------------- |
+| `d1_databases[].binding`          | `"DB"`               | Users, invitations, tokens, repositories, pull requests, comments                                                          |
+| `artifacts[].binding`             | `"ARTIFACTS"`        | Git storage. `namespace` groups this instance's repositories                                                               |
+| `send_email[].name`               | `"EMAIL"`            | Outbound invitation email via Cloudflare Email Sending                                                                     |
+| `r2_buckets[].binding`            | `"LFS"`              | Git LFS file contents, keyed `lfs/<repository id>/<oid>`                                                                   |
+| `r2_buckets[].binding`            | `"ACTIONS_LOGS"`     | Actions step logs, keyed `actions/<repository id>/<run>/<job>/<step>.log`                                                  |
+| `workflows[].binding`             | `"ACTIONS_RUN"`      | One Workflow instance per Actions run (`class_name: "ActionsRun"`)                                                         |
+| `durable_objects.bindings[].name` | `"JOB_RUNNER"`       | One `JobRunner` Durable Object per Actions job; it owns the job's container                                                |
+| `durable_objects.bindings[].name` | `"MERGE_RESOLVER"`   | One `MergeResolver` Durable Object per AI conflict resolution: a Cloudflare Computer workspace and the pi agent            |
+| `workflows[].binding`             | `"MERGE_RESOLUTION"` | AI conflict resolution: one instance per attempt, plus a sweep per push or merge (`class_name: "MergeResolutionWorkflow"`) |
+| `ai.binding`                      | `"AI"`               | Workers AI, the model behind conflict resolution                                                                           |
+| `assets.binding`                  | `"ASSETS"`           | The built React app in `dist/client`                                                                                       |
 
-`containers` defines the Actions runner: class `JobRunner` with `scheduling_policy: "durable_object"` and one image named `runner`, built from [`actions/runner/Dockerfile`](../actions/runner/Dockerfile) when you deploy (Docker must be running). Each job picks its instance size at start from `runs-on` (`ubuntu-latest` → `standard-1`; `gitorange-standard-2` … `gitorange-standard-4` for bigger machines). To deploy without Actions, remove `containers`, `durable_objects`, `exports`, `workflows`, and the `ACTIONS_LOGS` bucket: pushes then never queue runs, and the Actions tab says Actions isn't set up.
+`containers` defines the Actions runner: class `JobRunner` with `scheduling_policy: "durable_object"` and one image named `runner`, built from [`actions/runner/Dockerfile`](../actions/runner/Dockerfile) when you deploy (Docker must be running). Each job picks its instance size at start from `runs-on` (`ubuntu-latest` → `standard-1`; `gitorange-standard-2` … `gitorange-standard-4` for bigger machines). To deploy without Actions, remove the `JobRunner` container, its Durable Object binding and export, the `ACTIONS_RUN` Workflow, and the `ACTIONS_LOGS` bucket. To deploy without AI conflict resolution, remove the `MergeResolver` Durable Object binding and export and the `MERGE_RESOLUTION` Workflow: conflicts then have to be resolved locally: pushes then never queue runs, and the Actions tab says Actions isn't set up.
 
 Keep `assets.run_worker_first` as shipped (it includes `/mcp` and `/.well-known/*`, which the MCP server and OAuth discovery need): the git endpoint (`/<owner>/<repo>.git/...`) and `/api/*` must reach the worker before static asset handling.
 
@@ -29,6 +32,7 @@ Keep `assets.run_worker_first` as shipped (it includes `/mcp` and `/.well-known/
 | `BASE_URL`        | `https://git.example.com` | Public origin; used for auth and trusted origins. Cookies are `Secure` when this is `https://`                                                                                                                 |
 | `FROM_EMAIL`      | `noreply@example.com`     | Sender for invitation emails; its domain must be onboarded to Email Sending                                                                                                                                    |
 | `R2_ACCOUNT_ID`   | `0123…cdef`               | Account that owns the LFS bucket; pre-signed URLs point at `https://<R2_ACCOUNT_ID>.r2.cloudflarestorage.com`                                                                                                  |
+| `RESOLVER_MODEL`  | `@cf/zai-org/glm-5.3`     | Workers AI model the conflict-resolution agent uses; it must support tool calling                                                                                                                              |
 | `LFS_BUCKET_NAME` | `gitorange-lfs`           | The LFS bucket's name; must match `r2_buckets[].bucket_name` (a binding doesn't expose its name)                                                                                                               |
 
 ## Secrets

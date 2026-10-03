@@ -45,9 +45,22 @@
       "images": { "runner": { "dockerfile": "./actions/runner/Dockerfile" } }
     }
   ],
-  "durable_objects": { "bindings": [{ "name": "JOB_RUNNER", "class_name": "JobRunner" }] },
-  "exports": { "JobRunner": { "type": "durable-object", "storage": "sqlite" } },
-  "workflows": [{ "name": "gitorange-actions-run", "binding": "ACTIONS_RUN", "class_name": "ActionsRun" }],
+  "durable_objects": {
+    "bindings": [
+      { "name": "JOB_RUNNER", "class_name": "JobRunner" },
+      { "name": "MERGE_RESOLVER", "class_name": "MergeResolver" }
+    ]
+  },
+  "exports": {
+    "JobRunner": { "type": "durable-object", "storage": "sqlite" },
+    "MergeResolver": { "type": "durable-object", "storage": "sqlite" }
+  },
+  "workflows": [
+    { "name": "gitorange-actions-run", "binding": "ACTIONS_RUN", "class_name": "ActionsRun" },
+    { "name": "gitorange-merge-resolution", "binding": "MERGE_RESOLUTION", "class_name": "MergeResolutionWorkflow" }
+  ],
+  // Workers AI: AI conflict resolution (the model is RESOLVER_MODEL).
+  "ai": { "binding": "AI" },
   "assets": {
     "binding": "ASSETS",
     "directory": "./dist/client",
@@ -64,7 +77,9 @@
     "FROM_EMAIL": "noreply@<your-email-sending-domain>",
     // Where pre-signed LFS URLs point: https://<R2_ACCOUNT_ID>.r2.cloudflarestorage.com/<LFS_BUCKET_NAME>
     "R2_ACCOUNT_ID": "<your-cloudflare-account-id>",
-    "LFS_BUCKET_NAME": "gitorange-lfs"
+    "LFS_BUCKET_NAME": "gitorange-lfs",
+    // Workers AI model that resolves merge conflicts (pi agent with file tools).
+    "RESOLVER_MODEL": "@cf/zai-org/glm-5.3"
   },
   // BETTER_AUTH_SECRET is a secret: `wrangler secret put BETTER_AUTH_SECRET` (prod) / .dev.vars (dev).
 
@@ -93,14 +108,25 @@
           "images": { "runner": { "dockerfile": "./actions/runner/Dockerfile" } }
         }
       ],
-      "durable_objects": { "bindings": [{ "name": "JOB_RUNNER", "class_name": "JobRunner" }] },
-      "workflows": [{ "name": "gitorange-actions-run-dev", "binding": "ACTIONS_RUN", "class_name": "ActionsRun" }],
+      "durable_objects": {
+        "bindings": [
+          { "name": "JOB_RUNNER", "class_name": "JobRunner" },
+          { "name": "MERGE_RESOLVER", "class_name": "MergeResolver" }
+        ]
+      },
+      "workflows": [
+        { "name": "gitorange-actions-run-dev", "binding": "ACTIONS_RUN", "class_name": "ActionsRun" },
+        { "name": "gitorange-merge-resolution-dev", "binding": "MERGE_RESOLUTION", "class_name": "MergeResolutionWorkflow" }
+      ],
+      // Workers AI has no local emulator either; dev calls the real service.
+      "ai": { "binding": "AI", "remote": true },
       "vars": {
         "APP_NAME": "GitOrange",
         "BASE_URL": "http://localhost:8080",
         "FROM_EMAIL": "noreply@<your-email-sending-domain>",
         "R2_ACCOUNT_ID": "<your-cloudflare-account-id>",
-        "LFS_BUCKET_NAME": "gitorange-lfs-dev"
+        "LFS_BUCKET_NAME": "gitorange-lfs-dev",
+        "RESOLVER_MODEL": "@cf/zai-org/glm-5.3"
       }
     }
   }

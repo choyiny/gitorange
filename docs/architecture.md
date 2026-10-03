@@ -9,15 +9,16 @@ GitOrange is one Cloudflare Worker backed by D1, Artifacts, and R2, with Actions
 
 The diagram's source is [`diagrams/architecture.html`](diagrams/architecture.html) (light) and [`diagrams/architecture-dark.html`](diagrams/architecture-dark.html) (dark); the PNGs are 2× screenshots of them.
 
-| Concern                                                                                   | Where it lives                                                                                                          |
-| ----------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------- |
-| Git objects and refs (branches, commits, files)                                           | **Cloudflare Artifacts** — one Artifacts repo per GitOrange repository                                                  |
-| Users, sessions, invitations, access tokens, repository metadata, pull requests, comments | **D1**                                                                                                                  |
-| Invitation emails                                                                         | **Cloudflare Email Sending**                                                                                            |
-| Git LFS file contents                                                                     | **R2**, one object per repository and oid; D1's `lfs_objects` records which objects each repository has                 |
-| Actions runs, jobs, and steps                                                             | **D1** (`workflow_runs`, `workflow_jobs`, `workflow_steps`); step logs in **R2**; jobs run in **Cloudflare Containers** |
-| OAuth clients, consents, tokens, and signing keys for the MCP server                      | **D1**, in better-auth's generated tables (`oauth_*`, `jwkss`)                                                          |
-| Web interface                                                                             | React SPA in `src/`, served from the same Worker via the `ASSETS` binding                                               |
+| Concern                                                                                   | Where it lives                                                                                                                                                                                                    |
+| ----------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Git objects and refs (branches, commits, files)                                           | **Cloudflare Artifacts** — one Artifacts repo per GitOrange repository                                                                                                                                            |
+| Users, sessions, invitations, access tokens, repository metadata, pull requests, comments | **D1**                                                                                                                                                                                                            |
+| Invitation emails                                                                         | **Cloudflare Email Sending**                                                                                                                                                                                      |
+| Git LFS file contents                                                                     | **R2**, one object per repository and oid; D1's `lfs_objects` records which objects each repository has                                                                                                           |
+| Actions runs, jobs, and steps                                                             | **D1** (`workflow_runs`, `workflow_jobs`, `workflow_steps`); step logs in **R2**; jobs run in **Cloudflare Containers**                                                                                           |
+| OAuth clients, consents, tokens, and signing keys for the MCP server                      | **D1**, in better-auth's generated tables (`oauth_*`, `jwkss`)                                                                                                                                                    |
+| AI merge resolutions                                                                      | **D1** (`merge_resolutions`); resolved commits on `refs/resolutions/*` in **Artifacts**; transcripts in **R2**; runs on **Workflows**, **Durable Objects** (Cloudflare Computer + Pi Durable), and **Workers AI** |
+| Web interface                                                                             | React SPA in `src/`, served from the same Worker via the `ASSETS` binding                                                                                                                                         |
 
 Nothing about git content is copied into D1. The repository page, history, and diffs are read from Artifacts on each request.
 
@@ -60,6 +61,22 @@ GitOrange Actions runs `.github/workflows/*.yml` files with GitHub Actions synta
 4. **Logs.** Each finished step's log goes to R2 (`actions/<repository id>/...`); while a step runs, the logs endpoint reads it from the job's `JobRunner`. Deleting a repository deletes its logs.
 
 Cancelling terminates the Workflow and destroys the job containers. A run whose Workflow crashed is marked failed the next time someone views it.
+
+## Merging and AI conflict resolution
+
+Every pull request lands the same way: **rebase and merge**. The pull request's changes are squashed into one commit on top of the target branch's current tip and pushed with compare-and-swap, so history stays linear and a concurrent push fails the merge instead of being overwritten.
+
+The three-way merge runs in the Worker ([`worker/src/git/service.ts`](../worker/src/git/service.ts)). Files changed on both sides are merged line by line with diff3 ([node-diff3](https://github.com/bhousel/node-diff3)); only truly overlapping edits are conflicts. Binary files and delete-versus-edit stay conflicts for a person.
+
+Text conflicts are resolved by AI ([`worker/src/merge/`](../worker/src/merge/)), without anyone asking:
+
+1. **Trigger.** A push or a merge that moves a branch starts one sweep (`MERGE_RESOLUTION` Workflow) that checks, a durable step each, every open pull request into or out of that branch. Opening, reopening, or viewing a pull request checks just that one, which also backstops anything a trigger missed. Each pair of commits gets at most one attempt.
+2. **Carry forward.** If the pull request already has a resolution and neither side changed its conflicted files since, the resolved files are reapplied to the new commits: a new proposal with no model call.
+3. **Queue.** Otherwise a resolution attempt starts, at most 5 at once per repository (more wait as `queued`). Attempts for commits that moved on are terminated and marked superseded.
+4. **Resolve.** A `MergeResolver` Durable Object writes the conflicted files, with diff3 markers, into a [Cloudflare Computer](https://github.com/cloudflare/computer) workspace in its own SQLite and runs a [pi](https://pi.dev) agent ([Pi Durable harness](https://developers.cloudflare.com/agents/harnesses/pi/) via the Agents SDK) on `RESOLVER_MODEL` through the `AI` binding. The agent gets file tools only (no shell, network, or git credentials), plus what each side changed and why: the commit subjects that landed on the target branch, and the pull request's title, description, and commits. Before its run may end, a hook checks the files: leftover markers continue the same run with the exact lines to fix.
+5. **Commit.** GitOrange reads the files back, rejects any with markers, rebuilds the merge with them, and pushes the squashed commit to a side ref, `refs/resolutions/<id>`. The pull request then counts as mergeable; merging lands that commit if neither branch has moved. The agent's transcript goes to R2 (`merge-resolutions/<repository id>/<id>.json`).
+
+A person is needed only when the model fails to answer (after pi's own retries with backoff, and Workflow retries), or after discarding a resolution: the pull request then offers to try again.
 
 ## MCP server and OAuth 2.1
 

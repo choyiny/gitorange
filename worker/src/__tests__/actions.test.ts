@@ -301,7 +301,7 @@ describe('Actions triggers', () => {
     await settle(s.t);
     const merged = await call(s.t, '/api/repos/octocat/app/pulls/1/merge', {
       cookie: s.admin,
-      json: { method: 'merge' },
+      json: { method: 'rebase' },
     });
     expect(merged.status).toBe(200);
     const { sha } = (await merged.json()) as { sha: string };

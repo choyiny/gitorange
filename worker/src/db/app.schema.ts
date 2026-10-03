@@ -174,6 +174,48 @@ export const lfsObjects = sqliteTable(
   (t) => [uniqueIndex('lfs_objects_repo_oid_uq').on(t.repositoryId, t.oid)]
 );
 
+// ── AI merge-conflict resolution ─────────────────────────────────────────────
+// One attempt to resolve a pull request's merge conflicts with AI. The result is a squashed
+// commit on the base branch, kept on a side ref (`refs/resolutions/<id>`) until it is applied.
+
+export const mergeResolutions = sqliteTable(
+  'merge_resolutions',
+  {
+    id: text('id').primaryKey(),
+    pullRequestId: text('pull_request_id')
+      .notNull()
+      .references(() => pullRequests.id, { onDelete: 'cascade' }),
+    /** The base branch tip and PR head the resolution merges. */
+    baseSha: text('base_sha').notNull(),
+    headSha: text('head_sha').notNull(),
+    status: text('status', {
+      // queued: waiting for a free slot (resolutions per repository are capped).
+      enum: ['queued', 'running', 'proposed', 'applied', 'rejected', 'failed'],
+    })
+      .notNull()
+      .default('running'),
+    model: text('model').notNull(),
+    conflictedPaths: text('conflicted_paths', { mode: 'json' })
+      .$type<string[]>()
+      .notNull(),
+    /** Files the model changed outside the conflicted ones. */
+    touchedExtraPaths: text('touched_extra_paths', { mode: 'json' }).$type<
+      string[]
+    >(),
+    explanation: text('explanation'),
+    errorMessage: text('error_message'),
+    resultSha: text('result_sha'),
+    transcriptR2Key: text('transcript_r2_key'),
+    durationMs: integer('duration_ms'),
+    createdById: text('created_by_id').references(() => users.id, {
+      onDelete: 'set null',
+    }),
+    createdAt: integer('created_at', { mode: 'timestamp' }).notNull(),
+    decidedAt: integer('decided_at', { mode: 'timestamp' }),
+  },
+  (t) => [index('merge_resolutions_pr_idx').on(t.pullRequestId, t.createdAt)]
+);
+
 // ── Actions ──────────────────────────────────────────────────────────────────
 // A workflow run is one `.github/workflows/*.yml` file triggered by one event. Its jobs run
 // in containers driven by a Cloudflare Workflow; step logs live in R2 (`log_r2_key`).
@@ -260,3 +302,4 @@ export type PullRequest = typeof pullRequests.$inferSelect;
 export type WorkflowRun = typeof workflowRuns.$inferSelect;
 export type WorkflowJob = typeof workflowJobs.$inferSelect;
 export type WorkflowStep = typeof workflowSteps.$inferSelect;
+export type MergeResolution = typeof mergeResolutions.$inferSelect;

@@ -82,6 +82,8 @@ app.notFound((c) => c.json({ error: 'Not Found' }, 404));
 export { app };
 export { ActionsRun } from './actions/run-workflow';
 export { JobRunner } from './actions/job-runner';
+export { MergeResolver } from './merge/resolver';
+export { MergeResolutionWorkflow } from './merge/workflow';
 
 export default {
   fetch(request, env, ctx) {
