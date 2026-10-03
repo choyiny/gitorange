@@ -1,4 +1,5 @@
 # Verification only — this workflow never deploys. Humans deploy.
+# Formatting is checked in format.yml, security in codeql.yml.
 name: CI
 
 on:
@@ -18,9 +19,9 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
 
-      - uses: actions/setup-node@v5
+      - uses: actions/setup-node@v7
         with:
           node-version: 22
           cache: yarn
@@ -39,9 +40,6 @@ jobs:
       # vitest-pool-workers needs assets.directory (dist/client) to exist; the build produces it.
       - name: Build
         run: yarn build
-
-      - name: Format check
-        run: yarn format:check
 
       - name: Typecheck
         run: yarn typecheck
