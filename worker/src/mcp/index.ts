@@ -6,6 +6,7 @@ import {
   oauthConsents,
   oauthRefreshTokens,
 } from '../db/auth.schema';
+import { appName, mcpServerName } from '../lib/app-name';
 import type { AppEnv } from '../variables';
 import { McpToolError } from './errors';
 import { getMcpSession } from './oauth-session';
@@ -112,12 +113,12 @@ mcpRouter.post('/', async (c) => {
               : PROTOCOL_VERSION,
           capabilities: { tools: { listChanged: false } },
           serverInfo: {
-            name: 'gitorange',
-            title: 'GitOrange',
+            name: mcpServerName(appName(c.env)),
+            title: appName(c.env),
             version: '1.0.0',
           },
           instructions:
-            'GitOrange is a self-hosted, GitHub-style git server. Use these tools to find and create ' +
+            `${appName(c.env)} is a self-hosted, GitHub-style git server. Use these tools to find and create ` +
             'repositories. Never ask the user to paste a personal access token into the conversation; ' +
             'have them run git commands that need one themselves.',
         })
@@ -160,7 +161,11 @@ export const mcpApiRouter = new Hono<AppEnv>();
 
 /** The server URL and tool list, so the page always matches what /mcp serves. */
 mcpApiRouter.get('/', (c) =>
-  c.json({ serverUrl: `${baseURLOf(c)}/mcp`, tools: TOOL_DEFINITIONS })
+  c.json({
+    serverUrl: `${baseURLOf(c)}/mcp`,
+    serverName: mcpServerName(appName(c.env)),
+    tools: TOOL_DEFINITIONS,
+  })
 );
 
 /** Apps the user has approved, newest first. */

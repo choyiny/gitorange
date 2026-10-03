@@ -13,8 +13,7 @@ import { Header } from '@/components/Header';
 import { CopyButton } from '@/components/CopyButton';
 import { SettingsNav } from '@/components/SettingsNav';
 import { Spinner } from '@/components/Spinner';
-
-const SERVER_NAME = 'gitorange';
+import { useAppName } from '@/lib/appName';
 
 type Client = 'claude-code' | 'claude' | 'cursor' | 'codex' | 'other';
 const CLIENTS: { id: Client; label: string }[] = [
@@ -41,18 +40,28 @@ function Snippet({ text, label }: { text: string; label?: string }) {
   );
 }
 
-function SetupSteps({ client, url }: { client: Client; url: string }) {
+function SetupSteps({
+  client,
+  url,
+  serverName,
+  appName,
+}: {
+  client: Client;
+  url: string;
+  serverName: string;
+  appName: string;
+}) {
   if (client === 'claude-code')
     return (
       <>
         <p className="mb-2">Add the server from your terminal:</p>
         <Snippet
-          text={`claude mcp add --transport http ${SERVER_NAME} ${url}`}
+          text={`claude mcp add --transport http ${serverName} ${url}`}
         />
         <p className="mb-0">
           Then start Claude Code, run <code>/mcp</code>, choose{' '}
-          <strong>{SERVER_NAME}</strong>, and select{' '}
-          <strong>Authenticate</strong>. Your browser opens GitOrange: sign in
+          <strong>{serverName}</strong>, and select{' '}
+          <strong>Authenticate</strong>. Your browser opens {appName}: sign in
           and allow access.
         </p>
       </>
@@ -72,11 +81,11 @@ function SetupSteps({ client, url }: { client: Client; url: string }) {
           (in Claude.ai or the Claude desktop app).
         </li>
         <li className="mb-2">
-          Name it <strong>GitOrange</strong> and paste the server URL{' '}
+          Name it <strong>{appName}</strong> and paste the server URL{' '}
           <code>{url}</code>.
         </li>
         <li>
-          Select <strong>Connect</strong>, sign in to GitOrange, and allow
+          Select <strong>Connect</strong>, sign in to {appName}, and allow
           access. The connector then works in Claude on the web, desktop, and
           mobile.
         </li>
@@ -89,7 +98,7 @@ function SetupSteps({ client, url }: { client: Client; url: string }) {
         <p className="mb-2">
           <a
             className="btn btn-sm btn-primary"
-            href={`cursor://anysphere.cursor-deeplink/mcp/install?name=${SERVER_NAME}&config=${encodeURIComponent(config)}`}
+            href={`cursor://anysphere.cursor-deeplink/mcp/install?name=${serverName}&config=${encodeURIComponent(config)}`}
           >
             Add to Cursor
           </a>
@@ -101,14 +110,14 @@ function SetupSteps({ client, url }: { client: Client; url: string }) {
         <Snippet
           label="mcp.json"
           text={JSON.stringify(
-            { mcpServers: { [SERVER_NAME]: { url } } },
+            { mcpServers: { [serverName]: { url } } },
             null,
             2
           )}
         />
         <p className="mb-0">
           Cursor shows <strong>Needs login</strong> next to the server in
-          Settings → MCP; select it to sign in to GitOrange.
+          Settings → MCP; select it to sign in to {appName}.
         </p>
       </>
     );
@@ -118,11 +127,11 @@ function SetupSteps({ client, url }: { client: Client; url: string }) {
       <>
         <p className="mb-2">Add the server from your terminal, then sign in:</p>
         <Snippet
-          text={`codex mcp add ${SERVER_NAME} --url ${url}\ncodex mcp login ${SERVER_NAME}`}
+          text={`codex mcp add ${serverName} --url ${url}\ncodex mcp login ${serverName}`}
         />
         <p className="mb-0">
           Or add it to <code>~/.codex/config.toml</code> under{' '}
-          <code>[mcp_servers.{SERVER_NAME}]</code> with{' '}
+          <code>[mcp_servers.{serverName}]</code> with{' '}
           <code>url = &quot;{url}&quot;</code>.
         </p>
       </>
@@ -131,7 +140,7 @@ function SetupSteps({ client, url }: { client: Client; url: string }) {
     <p className="mb-0">
       Any MCP client that supports remote servers works. Add a{' '}
       <strong>Streamable HTTP</strong> server with the URL <code>{url}</code>.
-      The client discovers GitOrange&apos;s sign-in automatically (OAuth 2.1
+      The client discovers {appName}&apos;s sign-in automatically (OAuth 2.1
       with PKCE and dynamic client registration), so there&apos;s no token to
       copy: you sign in and approve access in your browser.
     </p>
@@ -181,6 +190,7 @@ function ToolRow({ tool }: { tool: McpTool }) {
 
 export default function SettingsMcp() {
   const qc = useQueryClient();
+  const appName = useAppName();
   const info = useQuery({ queryKey: qk.mcp, queryFn: api.mcp });
   const connections = useQuery({
     queryKey: qk.mcpConnections,
@@ -203,7 +213,7 @@ export default function SettingsMcp() {
           <div className="Subhead">
             <h2 className="Subhead-heading">MCP server</h2>
             <div className="Subhead-description">
-              Connect Claude, Cursor, and other AI tools to GitOrange through
+              Connect Claude, Cursor, and other AI tools to {appName} through
               the Model Context Protocol. They act as you, so they see the
               repositories you can see, and they can create repositories for
               you.
@@ -248,13 +258,18 @@ export default function SettingsMcp() {
                   </nav>
                 </div>
                 <div className="Box-body border-top">
-                  <SetupSteps client={client} url={info.data.serverUrl} />
+                  <SetupSteps
+                    client={client}
+                    url={info.data.serverUrl}
+                    serverName={info.data.serverName}
+                    appName={appName}
+                  />
                 </div>
                 <div className="Box-footer f6 color-fg-muted">
                   To check it works, ask:{' '}
                   <em>
-                    &ldquo;Which repositories do I have on GitOrange? Use the{' '}
-                    {SERVER_NAME} MCP server.&rdquo;
+                    &ldquo;Which repositories do I have on {appName}? Use the{' '}
+                    {info.data.serverName} MCP server.&rdquo;
                   </em>{' '}
                   Naming the server makes the AI call it instead of guessing.
                 </div>

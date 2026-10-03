@@ -1,10 +1,13 @@
+import { useAppName } from '@/lib/appName';
+
 export function Logo({ size = 32 }: { size?: number }) {
+  const appName = useAppName();
   return (
     <svg
       height={size}
       width={size}
       viewBox="0 0 32 32"
-      aria-label="GitOrange"
+      aria-label={appName}
       role="img"
     >
       <circle cx="16" cy="17" r="13" fill="#f6821f" />

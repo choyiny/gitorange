@@ -2,6 +2,7 @@ import { SparkleFillIcon } from '@primer/octicons-react';
 import type { RepoDetail } from '@/lib/uiApi';
 import { agentPrompt, importFromGitHubPrompt } from '@/lib/agentPrompt';
 import { CopyButton } from './CopyButton';
+import { useAppName } from '@/lib/appName';
 
 /**
  * A copy-paste prompt for a coding agent: `work` sets the repository up locally and helps make
@@ -16,8 +17,12 @@ export function AgentPrompt({
   compact?: boolean;
   kind?: 'work' | 'import';
 }) {
+  const appName = useAppName();
+  const origin = window.location.origin;
   const prompt =
-    kind === 'import' ? importFromGitHubPrompt(repo) : agentPrompt(repo);
+    kind === 'import'
+      ? importFromGitHubPrompt(repo, origin, appName)
+      : agentPrompt(repo, origin, appName);
   return (
     <div>
       {!compact && (

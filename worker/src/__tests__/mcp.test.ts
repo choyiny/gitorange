@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { app } from '../index';
+import { mcpServerName } from '../lib/app-name';
 import {
   addMember,
   bootstrapAdmin,
@@ -425,5 +426,46 @@ describe('MCP server', () => {
     expect(body.serverUrl).toBe(`${ORIGIN}/mcp`);
     expect(body.tools).toHaveLength(3);
     expect((await call(t, '/api/mcp')).status).toBe(401);
+  });
+});
+
+describe('instance name', () => {
+  it('turns APP_NAME into an MCP server id', () => {
+    expect(mcpServerName('GitOrange')).toBe('gitorange');
+    expect(mcpServerName('XY Space Git')).toBe('xy-space-git');
+    expect(mcpServerName('  Café — Code! ')).toBe('cafe-code');
+    expect(mcpServerName('!!!')).toBe('gitorange');
+  });
+
+  it('names the MCP server, discovery, and the web app after APP_NAME', async () => {
+    const t = makeEnv();
+    (t.env as { APP_NAME: string }).APP_NAME = 'XY Space Git';
+    const admin = await bootstrapAdmin(t);
+    expect(await (await call(t, '/api/setup/status')).json()).toMatchObject({
+      appName: 'XY Space Git',
+    });
+    const resource = (await (
+      await raw(t, '/.well-known/oauth-protected-resource/mcp')
+    ).json()) as { resource_name: string };
+    expect(resource.resource_name).toBe('XY Space Git');
+    const page = (await (
+      await call(t, '/api/mcp', { cookie: admin })
+    ).json()) as {
+      serverName: string;
+    };
+    expect(page.serverName).toBe('xy-space-git');
+
+    const { access_token } = await connect(t, admin);
+    const init = (await (await rpc(t, access_token, 'initialize')).json()) as {
+      result: {
+        serverInfo: { name: string; title: string };
+        instructions: string;
+      };
+    };
+    expect(init.result.serverInfo).toMatchObject({
+      name: 'xy-space-git',
+      title: 'XY Space Git',
+    });
+    expect(init.result.instructions).toMatch(/^XY Space Git is/);
   });
 });

@@ -95,7 +95,7 @@ const listRepositories: ToolModule = {
     name: 'gitorange_list_repositories',
     title: 'List repositories',
     description:
-      'List the GitOrange repositories the signed-in user can see, most recently updated first. ' +
+      'List the repositories the signed-in user can see on this server, most recently updated first. ' +
       "Returns each repository's full name (owner/name), description, visibility, whether the user can push, " +
       'and its web and clone URLs. Use this first to find a repository for gitorange_get_repository.',
     annotations: { readOnlyHint: true, title: 'List repositories' },
@@ -249,7 +249,7 @@ const getRepository: ToolModule = {
 function cloneHelp(baseURL: string, fullName: string) {
   return (
     `To work on it locally: git clone ${baseURL}/${fullName}.git\n` +
-    `Git asks for a username (the user's GitOrange username) and a password: a personal access token ` +
+    `Git asks for a username (the user's username on this server) and a password: a personal access token ` +
     `the user creates at ${baseURL}/settings/tokens. Have the user run the clone themselves so the token ` +
     `never passes through this conversation.`
   );

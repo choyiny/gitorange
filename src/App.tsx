@@ -28,6 +28,7 @@ import PullNew from './pages/PullNew';
 import PullView from './pages/PullView';
 import RepoSettings from './pages/RepoSettings';
 import RepoActions from './pages/RepoActions';
+import { useDocumentTitle } from './lib/appName';
 import SettingsMcp from './pages/SettingsMcp';
 import OAuthConsent from './pages/OAuthConsent';
 import RunView from './pages/RunView';
@@ -68,8 +69,15 @@ function AdminOnly({ children }: { children: React.ReactNode }) {
   return <>{children}</>;
 }
 
+/** Sets the tab title from the instance name; rendered inside the query provider. */
+function DocumentTitle() {
+  useDocumentTitle();
+  return null;
+}
+
 const App = () => (
   <QueryClientProvider client={queryClient}>
+    <DocumentTitle />
     <BrowserRouter>
       <Routes>
         <Route path="/setup" element={<Setup />} />

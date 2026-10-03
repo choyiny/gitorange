@@ -234,7 +234,8 @@ const q = (params: Record<string, string | number>) =>
   ).toString();
 
 export const api = {
-  setupStatus: () => apiFetch<{ setupRequired: boolean }>('/api/setup/status'),
+  setupStatus: () =>
+    apiFetch<{ setupRequired: boolean; appName: string }>('/api/setup/status'),
   setup: (body: {
     name: string;
     username: string;
@@ -272,7 +273,10 @@ export const api = {
   saveTeam: (body: { name: string; slug: string }) =>
     apiFetch<{ team: Team }>('/api/team', { method: 'PUT', json: body }),
 
-  mcp: () => apiFetch<{ serverUrl: string; tools: McpTool[] }>('/api/mcp'),
+  mcp: () =>
+    apiFetch<{ serverUrl: string; serverName: string; tools: McpTool[] }>(
+      '/api/mcp'
+    ),
   mcpConnections: () => apiFetch<McpConnection[]>('/api/mcp/connections'),
   disconnectMcp: (clientId: string) =>
     apiFetch(`/api/mcp/connections/${encodeURIComponent(clientId)}`, {

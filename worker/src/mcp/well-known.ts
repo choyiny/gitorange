@@ -1,6 +1,7 @@
 import { Hono } from 'hono';
 import { oauthProviderAuthServerMetadata } from '@better-auth/oauth-provider';
 import { OAUTH_SCOPES, oauthIssuer } from '../auth';
+import { appName } from '../lib/app-name';
 import type { AppEnv } from '../variables';
 
 /**
@@ -13,14 +14,17 @@ import type { AppEnv } from '../variables';
  */
 export const wellKnownRouter = new Hono<AppEnv>();
 
-function protectedResource(c: { req: { url: string } }) {
+function protectedResource(c: {
+  req: { url: string };
+  env: CloudflareBindings;
+}) {
   const origin = new URL(c.req.url).origin;
   return {
     resource: `${origin}/mcp`,
     authorization_servers: [oauthIssuer(origin)],
     bearer_methods_supported: ['header'],
     scopes_supported: OAUTH_SCOPES,
-    resource_name: 'GitOrange',
+    resource_name: appName(c.env),
   };
 }
 

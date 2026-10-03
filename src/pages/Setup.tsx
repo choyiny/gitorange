@@ -6,8 +6,10 @@ import { signIn } from '@/lib/auth';
 import { errorMessage } from '@/lib/api';
 import { Spinner } from '@/components/Spinner';
 import { AuthShell, FlashError } from './AuthShell';
+import { useAppName } from '@/lib/appName';
 
 export default function Setup() {
+  const appName = useAppName();
   const navigate = useNavigate();
   const qc = useQueryClient();
   const status = useQuery({ queryKey: qk.setup, queryFn: api.setupStatus });
@@ -46,7 +48,7 @@ export default function Setup() {
   };
 
   return (
-    <AuthShell title="Welcome to GitOrange" wide>
+    <AuthShell title={`Welcome to ${appName}`} wide>
       <p className="color-fg-muted text-center mb-3">
         Let's set up your instance. Create the first administrator account — you
         can invite the rest of your team once you're in.

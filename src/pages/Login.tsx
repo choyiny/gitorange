@@ -14,6 +14,7 @@ export default function Login() {
     ? params.get('return_to')!
     : '/';
   const status = useQuery({ queryKey: qk.setup, queryFn: api.setupStatus });
+  const appName = status.data?.appName || 'GitOrange';
   const { data: session, isPending } = useSession();
   const [login, setLogin] = useState('');
   const [password, setPassword] = useState('');
@@ -52,7 +53,7 @@ export default function Login() {
   };
 
   return (
-    <AuthShell title="Sign in to GitOrange">
+    <AuthShell title={`Sign in to ${appName}`}>
       <FlashError message={error} />
       <form className="auth-form-body" onSubmit={submit}>
         <label htmlFor="login_field">Username or email address</label>

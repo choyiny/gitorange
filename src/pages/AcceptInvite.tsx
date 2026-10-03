@@ -6,8 +6,10 @@ import { signIn, signOut, useSession } from '@/lib/auth';
 import { errorMessage } from '@/lib/api';
 import { Spinner } from '@/components/Spinner';
 import { AuthShell, FlashError } from './AuthShell';
+import { useAppName } from '@/lib/appName';
 
 export default function AcceptInvite() {
+  const appName = useAppName();
   const { token = '' } = useParams();
   const navigate = useNavigate();
   const qc = useQueryClient();
@@ -55,7 +57,7 @@ export default function AcceptInvite() {
     }
   };
   return (
-    <AuthShell title="Join GitOrange" wide>
+    <AuthShell title={`Join ${appName}`} wide>
       <p className="color-fg-muted text-center mb-3">
         {invite.data.inviter ? (
           <>

@@ -23,13 +23,13 @@ Keep `assets.run_worker_first` as shipped (it includes `/mcp` and `/.well-known/
 
 ## Variables
 
-| Variable          | Example                   | Purpose                                                                                                       |
-| ----------------- | ------------------------- | ------------------------------------------------------------------------------------------------------------- |
-| `APP_NAME`        | `GitOrange`               | Name shown in emails and the git auth realm                                                                   |
-| `BASE_URL`        | `https://git.example.com` | Public origin; used for auth and trusted origins. Cookies are `Secure` when this is `https://`                |
-| `FROM_EMAIL`      | `noreply@example.com`     | Sender for invitation emails; its domain must be onboarded to Email Sending                                   |
-| `R2_ACCOUNT_ID`   | `0123…cdef`               | Account that owns the LFS bucket; pre-signed URLs point at `https://<R2_ACCOUNT_ID>.r2.cloudflarestorage.com` |
-| `LFS_BUCKET_NAME` | `gitorange-lfs`           | The LFS bucket's name; must match `r2_buckets[].bucket_name` (a binding doesn't expose its name)              |
+| Variable          | Example                   | Purpose                                                                                                                                                                                                        |
+| ----------------- | ------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `APP_NAME`        | `GitOrange`               | The instance's name: page titles, sign-in and setup pages, invitation emails, the git auth realm, AI agent prompts, and the MCP server (whose id is the lowercased name, e.g. `XY Space Git` → `xy-space-git`) |
+| `BASE_URL`        | `https://git.example.com` | Public origin; used for auth and trusted origins. Cookies are `Secure` when this is `https://`                                                                                                                 |
+| `FROM_EMAIL`      | `noreply@example.com`     | Sender for invitation emails; its domain must be onboarded to Email Sending                                                                                                                                    |
+| `R2_ACCOUNT_ID`   | `0123…cdef`               | Account that owns the LFS bucket; pre-signed URLs point at `https://<R2_ACCOUNT_ID>.r2.cloudflarestorage.com`                                                                                                  |
+| `LFS_BUCKET_NAME` | `gitorange-lfs`           | The LFS bucket's name; must match `r2_buckets[].bucket_name` (a binding doesn't expose its name)                                                                                                               |
 
 ## Secrets
 

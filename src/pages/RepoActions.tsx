@@ -119,14 +119,14 @@ export default function RepoActions() {
               Actions isn't set up on this server
             </h3>
             <p>
-              A site admin can enable GitOrange Actions by adding the Actions
-              bindings to the deployment. See docs/configuration.md.
+              A site admin can enable Actions by adding the Actions bindings to
+              the deployment. See docs/configuration.md.
             </p>
           </div>
         ) : data.totalCount === 0 ? (
           <div className="Box">
             <div className="Box-body">
-              <h3 className="f4 mb-1">Get started with GitOrange Actions</h3>
+              <h3 className="f4 mb-1">Get started with Actions</h3>
               <p className="color-fg-muted mb-3">
                 Build and test every push and pull request. Add a workflow file
                 like this one at{' '}

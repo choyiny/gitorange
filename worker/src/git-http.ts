@@ -15,6 +15,7 @@ import {
   type RepoPermissions,
 } from './lib/repos';
 import { hashToken } from './lib/tokens';
+import { appName } from './lib/app-name';
 import { actionsConfigured, diffRefs, onRefsUpdated } from './actions/trigger';
 
 const GIT_PATH =
@@ -73,7 +74,7 @@ export async function authenticateRepoRequest(
   owner: string,
   name: string
 ): Promise<GitAccess | Response> {
-  const realm = env.APP_NAME || 'GitOrange';
+  const realm = appName(env);
   const db = drizzle(env.DB, { schema });
   const creds = parseBasic(request.headers.get('Authorization'));
   if (!creds) return unauthorized(realm);

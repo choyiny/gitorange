@@ -12,10 +12,12 @@ describe('first-run setup', () => {
     const t = makeEnv();
     expect(await (await call(t, '/api/setup/status')).json()).toEqual({
       setupRequired: true,
+      appName: 'GitOrange',
     });
     await bootstrapAdmin(t);
     expect(await (await call(t, '/api/setup/status')).json()).toEqual({
       setupRequired: false,
+      appName: 'GitOrange',
     });
 
     const again = await call(t, '/api/setup', {

@@ -1,3 +1,5 @@
+import { appName } from './app-name';
+
 function escapeHtml(s: string) {
   return s.replace(/[&<>"']/g, (ch) => `&#${ch.charCodeAt(0)};`);
 }
@@ -6,7 +8,7 @@ export async function sendInviteEmail(
   env: CloudflareBindings,
   opts: { to: string; inviterName: string; url: string }
 ): Promise<boolean> {
-  const app = env.APP_NAME || 'GitOrange';
+  const app = appName(env);
   const subject = `${opts.inviterName} invited you to join ${app}`;
   const text = `${opts.inviterName} has invited you to join ${app}.\n\nAccept the invitation:\n${opts.url}\n\nThis invitation expires in 7 days.`;
   const html = `<div style="font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Helvetica,Arial,sans-serif;max-width:544px;margin:0 auto;color:#1f2328">

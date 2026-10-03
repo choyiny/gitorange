@@ -13,6 +13,7 @@ import { useCurrentUser } from '@/lib/auth';
 import { Avatar } from '@/components/Avatar';
 import { Logo } from '@/components/Logo';
 import { Spinner } from '@/components/Spinner';
+import { useAppName } from '@/lib/appName';
 
 type PublicClient = {
   client_id: string;
@@ -31,6 +32,7 @@ export default function OAuthConsent() {
   const clientId = params.get('client_id') ?? '';
   const scopes = (params.get('scope') ?? '').split(' ').filter(Boolean);
   const user = useCurrentUser();
+  const appName = useAppName();
   const [busy, setBusy] = useState<'allow' | 'deny' | null>(null);
   const [error, setError] = useState<string | null>(null);
   const client = useQuery({
@@ -115,13 +117,13 @@ export default function OAuthConsent() {
         <Logo size={48} />
       </div>
       <h1 className="f3 text-normal text-center mb-4">
-        <strong>{name}</strong> wants to access your GitOrange account
+        <strong>{name}</strong> wants to access your {appName} account
       </h1>
       {client.isLoading ? (
         <Spinner />
       ) : client.isError ? (
         <div className="flash flash-error mb-3">
-          This app isn&apos;t registered with GitOrange. Start the connection
+          This app isn&apos;t registered with {appName}. Start the connection
           again from your app.
         </div>
       ) : (

@@ -1,3 +1,4 @@
+import { appName } from '../lib/app-name';
 import { OpenAPIHono, createRoute, z } from '@hono/zod-openapi';
 import { sql } from 'drizzle-orm';
 import { users } from '../db/auth.schema';
@@ -40,14 +41,24 @@ const statusRoute = createRoute({
   tags: ['Setup'],
   responses: {
     ...json200Response(
-      z.object({ setupRequired: z.boolean() }),
+      z.object({
+        setupRequired: z.boolean(),
+        /** The instance's display name, for the web app's titles and copy. */
+        appName: z.string(),
+      }),
       'Setup status'
     ),
   },
 });
 
 setupRouter.openapi(statusRoute, async (c) => {
-  return c.json({ setupRequired: (await countUsers(c.get('db'))) === 0 }, 200);
+  return c.json(
+    {
+      setupRequired: (await countUsers(c.get('db'))) === 0,
+      appName: appName(c.env),
+    },
+    200
+  );
 });
 
 const createAdminRoute = createRoute({
