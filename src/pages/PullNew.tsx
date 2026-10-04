@@ -251,6 +251,7 @@ export default function PullNew() {
           <CommitList
             commits={[...cmp.data!.commits].reverse()}
             base={`/${repo.fullName}`}
+            repo={repo}
           />
           <DiffView files={cmp.data!.files} />
         </>

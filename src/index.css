@@ -542,3 +542,19 @@ body {
     padding: 8px 12px;
   }
 }
+
+/* The checks summary popover stays on screen at phone width. */
+.checks-popover {
+  max-width: calc(100vw - 32px);
+  padding: 0;
+}
+@media (max-width: 543.98px) {
+  /* On phones the tick can sit anywhere in a row: span the screen just below it instead. */
+  .select-panel.checks-popover {
+    position: fixed;
+    left: 16px !important;
+    right: 16px !important;
+    width: auto !important;
+    max-width: none;
+  }
+}

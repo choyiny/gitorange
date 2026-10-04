@@ -1,7 +1,7 @@
 import { Link } from 'react-router-dom';
 import { GitCommitIcon } from '@primer/octicons-react';
 import { useState } from 'react';
-import type { Commit } from '@/lib/uiApi';
+import type { Commit, CommitRuns, RepoDetail } from '@/lib/uiApi';
 import {
   dayLabel,
   firstLine,
@@ -11,8 +11,19 @@ import {
 } from '@/lib/format';
 import { Avatar } from './Avatar';
 import { CopyButton } from './CopyButton';
+import { ChecksBadge, useCommitStatuses } from './Checks';
 
-function CommitRow({ c, base }: { c: Commit; base: string }) {
+function CommitRow({
+  c,
+  base,
+  repo,
+  checks,
+}: {
+  c: Commit;
+  base: string;
+  repo?: RepoDetail;
+  checks?: CommitRuns;
+}) {
   const [expanded, setExpanded] = useState(false);
   const rest = restOfMessage(c.message);
   return (
@@ -25,6 +36,7 @@ function CommitRow({ c, base }: { c: Commit; base: string }) {
           >
             {firstLine(c.message)}
           </Link>
+          {repo && <ChecksBadge repo={repo} checks={checks} />}
           {rest && (
             <button
               className="ellipsis-expander"
@@ -75,10 +87,17 @@ function CommitRow({ c, base }: { c: Commit; base: string }) {
 export function CommitList({
   commits,
   base,
+  repo,
 }: {
   commits: Commit[];
   base: string;
+  /** Pass it to show each commit's checks (one request for the whole list). */
+  repo?: RepoDetail;
 }) {
+  const statuses = useCommitStatuses(
+    repo,
+    commits.map((c) => c.hash)
+  );
   const groups: { day: string; commits: Commit[] }[] = [];
   for (const c of commits) {
     const day = dayLabel(c.committedAt);
@@ -98,7 +117,13 @@ export function CommitList({
           </h3>
           <ul className="Box">
             {g.commits.map((c) => (
-              <CommitRow key={c.hash} c={c} base={base} />
+              <CommitRow
+                key={c.hash}
+                c={c}
+                base={base}
+                repo={repo}
+                checks={statuses.data?.[c.hash]}
+              />
             ))}
           </ul>
         </div>

@@ -6,11 +6,13 @@ export function Dropdown({
   children,
   align = 'left',
   width = 300,
+  className = '',
 }: {
   trigger: (open: boolean, toggle: () => void) => ReactNode;
   children: (close: () => void) => ReactNode;
   align?: 'left' | 'right';
   width?: number;
+  className?: string;
 }) {
   const [open, setOpen] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
@@ -31,7 +33,10 @@ export function Dropdown({
     <div ref={ref} style={{ position: 'relative', display: 'inline-block' }}>
       {trigger(open, () => setOpen((o) => !o))}
       {open && (
-        <div className="select-panel" style={{ width, [align]: 0 }}>
+        <div
+          className={`select-panel ${className}`}
+          style={{ width, [align]: 0 }}
+        >
           {children(() => setOpen(false))}
         </div>
       )}

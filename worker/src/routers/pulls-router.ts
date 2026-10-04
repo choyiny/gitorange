@@ -137,7 +137,8 @@ const listRoute = createRoute({
   responses: {
     ...json200Response(
       z.object({
-        pulls: z.array(pullSchema),
+        /** Each with the commit its checks ran on: the branch tip, or the pinned head once closed. */
+        pulls: z.array(pullSchema.extend({ headSha: z.string().nullable() })),
         openCount: z.number(),
         closedCount: z.number(),
       }),
@@ -177,9 +178,24 @@ pullsRouter.openapi(listRoute, async (c) => {
     db,
     rows.flatMap((r) => [r.pr.authorId, r.pr.mergedById ?? ''])
   );
+  // One ref listing answers every row's head commit.
+  const refs = rows.length
+    ? await c
+        .get('git')
+        .refs()
+        .catch(() => new Map<string, string>())
+    : new Map<string, string>();
+  const headSha = (pr: PullRequest) =>
+    (pr.state === 'open'
+      ? refs.get(`refs/heads/${pr.headRef}`)
+      : (refs.get(pullRef(pr.number)) ??
+        refs.get(`refs/heads/${pr.headRef}`))) ?? null;
   return c.json(
     {
-      pulls: rows.map((r) => serializePull(r.pr, people, Number(r.comments))),
+      pulls: rows.map((r) => ({
+        ...serializePull(r.pr, people, Number(r.comments)),
+        headSha: headSha(r.pr),
+      })),
       openCount: count('open'),
       closedCount: count('closed') + count('merged'),
     },

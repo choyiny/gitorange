@@ -8,6 +8,7 @@ import {
 import { api, qk, type RepoDetail } from '@/lib/uiApi';
 import { timeAgo } from '@/lib/format';
 import { Spinner } from '@/components/Spinner';
+import { ChecksBadge, useCommitStatuses } from '@/components/Checks';
 import { PrStateIcon } from './PrIcons';
 
 export default function Pulls() {
@@ -18,6 +19,11 @@ export default function Pulls() {
     queryKey: qk.pulls(repo.owner.username, repo.name, state),
     queryFn: () => api.pulls(repo.owner.username, repo.name, state),
   });
+  // Checks for every listed pull request's head commit, in one request.
+  const statuses = useCommitStatuses(
+    repo,
+    (q.data?.pulls ?? []).map((p) => p.headSha)
+  );
   const base = `/${repo.fullName}`;
   return (
     <div className="container-xl px-3 px-md-4 px-lg-5 pb-6">
@@ -85,7 +91,11 @@ export default function Pulls() {
                   className="Link--primary text-bold f4 color-fg-default"
                 >
                   {p.title}
-                </Link>
+                </Link>{' '}
+                <ChecksBadge
+                  repo={repo}
+                  checks={p.headSha ? statuses.data?.[p.headSha] : undefined}
+                />
                 <div className="f6 color-fg-muted mt-1">
                   #{p.number}{' '}
                   {p.state === 'open' && (

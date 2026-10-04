@@ -675,6 +675,7 @@ export default function PullView() {
           <CommitList
             commits={[...commits.data].reverse()}
             base={`/${repo.fullName}`}
+            repo={repo}
           />
         ) : (
           <Spinner />

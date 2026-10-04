@@ -864,3 +864,61 @@ jobs:
     ).toEqual([]);
   });
 });
+
+describe('Commit checks for lists', () => {
+  it("returns each commit's combined checks in one request, and pull requests list their head commit", async () => {
+    const s = await setup();
+    const first = await pushFiles(s, 'main', {
+      '.github/workflows/ci.yml': CI,
+    });
+    const second = await pushFiles(
+      s,
+      'main',
+      { '.github/workflows/ci.yml': CI, 'b.txt': 'b\n' },
+      'Second'
+    );
+    const { runs: queued } = await runs(s.t, s.admin);
+    // The older commit's run fails, the newer one's is still queued.
+    const h = harness(s.t, () => ({ exitCode: 1 }));
+    await h.run(queued.find((r) => r.headSha === first)!.id);
+
+    const none = '0'.repeat(40);
+    const res = await call(
+      s.t,
+      `/api/repos/octocat/app/commit-statuses?shas=${first},${second},${none}`,
+      { cookie: s.admin }
+    );
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as Record<
+      string,
+      { state: string | null; runs: { name: string }[] }
+    >;
+    expect(body[first].state).toBe('failure');
+    expect(body[second].state).toBe('pending');
+    expect(body[none]).toEqual({ state: null, runs: [] });
+    expect(body[first].runs.map((r) => r.name)).toEqual(['CI']);
+
+    const bad = await call(
+      s.t,
+      '/api/repos/octocat/app/commit-statuses?shas=not-a-sha',
+      { cookie: s.admin }
+    );
+    expect(bad.status).toBe(400);
+
+    // Pull requests carry the commit their checks run on.
+    await pushFiles(
+      s,
+      'feature',
+      { '.github/workflows/ci.yml': CI, 'c.txt': 'c\n' },
+      'Feature'
+    );
+    await call(s.t, '/api/repos/octocat/app/pulls', {
+      cookie: s.admin,
+      json: { title: 'Feature', base: 'main', head: 'feature' },
+    });
+    const list = (await (
+      await call(s.t, '/api/repos/octocat/app/pulls', { cookie: s.admin })
+    ).json()) as { pulls: { number: number; headSha: string | null }[] };
+    expect(list.pulls[0].headSha).toBe(s.repo.refs.get('refs/heads/feature'));
+  });
+});

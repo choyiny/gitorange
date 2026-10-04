@@ -33,7 +33,11 @@ export default function RepoCommits() {
       {!q.data ? (
         <Spinner />
       ) : (
-        <CommitList commits={q.data.commits} base={`/${repo.fullName}`} />
+        <CommitList
+          commits={q.data.commits}
+          base={`/${repo.fullName}`}
+          repo={repo}
+        />
       )}
       <div className="d-flex flex-justify-center">
         <div className="BtnGroup">

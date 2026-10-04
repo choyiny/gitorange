@@ -8,6 +8,7 @@ import {
 } from '../db/app.schema';
 import { actionsConfigured, rerun } from '../actions/trigger';
 import { loadRepo, type RepoEnv } from '../lib/repos';
+import type { DrizzleDB } from '../db/middleware';
 import { usersById, type PublicUser } from '../lib/users';
 import {
   json200Response,
@@ -510,40 +511,93 @@ const checksRoute = createRoute({
 actionsRouter.openapi(checksRoute, async (c) => {
   const db = c.get('db');
   const { sha } = c.req.valid('param');
-  const rows = await db
-    .select()
-    .from(workflowRuns)
-    .where(
-      and(
-        eq(workflowRuns.repositoryId, c.get('repo').id),
-        eq(workflowRuns.headSha, sha)
-      )
-    )
-    .orderBy(desc(workflowRuns.runNumber))
-    .all();
-  // Re-runs supersede earlier runs of the same workflow and event.
-  const seen = new Set<string>();
-  const latest = rows.filter((r) => {
-    const k = `${r.workflowPath}\0${r.event}`;
-    if (seen.has(k)) return false;
-    seen.add(k);
-    return true;
-  });
-  const state = !latest.length
-    ? null
-    : latest.some((r) => r.status !== 'completed')
-      ? 'pending'
-      : latest.some(
-            (r) => r.conclusion === 'failure' || r.conclusion === 'cancelled'
+  const checks = await commitChecks(db, c.get('repo').id, [sha]);
+  return c.json(checks[sha], 200);
+});
+
+/**
+ * Each commit's checks: the latest run of every workflow (a re-run supersedes earlier runs of
+ * the same workflow and event) and their combined state, null when nothing ran.
+ */
+async function commitChecks(
+  db: DrizzleDB,
+  repositoryId: string,
+  shas: string[]
+) {
+  const rows = shas.length
+    ? await db
+        .select()
+        .from(workflowRuns)
+        .where(
+          and(
+            eq(workflowRuns.repositoryId, repositoryId),
+            inArray(workflowRuns.headSha, shas)
           )
-        ? 'failure'
-        : 'success';
+        )
+        .orderBy(desc(workflowRuns.runNumber))
+        .all()
+    : [];
   const people = await usersById(
     db,
-    latest.map((r) => r.actorId ?? '')
+    rows.map((r) => r.actorId ?? '')
   );
-  return c.json(
-    { state, runs: latest.map((r) => serializeRun(r, people)) },
-    200
-  );
+  const out: Record<
+    string,
+    {
+      state: 'success' | 'failure' | 'pending' | null;
+      runs: ReturnType<typeof serializeRun>[];
+    }
+  > = {};
+  for (const sha of shas) {
+    const seen = new Set<string>();
+    const latest = rows.filter((r) => {
+      if (r.headSha !== sha) return false;
+      const k = `${r.workflowPath}\0${r.event}`;
+      if (seen.has(k)) return false;
+      seen.add(k);
+      return true;
+    });
+    const state = !latest.length
+      ? null
+      : latest.some((r) => r.status !== 'completed')
+        ? 'pending'
+        : latest.some(
+              (r) => r.conclusion === 'failure' || r.conclusion === 'cancelled'
+            )
+          ? 'failure'
+          : 'success';
+    out[sha] = { state, runs: latest.map((r) => serializeRun(r, people)) };
+  }
+  return out;
+}
+
+const checksSchema = z.object({
+  state: z.enum(['success', 'failure', 'pending']).nullable(),
+  runs: z.array(runSchema),
+});
+
+const batchChecksRoute = createRoute({
+  method: 'get',
+  path: '/{owner}/{repo}/commit-statuses',
+  tags: ['Actions'],
+  request: {
+    params: ownerRepoParams,
+    query: z.object({
+      /** Comma-separated commit SHAs, up to 100. */
+      shas: z
+        .string()
+        .transform((v) => [...new Set(v.split(',').filter(Boolean))])
+        .pipe(z.array(z.string().regex(/^[0-9a-f]{40}$/)).max(100)),
+    }),
+  },
+  responses: {
+    ...json200Response(
+      z.record(z.string(), checksSchema),
+      'Checks for each commit, keyed by SHA (for commit and pull request lists)'
+    ),
+  },
+});
+actionsRouter.openapi(batchChecksRoute, async (c) => {
+  const { shas } = c.req.valid('query');
+  return c.json(await commitChecks(c.get('db'), c.get('repo').id, shas), 200);
 });

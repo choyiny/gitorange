@@ -105,6 +105,8 @@ export type Pull = {
   author: User;
   baseRef: string;
   headRef: string;
+  /** Pull request lists only: the commit its checks ran on. */
+  headSha?: string | null;
   mergeCommitSha: string | null;
   mergedBy: User | null;
   /** GitOrange merged it on its own (auto-merge); mergedBy is then null. */
@@ -496,6 +498,10 @@ export const api = {
     }),
   commitRuns: (o: string, n: string, sha: string) =>
     apiFetch<CommitRuns>(`${r(o, n)}/commits/${sha}/runs`),
+  commitStatuses: (o: string, n: string, shas: string[]) =>
+    apiFetch<Record<string, CommitRuns>>(
+      `${r(o, n)}/commit-statuses?shas=${shas.join(',')}`
+    ),
   startResolution: (o: string, n: string, num: number) =>
     apiFetch<MergeResolution>(`${r(o, n)}/pulls/${num}/resolutions`, {
       method: 'POST',
@@ -563,4 +569,6 @@ export const qk = {
     ['repo', o, n, 'run', num, 'log', jobId, step] as const,
   commitRuns: (o: string, n: string, sha: string) =>
     ['repo', o, n, 'commit-runs', sha] as const,
+  commitStatuses: (o: string, n: string, shas: string) =>
+    ['repo', o, n, 'commit-statuses', shas] as const,
 };
