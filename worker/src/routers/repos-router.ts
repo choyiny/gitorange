@@ -566,6 +566,31 @@ reposRouter.openapi(treeCommitsRoute, async (c) => {
   return c.json(await c.get('git').lastCommitsForTree(sha, path), 200);
 });
 
+const SVG_TYPE = 'image/svg+xml';
+const isSvg = (path: string) => /\.svg$/i.test(path);
+
+/**
+ * The Content-Type for a raw file. SVG is served as an image so `<img>` tags in rendered Markdown
+ * show it (an `<img>` never runs an SVG's scripts, and `nosniff` stops browsers guessing any
+ * other type); HTML is never served as a document from our origin.
+ */
+function rawContentType(path: string, blobType: string): string {
+  if (isSvg(path) || /^image\/svg/.test(blobType)) return SVG_TYPE;
+  if (/^(text\/html|application\/xhtml)/.test(blobType)) return 'text/plain';
+  return blobType || 'application/octet-stream';
+}
+
+/**
+ * Raw files are repository content on our own origin, so opening one directly must not run
+ * script (an SVG can carry it): like GitHub's raw host, a sandboxed CSP with no sources except
+ * inline styles, which SVGs commonly use.
+ */
+const RAW_HEADERS = {
+  'X-Content-Type-Options': 'nosniff',
+  'Content-Security-Policy':
+    "default-src 'none'; style-src 'unsafe-inline'; sandbox",
+};
+
 const rawRoute = createRoute({
   method: 'get',
   path: '/{owner}/{repo}/raw',
@@ -604,17 +629,18 @@ reposRouter.openapi(rawRoute, async (c) => {
         )
       )
       .get();
-    if (row) return c.redirect(await presign(c.env, row.r2Key, 'GET'), 302);
+    if (row)
+      return c.redirect(
+        await presign(c.env, row.r2Key, 'GET', {
+          contentType: isSvg(path) ? SVG_TYPE : undefined,
+        }),
+        302
+      );
   }
-  // Never render repo content as HTML on our origin.
-  const type = /^(text\/html|image\/svg|application\/xhtml)/.test(blob.type)
-    ? 'text/plain'
-    : blob.type || 'application/octet-stream';
   return new Response(blob.stream(), {
     headers: {
-      'Content-Type': type,
-      'X-Content-Type-Options': 'nosniff',
-      'Content-Security-Policy': "default-src 'none'; sandbox",
+      'Content-Type': rawContentType(path, blob.type),
+      ...RAW_HEADERS,
     },
   }) as never;
 });

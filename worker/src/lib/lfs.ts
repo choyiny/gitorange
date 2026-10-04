@@ -45,6 +45,8 @@ export async function presign(
   opts: {
     headers?: Record<string, string>;
     filename?: string;
+    /** A Content-Type for R2 to answer a GET with (R2 keeps whatever the upload sent). */
+    contentType?: string;
     /** Another bucket the R2 API token can reach (default: the LFS bucket). */
     bucket?: string;
   } = {}
@@ -66,6 +68,8 @@ export async function presign(
       `attachment; filename="${safe}"`
     );
   }
+  if (opts.contentType)
+    url.searchParams.set('response-content-type', opts.contentType);
   const signed = await client.sign(
     new Request(url, { method, headers: opts.headers }),
     {

@@ -326,4 +326,29 @@ describe('Git LFS in the web UI', () => {
     ).toBe(200);
     expect(await t.env.LFS.head(`lfs/${repoId}/${f.oid}`)).toBeNull();
   });
+
+  it('serves an LFS-stored SVG from R2 as an image', async () => {
+    const { t, admin, token, repoId } = await setup();
+    const f = await blob('<svg xmlns="http://www.w3.org/2000/svg"/>');
+    const repo = [...t.fake.repos.values()][0];
+    const pointer = `version https://git-lfs.github.com/spec/v1\noid sha256:${f.oid}\nsize ${f.size}\n`;
+    await commitFiles(repo, 'main', { 'logo.svg': pointer }, 'Add SVG via LFS');
+    await t.env.LFS.put(`lfs/${repoId}/${f.oid}`, f.content, { sha256: f.oid });
+    await lfs(t, '/objects/verify', {
+      token,
+      json: { oid: f.oid, size: f.size },
+    });
+
+    const raw = await call(
+      t,
+      '/api/repos/octocat/app/raw?ref=main&path=logo.svg',
+      { cookie: admin }
+    );
+    expect(raw.status).toBe(302);
+    const location = new URL(raw.headers.get('Location')!);
+    // R2 keeps whatever type the upload sent; the signed URL overrides it.
+    expect(location.searchParams.get('response-content-type')).toBe(
+      'image/svg+xml'
+    );
+  });
 });
