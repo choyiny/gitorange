@@ -156,6 +156,7 @@ If they chose workers.dev, set `vars.BASE_URL` to the URL `yarn deploy` printed 
 ### Step 7: Verify end to end
 
 1. Open `BASE_URL`. It must show **Welcome to GitOrange**. Tell the user: **the account created here becomes the site admin, and setup closes forever after** — do it now, before sharing the URL.
+   Then have them open avatar → **Site admin**: Site admin → Setup shows what's misconfigured (missing secrets, bindings, or variables, `BASE_URL` mismatches, unapplied migrations, rejected R2 credentials, AI Gateway settings), errors first, each with the steps to fix it. Work through any errors before continuing.
 2. Have them create a repository with **Add a README file** checked. If creation fails with an Artifacts error, recheck Checkpoint 4 and `account_id`.
 3. Have them create a token (avatar → **Personal access tokens**) and run `git clone <BASE_URL>/<username>/<repo>.git`, using the token as the password.
 4. If the R2 secrets are set and they have [git-lfs](https://git-lfs.com) installed: in the clone, `git lfs install && git lfs track "*.bin"`, add a file, commit, and `git push`. The file's page in the UI should say **Stored with Git LFS** and offer a download.
@@ -184,6 +185,8 @@ Report, with real values substituted:
 - To update later: `git pull && yarn install && yarn db:migrate:prod && yarn deploy`. A deploy restarts running Actions jobs (each restarts from the beginning, up to 3 attempts), so prefer deploying when no CI is running.
 
 ## Common issues
+
+Site admin → Setup shows what's misconfigured on the deployed worker, with the fix for each item; check it first.
 
 - **`Access denied [code: 10004]`** — wrong `account_id`, account not on Workers Paid, or a wrangler login without Artifacts scopes.
 - **Auth errors / "invalid origin" after deploy** — `BASE_URL` doesn't match the URL in the browser (common on workers.dev before Step 6).

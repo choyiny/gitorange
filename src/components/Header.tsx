@@ -10,6 +10,7 @@ import {
   PlugIcon,
   ShieldLockIcon,
   ShieldCheckIcon,
+  AlertFillIcon,
 } from '@primer/octicons-react';
 import type { ReactNode } from 'react';
 import { signOut, useCurrentUser } from '@/lib/auth';
@@ -17,6 +18,26 @@ import { Avatar } from './Avatar';
 import { Dropdown } from './Dropdown';
 import { Logo } from './Logo';
 import { approvalCount, useApprovals } from '@/lib/approvals';
+import { useSetupChecks } from '@/lib/setupChecks';
+
+/** Site admins only: a red badge while Site admin → Setup reports errors. */
+function SetupErrorsLink() {
+  const errors = useSetupChecks().data?.counts.error ?? 0;
+  if (!errors) return null;
+  const label = `${errors} setup error${errors === 1 ? '' : 's'}`;
+  return (
+    <Link
+      to="/admin#setup"
+      className="btn btn-sm btn-danger d-inline-flex flex-items-center"
+      style={{ gap: 6, height: 32 }}
+      aria-label={`${label}: open Site admin, Setup`}
+      title="This deployment is misconfigured. Open Site admin → Setup"
+    >
+      <AlertFillIcon />
+      <span className="d-none d-md-inline">{label}</span>
+    </Link>
+  );
+}
 
 /** The global Approvals tab, with how many items wait on the user. Updates live. */
 function ApprovalsLink() {
@@ -61,6 +82,7 @@ export function Header({
         </div>
         {user && (
           <div className="d-flex flex-items-center" style={{ gap: 8 }}>
+            {isAdmin && <SetupErrorsLink />}
             <ApprovalsLink />
             <Dropdown
               align="right"

@@ -211,6 +211,12 @@ export function createFakeArtifacts() {
       return repo.handle();
     },
     delete: async (name: string) => repos.delete(name),
+    list: async (opts: { limit?: number } = {}) => ({
+      repos: [...repos.keys()]
+        .slice(0, opts.limit ?? 50)
+        .map((name) => ({ id: name, name })),
+      cursor: null,
+    }),
   } as unknown as Artifacts;
 
   const realFetch = globalThis.fetch;

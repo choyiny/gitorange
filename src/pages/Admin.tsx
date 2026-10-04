@@ -9,6 +9,7 @@ import { Header } from '@/components/Header';
 import { Avatar } from '@/components/Avatar';
 import { CopyButton } from '@/components/CopyButton';
 import { Spinner } from '@/components/Spinner';
+import { AdminSetup } from '@/components/AdminSetup';
 
 export default function Admin() {
   const qc = useQueryClient();
@@ -74,6 +75,7 @@ export default function Admin() {
     <>
       <Header context={<span className="text-bold px-2">Site admin</span>} />
       <div className="container-lg px-3 py-4">
+        <AdminSetup />
         <div className="Subhead">
           <h2
             className="Subhead-heading d-flex flex-items-center"

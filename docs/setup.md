@@ -81,9 +81,10 @@ Open your `BASE_URL`. The first visit shows **Welcome to GitOrange**; the accoun
 
 Then:
 
-1. **Invite your team** — click **+ → Invite member**. Invitees receive an email with a link to create their account.
-2. **Create a repository** — **+ → New repository**.
-3. **Push code** — create a token under **avatar → Personal access tokens**, then:
+1. **Check the setup** — **avatar → Site admin**. Site admin → Setup shows what's misconfigured: missing secrets, bindings, and variables, a `BASE_URL` that doesn't match the address you're using, unapplied migrations, R2 credentials that R2 rejects, and AI Gateway settings, each with the steps to fix it. Site admins also see a red badge in the header while anything there is an error.
+2. **Invite your team** — click **+ → Invite member**. Invitees receive an email with a link to create their account.
+3. **Create a repository** — **+ → New repository**.
+4. **Push code** — create a token under **avatar → Personal access tokens**, then:
 
    ```bash
    git remote add origin https://git.example.com/<you>/<repo>.git
@@ -128,6 +129,8 @@ yarn deploy
 Run the migrations before the deploy: new code may read new tables. A deploy restarts any running Actions jobs (each restarts from the beginning, up to 3 attempts), so CI just takes longer; deploying when nothing is running avoids that.
 
 ## Troubleshooting
+
+Start with **Site admin → Setup**: it shows what's misconfigured and how to fix it.
 
 - **`Access denied [code: 10004]` from Artifacts** — `account_id` points at a different account than the one you're logged into, the account isn't on Workers Paid, or your API token lacks Artifacts permissions (re-run `yarn wrangler login`).
 - **Invitation emails never arrive** — `FROM_EMAIL`'s domain isn't verified in Email Sending. The admin page always shows the invite link too, so you can share it directly in the meantime.

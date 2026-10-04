@@ -2,7 +2,7 @@ import { OpenAPIHono } from '@hono/zod-openapi';
 import { swaggerUI } from '@hono/swagger-ui';
 import { logger } from 'hono/logger';
 import { createAuth } from './auth';
-import { requireAuth } from './auth/guards';
+import { requireAdmin, requireAuth } from './auth/guards';
 import { injectDb } from './db/middleware';
 import { handleGitRequest, isGitRequest } from './git-http';
 import { handleLfsRequest, isLfsRequest } from './lfs-http';
@@ -24,6 +24,7 @@ import { publishChange } from './live/publish';
 import { liveSocket } from './live/route';
 import { approvalsRouter } from './routers/approvals-router';
 import { insightsRouter } from './routers/insights-router';
+import { adminSetupRouter } from './routers/admin-setup-router';
 
 const app = new OpenAPIHono<AppEnv>();
 
@@ -90,6 +91,10 @@ app.route('/api/tokens', tokensRouter);
 app.use('/api/emails/*', requireAuth);
 app.use('/api/emails', requireAuth);
 app.route('/api/emails', emailsRouter);
+// Site admin → Setup: what's misconfigured and how to fix it.
+app.use('/api/admin/setup', requireAdmin);
+app.use('/api/admin/setup/*', requireAdmin);
+app.route('/api/admin/setup', adminSetupRouter);
 
 app.doc('/api/doc', {
   openapi: '3.0.0',

@@ -1,6 +1,6 @@
 # Configuration
 
-GitOrange reads its configuration from `wrangler.jsonc` (copied from [`wrangler.jsonc.example`](../wrangler.jsonc.example), gitignored) and from Worker secrets.
+GitOrange reads its configuration from `wrangler.jsonc` (copied from [`wrangler.jsonc.example`](../wrangler.jsonc.example), gitignored) and from Worker secrets. **Site admin → Setup** checks all of it on the running worker (secrets set and long enough, bindings present and reachable, variables, migrations, AI Gateway) and shows how to fix what's wrong.
 
 ## Bindings
 
