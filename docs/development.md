@@ -22,7 +22,7 @@ The app, API, and git endpoint share one origin: `git clone http://localhost:808
 
 | Script                              | What it does                                                                         |
 | ----------------------------------- | ------------------------------------------------------------------------------------ |
-| `yarn dev`                          | Vite dev server running the Worker in `env.dev`                                      |
+| `yarn dev`                          | Vite dev server running the Worker in `env.dev`, under a memory watchdog (below)     |
 | `yarn test`                         | Vitest inside workerd against a real local D1, with an in-memory Artifacts fake      |
 | `yarn typecheck`                    | Type-checks the SPA and the Worker                                                   |
 | `yarn format` / `yarn format:check` | Prettier                                                                             |
@@ -46,3 +46,11 @@ migrations/          Generated D1 migrations
 ```
 
 API docs are served at `/api/swagger-ui` while running.
+
+## Dev server memory watchdog
+
+`yarn dev` runs Vite through [`scripts/dev.mjs`](../scripts/dev.mjs), which adds up the memory of the whole dev
+process tree (Node, workerd, esbuild) every 5 seconds. It logs each time usage passes another gigabyte and stops
+the server, with a breakdown by process, once it passes **5 GB**, so a leak can't take the machine down. The
+server uses about 1.3 GB right after starting. Change the limit with `DEV_MEMORY_LIMIT_MB=8192 yarn dev`, or turn
+the watchdog off with `DEV_MEMORY_LIMIT_MB=0`. A stop for memory exits with code 137.
