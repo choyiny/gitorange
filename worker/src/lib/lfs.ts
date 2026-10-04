@@ -3,12 +3,12 @@ import { fromHex } from '../git/bytes';
 
 /** R2's single-request upload limit; the basic LFS transfer adapter has no multipart. */
 export const LFS_MAX_OBJECT_SIZE = 5 * 1024 ** 3;
-/** Lifetime of pre-signed URLs handed to git-lfs. */
+/** Pre-signed URL lifetime. */
 export const LFS_URL_TTL_SECONDS = 900;
 
 export const OID_RE = /^[0-9a-f]{64}$/;
 
-/** One copy per repository: the key encodes ownership, so deleting a repo deletes its prefix. */
+/** One copy per repository; deleting a repo deletes its prefix. */
 export function lfsKey(repositoryId: string, oid: string) {
   return `lfs/${repositoryId}/${oid}`;
 }
@@ -27,17 +27,14 @@ export function lfsConfigured(env: CloudflareBindings): boolean {
 export const LFS_NOT_CONFIGURED =
   "Git LFS isn't configured on this server. An administrator needs to set the R2_ACCESS_KEY_ID and R2_SECRET_ACCESS_KEY secrets.";
 
-/** The base64 SHA-256 header S3/R2 use to verify upload integrity; the LFS oid *is* the SHA-256. */
+/** Base64 SHA-256 for R2's upload integrity check; the LFS oid is the SHA-256. */
 export function sha256Header(oid: string): string {
   let bin = '';
   for (const b of fromHex(oid)) bin += String.fromCharCode(b);
   return btoa(bin);
 }
 
-/**
- * Pre-signs a direct-to-R2 request via the S3 API. URLs are minted per request after the
- * permission check and never stored (D1 keeps only the bare key).
- */
+/** Pre-signs a direct-to-R2 S3 request. Minted after the permission check; never stored. */
 export async function presign(
   env: CloudflareBindings,
   key: string,
@@ -45,9 +42,9 @@ export async function presign(
   opts: {
     headers?: Record<string, string>;
     filename?: string;
-    /** A Content-Type for R2 to answer a GET with (R2 keeps whatever the upload sent). */
+    /** Content-Type override for GET responses. */
     contentType?: string;
-    /** Another bucket the R2 API token can reach (default: the LFS bucket). */
+    /** Defaults to the LFS bucket. */
     bucket?: string;
   } = {}
 ): Promise<string> {
@@ -79,10 +76,7 @@ export async function presign(
   return signed.url;
 }
 
-/**
- * Whether R2 holds the object for `oid` at exactly `size` bytes. When R2 recorded a SHA-256
- * checksum (pre-signed uploads require one), it must equal the oid as well.
- */
+/** Whether R2 holds `oid` at exactly `size` bytes, with a matching SHA-256 if recorded. */
 export async function storedObjectMatches(
   env: CloudflareBindings,
   key: string,
@@ -101,7 +95,6 @@ export async function storedObjectMatches(
   return true;
 }
 
-/** Deletes every LFS object under a repository's prefix. */
 export async function deleteRepositoryObjects(
   env: CloudflareBindings,
   repositoryId: string
@@ -124,7 +117,7 @@ export interface LfsPointer {
   size: number;
 }
 
-/** Parses a Git LFS pointer file (spec v1). Returns null for anything else. */
+/** Parses a Git LFS pointer file (spec v1); null otherwise. */
 export function parseLfsPointer(text: string): LfsPointer | null {
   if (
     text.length > 1024 ||

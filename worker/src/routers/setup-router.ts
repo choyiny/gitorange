@@ -43,7 +43,7 @@ const statusRoute = createRoute({
     ...json200Response(
       z.object({
         setupRequired: z.boolean(),
-        /** The instance's display name, for the web app's titles and copy. */
+        /** The instance's display name. */
         appName: z.string(),
       }),
       'Setup status'
@@ -88,7 +88,7 @@ const createAdminRoute = createRoute({
 
 setupRouter.openapi(createAdminRoute, async (c) => {
   const db = c.get('db');
-  // Closes forever once any user exists, so it can't be used to escalate later.
+  // Closed once any user exists, so it can't be used to escalate.
   if ((await countUsers(db)) > 0)
     return c.json({ error: 'Setup has already been completed' }, 403);
   const { name, username, email, password } = c.req.valid('json');

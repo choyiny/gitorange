@@ -332,11 +332,7 @@ function HowReviewed({ review }: { review: PullReview }) {
   );
 }
 
-/**
- * The auto-merge review as a timeline comment: what was flagged, why, and an Approve button per
- * flag while the pull request is open. It stays on the pull request after it merges or closes,
- * showing who approved what.
- */
+/** The auto-merge review timeline comment: flags, explanations, and per-flag Approve buttons. */
 export function ReviewComment({
   repo,
   d,

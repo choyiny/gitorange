@@ -9,8 +9,7 @@ import {
 import { sql } from 'drizzle-orm';
 import { users } from './auth.schema';
 
-// The instance's one shared team. Its slug shares the URL namespace with usernames
-// (`/<slug>/<repo>`), so the two must never collide. Created by an admin in Site admin.
+// The instance's one shared team. Its slug shares the URL namespace with usernames.
 export const teams = sqliteTable('teams', {
   id: text('id').primaryKey(),
   slug: text('slug').notNull().unique(),
@@ -26,7 +25,7 @@ export const repositories = sqliteTable(
     ownerId: text('owner_id')
       .notNull()
       .references(() => users.id, { onDelete: 'cascade' }),
-    // Set ⇒ a team repository, addressed as /<team slug>/<name>.
+    // Set ⇒ a team repository.
     teamId: text('team_id').references(() => teams.id),
     // private: owner, collaborators, and site admins only. internal: every member can read.
     visibility: text('visibility', { enum: ['private', 'internal'] })
@@ -162,8 +161,7 @@ export const pullRequestComments = sqliteTable(
   (t) => [index('pull_request_comments_pr_idx').on(t.pullRequestId)]
 );
 
-// Git LFS objects. Bytes live in R2 under `r2_key` (a bare key, never a URL); a row exists only
-// once the upload is confirmed in R2. One copy per repository, so deleting a repo deletes its prefix.
+// Git LFS objects: `r2_key` is a bare key, never a URL; a row exists only once the upload is in R2.
 export const lfsObjects = sqliteTable(
   'lfs_objects',
   {
@@ -183,8 +181,7 @@ export const lfsObjects = sqliteTable(
 );
 
 // ── AI merge-conflict resolution ─────────────────────────────────────────────
-// One attempt to resolve a pull request's merge conflicts with AI. The result is a squashed
-// commit on the base branch, kept on a side ref (`refs/resolutions/<id>`) until it is applied.
+// One AI attempt at a PR's conflicts; the result commit lives on `refs/resolutions/<id>`.
 
 export const mergeResolutions = sqliteTable(
   'merge_resolutions',
@@ -225,9 +222,8 @@ export const mergeResolutions = sqliteTable(
 );
 
 // ── Auto-merge review ────────────────────────────────────────────────────────
-// One classification per pull request head commit and `.gitorange/review.yml` version: a
-// one-line summary per changed file (GLM), Clef's answers to the policy's questions over those
-// summaries, and the flags that need a person. Approving every flag clears it for auto-merge.
+// One classification per PR head commit and review.yml version; approving every flag clears
+// it for auto-merge.
 
 export type FileSummary = {
   path: string;
@@ -301,8 +297,7 @@ export const prReviewFlags = sqliteTable(
     key: text('key').notNull(),
     value: text('value', { mode: 'json' }).$type<unknown>(),
     paths: text('paths', { mode: 'json' }).$type<string[]>().notNull(),
-    // What the investigating model found, as Markdown (with a Mermaid diagram and expandable
-    // code excerpts from the diff, when it gave them); null while it runs or if it failed.
+    // The investigation as Markdown; null while it runs or if it failed.
     detail: text('detail'),
     detailModel: text('detail_model'),
     approvedById: text('approved_by_id').references(() => users.id, {
@@ -321,8 +316,7 @@ export const prReviewFlags = sqliteTable(
 );
 
 // ── Actions ──────────────────────────────────────────────────────────────────
-// A workflow run is one `.github/workflows/*.yml` file triggered by one event. Its jobs run
-// in containers driven by a Cloudflare Workflow; step logs live in R2 (`log_r2_key`).
+// A workflow run: one `.github/workflows/*.yml` file triggered by one event.
 
 const runStatus = ['queued', 'in_progress', 'completed'] as const;
 const runConclusion = ['success', 'failure', 'cancelled', 'skipped'] as const;
@@ -340,7 +334,7 @@ export const workflowRuns = sqliteTable(
     event: text('event', { enum: ['push', 'pull_request'] }).notNull(),
     ref: text('ref').notNull(),
     headSha: text('head_sha').notNull(),
-    // The commit subject (push) or pull request title, shown in run lists.
+    // Commit subject (push) or pull request title.
     displayTitle: text('display_title').notNull(),
     actorId: text('actor_id').references(() => users.id, {
       onDelete: 'set null',

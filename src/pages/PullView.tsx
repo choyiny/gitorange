@@ -493,8 +493,7 @@ export default function PullView() {
   const q = useQuery({
     queryKey: qk.pull(o, repo.name, num),
     queryFn: () => api.pull(o, repo.name, num),
-    // Follow AI conflict resolution: while one runs, or while the PR has resolvable conflicts
-    // and an attempt is about to start on its own.
+    // Follow AI conflict resolution while one runs or is about to start.
     refetchInterval: (query) => {
       const d = query.state.data;
       if (!d) return false;

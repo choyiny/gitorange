@@ -8,7 +8,6 @@ export default defineConfig({
   server: { host: '::', port: 8080 },
   plugins: [cloudflare(), react(), licenseBanners()],
   resolve: { alias: { '@': path.resolve(__dirname, './src') } },
-  // Keep dependencies' /*! … */ and @license comments in the minified output (Vite strips
-  // them by default); MIT/BSD notices must travel with the code we serve.
+  // Keep dependencies' /*! … */ and @license comments; MIT/BSD notices must ship with the code.
   esbuild: { legalComments: 'inline' },
 });

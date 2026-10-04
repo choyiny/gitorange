@@ -138,7 +138,7 @@ const createRepoRoute = createRoute({
             name: z.string().min(1).max(100),
             description: z.string().max(350).optional(),
             addReadme: z.boolean().default(false),
-            // Personal repos default to private; team repos are always visible to every member.
+            // Personal repos default to private; team repos are always internal.
             owner: z.enum(['user', 'team']).default('user'),
             visibility: z.enum(['private', 'internal']).default('private'),
           }),
@@ -570,9 +570,8 @@ const SVG_TYPE = 'image/svg+xml';
 const isSvg = (path: string) => /\.svg$/i.test(path);
 
 /**
- * The Content-Type for a raw file. SVG is served as an image so `<img>` tags in rendered Markdown
- * show it (an `<img>` never runs an SVG's scripts, and `nosniff` stops browsers guessing any
- * other type); HTML is never served as a document from our origin.
+ * Raw file Content-Type. SVG is an image so Markdown `<img>` shows it (`<img>` never runs its
+ * scripts); HTML is never served as a document from our origin.
  */
 function rawContentType(path: string, blobType: string): string {
   if (isSvg(path) || /^image\/svg/.test(blobType)) return SVG_TYPE;
@@ -580,11 +579,7 @@ function rawContentType(path: string, blobType: string): string {
   return blobType || 'application/octet-stream';
 }
 
-/**
- * Raw files are repository content on our own origin, so opening one directly must not run
- * script (an SVG can carry it): like GitHub's raw host, a sandboxed CSP with no sources except
- * inline styles, which SVGs commonly use.
- */
+/** Sandboxed CSP for raw files (SVGs can carry script); allows only inline styles. */
 const RAW_HEADERS = {
   'X-Content-Type-Options': 'nosniff',
   'Content-Security-Policy':
@@ -611,8 +606,7 @@ reposRouter.openapi(rawRoute, async (c) => {
   const { ref, path } = c.req.valid('query');
   const blob = await (await c.get('git').client.repo()).readFile({ ref, path });
   if (!blob) return c.json({ error: 'Not Found' }, 404);
-  // An LFS pointer stands in for the real file: send the client to its bytes in R2 (so images
-  // in rendered Markdown work). A pointer whose object isn't uploaded is served as text.
+  // LFS pointer: redirect to the R2 bytes; a pointer whose object isn't uploaded is served as text.
   const pointer =
     blob.size <= 1024 && lfsConfigured(c.env)
       ? parseLfsPointer(await blob.text())

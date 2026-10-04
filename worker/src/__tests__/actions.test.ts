@@ -72,10 +72,7 @@ async function pat(t: TestEnv, cookie: string) {
   return ((await res.json()) as { plaintext: string }).plaintext;
 }
 
-/**
- * A real `git push` through the proxy: the objects are put in the fake repo first, then the
- * receive-pack request moves the ref, exactly as git would after uploading the pack.
- */
+/** A `git push` through the proxy: objects go into the fake repo, receive-pack moves the ref. */
 async function push(
   t: TestEnv,
   token: string,
@@ -738,14 +735,14 @@ jobs:
       ['Post Run actions/setup-node@v4', 'success'],
       ['Complete job', 'success'],
     ]);
-    // setup-node uses the preinstalled Node.js: no download, a note about the request.
+    // setup-node uses the preinstalled Node.js.
     const setupNode = script(h.requests[1]);
     expect(setupNode).not.toMatch(/\bn -q\b|npm install -g/);
     expect(setupNode).toContain('node-version 22 was requested');
     expect(setupNode).toMatch(
       /Cache not found for node-modules-yarn-linux-x64-node24-[0-9a-f]{32}/
     );
-    // The post step uploads node_modules straight to R2 with a masked, pre-signed URL.
+    // The post step uploads node_modules to R2 with a masked, pre-signed URL.
     const save = h.requests[3];
     expect(script(save)).toContain("'/workspace/node_modules'");
     const url = save.env.CACHE_URL;
@@ -755,8 +752,8 @@ jobs:
     expect(url).toContain('X-Amz-Signature=');
     expect(save.masks).toEqual([url]);
 
-    // Pretend the upload landed, then run again on a new commit with the same lockfile.
-    // The URL's path is exactly the object key: nothing for S3 to decode differently.
+    // Simulate the upload, then rerun on a new commit with the same lockfile.
+    // The URL path is the object key verbatim, so S3 decodes nothing differently.
     const objectKey = new URL(url).pathname.split(
       '/gitorange-actions-cache-test/'
     )[1];

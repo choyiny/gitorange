@@ -3,11 +3,7 @@ import { z } from 'zod';
 import type { GitService } from '../git/service';
 import { decoder } from '../git/bytes';
 
-/**
- * `.gitorange/review.yml`: which pull requests merge on their own. It is read from the target
- * branch, never from the pull request, so a PR can't loosen its own rules; a repository without
- * the file never auto-merges.
- */
+/** `.gitorange/review.yml`, read from the target branch so a PR can't loosen its own rules. */
 export const POLICY_PATH = '.gitorange/review.yml';
 
 export const DEFAULT_CLASSIFIER = 'clef';

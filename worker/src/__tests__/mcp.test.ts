@@ -17,7 +17,7 @@ import { commitPaths } from './helpers/seed';
 
 const ORIGIN = 'http://test.local';
 const REDIRECT = 'http://127.0.0.1:33418/callback';
-// The provider upgrades a non-loopback http issuer to https (production is https anyway).
+// The provider upgrades a non-loopback http issuer to https.
 const ISSUER = 'https://test.local/api/auth';
 
 function b64url(bytes: Uint8Array) {
@@ -100,7 +100,7 @@ async function authorize(t: TestEnv, cookie: string, clientId: string) {
   const consentUrl = new URL(auth.headers.get('Location')!, ORIGIN);
   expect(consentUrl.pathname).toBe('/oauth/consent');
 
-  // What the consent page does: post the decision with the signed query it was opened with.
+  // As the consent page does: post the decision with its signed query.
   const consent = await call(t, '/api/auth/oauth2/consent', {
     cookie,
     json: { accept: true, oauth_query: consentUrl.search.slice(1) },
@@ -222,8 +222,7 @@ describe('OAuth 2.1 flow', () => {
     const login = new URL(res.headers.get('Location')!, ORIGIN);
     expect(login.pathname).toBe('/login');
 
-    // The SPA's sign-in sends the signed query along (oauthProviderClient), and the
-    // response says where to continue.
+    // Sign-in sends the signed query (oauthProviderClient); the response says where to continue.
     const signIn = await call(t, '/api/auth/sign-in/username', {
       json: {
         username: 'octocat',
@@ -612,7 +611,7 @@ describe('MCP pull request tools', () => {
     const started = t.actions.resolutions.find(
       (r) => (r.params as { classificationId?: string }).classificationId
     )!;
-    // Keep it open: an approval would otherwise let it merge on its own.
+    // Keep it open: an approval would otherwise auto-merge it.
     await t.env.DB.prepare(
       'UPDATE pull_requests SET auto_merge_disabled_at = 1'
     ).run();

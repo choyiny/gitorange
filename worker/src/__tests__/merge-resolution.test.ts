@@ -202,7 +202,7 @@ describe('AI conflict resolution', () => {
     const proposed = repo.parseCommit(repo.refs.get(resolutionRef(id))!)!;
     expect(proposed.parents).toEqual([baseTip]);
 
-    // The resolution is part of the PR now: it shows as mergeable, and a plain merge lands it.
+    // The resolution makes the PR mergeable, and a plain merge lands it.
     expect(d).toMatchObject({ mergeable: true, resolvedByAi: true });
     const merge = await call(t, '/api/repos/octocat/app/pulls/1/merge', {
       cookie: admin,
@@ -219,8 +219,7 @@ describe('AI conflict resolution', () => {
   });
 
   it('fails a result that still has markers after the agent run, without a second attempt', async () => {
-    // The agent's own run checks for markers before it ends (resolver onYield); anything that
-    // still has them is rejected here.
+    // The resolver checks for markers in onYield; leftovers are rejected here.
     const { t, admin } = await conflictingPull();
     const id = (await detail(t, admin)).resolution!.id;
     await runResolution(t, id, (req) => ({ files: req.files }));
@@ -524,7 +523,7 @@ describe('AI resolution needs no button', () => {
 
   it('starts when a PR with missed conflicts is viewed', async () => {
     const { t, admin, repo } = await silentlyConflicting();
-    await conflictOnMain(repo); // e.g. landed before AI resolution existed
+    await conflictOnMain(repo);
     const first = await detail(t, admin);
     expect(first.conflictsResolvable).toBe(true);
     await settle(t);

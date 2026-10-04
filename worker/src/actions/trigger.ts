@@ -49,7 +49,6 @@ export type ActionsEvent =
 
 export type RefUpdate = { ref: string; old: string; new: string };
 
-/** Actions is configured when the deployment has the run Workflow binding. */
 export function actionsConfigured(env: CloudflareBindings): boolean {
   return Boolean((env as Partial<CloudflareBindings>).ACTIONS_RUN);
 }
@@ -128,9 +127,8 @@ export function githubContext(
 }
 
 /**
- * Creates queued runs for every workflow the event triggers, then starts one Cloudflare Workflow
- * per run. The D1 rows are written before the Workflow is created, so a crash in between leaves
- * a visible queued run rather than a job nobody tracks.
+ * Queues runs for every workflow the event triggers, then starts one Workflow per run.
+ * Rows are written first, so a crash in between leaves a visible queued run.
  */
 export async function queueRuns(
   env: CloudflareBindings,
@@ -218,7 +216,7 @@ export async function queueRuns(
   return created;
 }
 
-/** Starts the Workflow for a queued run; a failure to start is recorded on the run. */
+/** Starts a queued run's Workflow; a start failure is recorded on the run. */
 async function startRun(env: CloudflareBindings, db: Db, id: string) {
   try {
     await env.ACTIONS_RUN.create({ id, params: { runId: id } });
@@ -236,7 +234,7 @@ async function startRun(env: CloudflareBindings, db: Db, id: string) {
   }
 }
 
-/** Re-runs a workflow at the same commit as a new run (GitHub's "Re-run all jobs"). */
+/** "Re-run all jobs": a new run at the same commit. */
 export async function rerun(
   env: CloudflareBindings,
   db: Db,
@@ -281,7 +279,7 @@ export async function rerun(
   return id;
 }
 
-// D1 caps bound parameters per statement, so wide multi-row inserts go in chunks.
+// D1 caps bound parameters per statement.
 const ROWS_PER_INSERT = 10;
 
 async function insertRun(
@@ -301,7 +299,7 @@ async function insertRun(
 ): Promise<string> {
   const id = crypto.randomUUID();
   const now = new Date();
-  // The run number is claimed inside the INSERT; concurrent pushes retry on the unique index.
+  // Run number is claimed in the INSERT; concurrent pushes retry on the unique index.
   for (let attempt = 0; ; attempt++) {
     try {
       await db.insert(workflowRuns).values({
@@ -358,10 +356,7 @@ async function insertRun(
   return id;
 }
 
-/**
- * Called after refs change (a git push or an in-app merge): queues `push` runs for each updated
- * branch or tag, and `pull_request` runs for open pull requests whose head branch moved.
- */
+/** After refs change: queues `push` runs per ref and `pull_request` runs for moved PR heads. */
 export async function onRefsUpdated(
   env: CloudflareBindings,
   db: Db,
@@ -426,10 +421,7 @@ export function diffRefs(
   return out;
 }
 
-/**
- * Deletes every log a repository has in R2 — Actions step logs and AI merge-resolution
- * transcripts. Their rows go with the repository via cascade.
- */
+/** Deletes a repository's R2 logs (Actions step logs, merge-resolution transcripts). */
 export async function deleteRepositoryLogs(
   env: CloudflareBindings,
   repositoryId: string

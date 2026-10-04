@@ -1,10 +1,8 @@
 import type { RepoDetail } from './uiApi';
 
 /**
- * A prompt someone can paste into a coding agent (Claude Code, Cursor, …) to start working on a
- * repository without knowing git. The token is never pasted into the agent: the person runs the
- * clone themselves so git's own password prompt captures it and the system credential store
- * remembers it for later pushes.
+ * Prompt for a coding agent to work on a repository. The person runs the clone themselves so the
+ * token goes to git's credential store, never to the agent.
  */
 export function agentPrompt(
   repo: RepoDetail,
@@ -38,9 +36,8 @@ From then on:
 }
 
 /**
- * A prompt for moving a GitHub repository into an empty GitOrange repository: every branch, tag,
- * and Git LFS file, then optional ongoing sync. As with agentPrompt, the person runs every
- * command that needs a password (GitHub's or GitOrange's), so no token passes through the agent.
+ * Prompt for migrating a GitHub repository (branches, tags, LFS) into an empty one. The person
+ * runs every command that needs a password, so no token passes through the agent.
  */
 export function importFromGitHubPrompt(
   repo: RepoDetail,

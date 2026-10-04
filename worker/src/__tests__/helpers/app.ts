@@ -2,7 +2,7 @@ import { env } from 'cloudflare:test';
 import { app } from '../../index';
 import { createFakeArtifacts } from './fake-artifacts';
 
-/** Stand-ins for the Actions Workflow and JobRunner bindings: they record what was asked. */
+/** Recording fakes for the Actions Workflow and JobRunner bindings. */
 function fakeActions() {
   const started: { id: string; params: unknown }[] = [];
   const terminated: string[] = [];
@@ -20,7 +20,7 @@ function fakeActions() {
       terminate: async () => void terminated.push(id),
     }),
   };
-  // AI conflict resolution: single attempts and sweeps, recorded separately from Actions runs.
+  // MERGE_RESOLUTION: attempts and sweeps, recorded separately from Actions runs.
   const resolutions: { id: string; params: unknown }[] = [];
   const terminatedResolutions: string[] = [];
   const MERGE_RESOLUTION = {
@@ -64,7 +64,7 @@ export function makeEnv(opts: { actions?: boolean } = {}) {
     },
     ...(opts.actions ? actions.bindings : {}),
   } as unknown as CloudflareBindings;
-  // Background work (ctx.waitUntil) is collected so tests can await it with settle().
+  // ctx.waitUntil work is collected for settle().
   const waits: Promise<unknown>[] = [];
   const ctx = {
     waitUntil: (p: Promise<unknown>) => void waits.push(p),

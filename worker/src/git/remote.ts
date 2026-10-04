@@ -13,10 +13,7 @@ export const ZERO_SHA = '0000000000000000000000000000000000000000';
 
 export class GitPushError extends Error {}
 
-/**
- * One Artifacts repo, addressed by its immutable storage name. Wraps the binding for
- * object reads and the smart-HTTP remote for ref listing and pushes.
- */
+/** One Artifacts repo: the binding for object reads, smart HTTP for refs and pushes. */
 export class ArtifactsRepoClient {
   private handle?: Promise<ArtifactsRepo>;
   private remoteUrl?: Promise<string>;
@@ -70,10 +67,7 @@ export class ArtifactsRepoClient {
     return parseRefAdvertisement(new Uint8Array(await res.arrayBuffer()));
   }
 
-  /**
-   * Atomically updates refs. `old` must match the server's current value
-   * (compare-and-swap), so a concurrent push makes this fail instead of clobbering.
-   */
+  /** Atomic compare-and-swap ref update: fails if `old` no longer matches. */
   async push(
     updates: { ref: string; old: string; new: string }[],
     objects: GitObject[]

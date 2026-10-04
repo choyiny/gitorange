@@ -1,11 +1,6 @@
 /**
- * AI Gateway: every Workers AI call goes through it, so the gateway's logs and analytics show
- * requests, tokens, and cost. `AI_GATEWAY` names the gateway; `default` is created automatically
- * on first use (any other name must exist in the account). Set it to `off` to call Workers AI
- * directly.
- *
- * Each request carries metadata — which feature made it, which instance, and the record it
- * belongs to — so cost can be filtered by feature in the gateway's logs.
+ * Routes Workers AI calls through AI Gateway `AI_GATEWAY` (`default` is auto-created; `off`
+ * bypasses it), tagged with feature, instance, and record metadata.
  */
 export type AiFeature =
   | 'review-summary'

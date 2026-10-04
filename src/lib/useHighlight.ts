@@ -5,10 +5,7 @@ type Highlighter = typeof import('./highlight');
 let loading: Promise<Highlighter> | null = null;
 const load = () => (loading ??= import('./highlight'));
 
-/**
- * Lazily loads the highlighter and runs `fn` with it. Returns null until it's ready (or when
- * `enabled` is false), so callers render plain text first and upgrade in place.
- */
+/** Lazily loads the highlighter and runs `fn`; null until ready or when `enabled` is false. */
 export function useHighlighter<T>(
   enabled: boolean,
   fn: (h: Highlighter) => T,

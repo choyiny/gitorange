@@ -30,7 +30,7 @@ app.use('*', logger());
 app.use('*', async (c, next) => {
   const auth = createAuth(c.env);
   c.set('auth', auth);
-  // The MCP endpoint and OAuth discovery authenticate with bearer tokens, never cookies.
+  // /mcp and OAuth discovery use bearer tokens, never cookies.
   const p = c.req.path;
   if (p === '/mcp' || p.startsWith('/.well-known/')) return next();
   const session = await auth.api.getSession({ headers: c.req.raw.headers });
@@ -40,7 +40,6 @@ app.use('*', async (c, next) => {
 
 app.on(['GET', 'POST'], '/api/auth/*', (c) => c.get('auth').handler(c.req.raw));
 
-// OAuth discovery and the MCP server (bearer-token auth, see worker/src/mcp)
 app.route('/', wellKnownRouter);
 app.route('/mcp', mcpRouter);
 
@@ -51,8 +50,7 @@ app.route('/api/invites', invitesRouter);
 // Members only
 app.use('/api/repos/*', requireAuth);
 app.use('/api/repos', requireAuth);
-// Every successful change to a repository pings its open pages (and approval inboxes, for pull
-// request changes), so they update without a reload.
+// Successful repo mutations ping live pages (and approval inboxes for pull changes).
 const pingAfterChange: MiddlewareHandler<AppEnv> = async (c, next) => {
   await next();
   if (c.req.method === 'GET' || c.res.status >= 400) return;

@@ -1,10 +1,6 @@
 /**
- * Live-update channels. Messages say only what changed, never data, so a page refetches what it
- * shows through the permission-checked API:
- * - `repo:<id>`: anything in a repository (pushes, pull requests, reviews, Actions). Pages under
- *   that repository refetch.
- * - `approvals`: something that may change anyone's approvals inbox (reviews, flags, conflict
- *   resolutions, merges). The inbox and its count in the header refetch.
+ * Channels (pings carry no data): `repo:<id>` for any change in a repository; `approvals` for
+ * anything that may change an approvals inbox.
  */
 export const repoChannel = (repositoryId: string) => `repo:${repositoryId}`;
 export const APPROVALS_CHANNEL = 'approvals';
@@ -15,10 +11,7 @@ export function liveConfigured(env: CloudflareBindings): boolean {
 
 const hub = (env: CloudflareBindings) => env.LIVE.getByName('hub');
 
-/**
- * Tells open pages that a repository changed; `approvals` also refreshes approval inboxes.
- * Never throws: a missed ping only delays an update until the next one or a reload.
- */
+/** Pings `repo:<id>` (and `approvals`). Never throws: a missed ping only delays an update. */
 export async function publishChange(
   env: CloudflareBindings,
   repositoryId: string,
@@ -38,7 +31,7 @@ export async function publishChange(
   }
 }
 
-/** Opens a browser's WebSocket on the hub, subscribed to the given (already authorized) channels. */
+/** Opens a WebSocket on the hub, subscribed to already-authorized channels. */
 export function connectLive(
   env: CloudflareBindings,
   request: Request,
@@ -54,11 +47,7 @@ interface Steps {
   do<T>(name: string, ...args: unknown[]): Promise<T>;
 }
 
-/**
- * Wraps a Workflow's step runner so each completed step pings the repository's open pages: a
- * review, conflict resolution, or Actions run then shows its progress live. A replayed step
- * pings again, which is harmless.
- */
+/** Wraps a Workflow step runner so each completed step pings the repository. */
 export function pingingSteps<S>(
   env: CloudflareBindings,
   step: S,

@@ -8,11 +8,7 @@ import {
   repoChannel,
 } from './publish';
 
-/**
- * `GET /api/live[?repo=<owner>/<name>]` (WebSocket): live-update pings for the signed-in user.
- * Every socket hears about approval inbox changes; with `repo`, also about that repository,
- * only if the user can read it.
- */
+/** `GET /api/live[?repo=<owner>/<name>]` WebSocket: `approvals`, plus the repo if readable. */
 export const liveSocket: Handler<AppEnv> = async (c) => {
   if (c.req.header('Upgrade')?.toLowerCase() !== 'websocket')
     return c.json({ error: 'Expected a WebSocket upgrade' }, 426);

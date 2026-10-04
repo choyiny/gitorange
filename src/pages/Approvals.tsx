@@ -110,10 +110,7 @@ function Item({ item }: { item: ApprovalItem }) {
   );
 }
 
-/**
- * Every open pull request waiting on a person, across the repositories the user can merge in:
- * flags to approve, failed reviews to retry, conflict resolutions to decide on. It updates live.
- */
+/** Open pull requests waiting on the user: flags, failed reviews, failed conflict resolutions. */
 export default function Approvals() {
   const q = useApprovals();
   const count = approvalCount(q.data);

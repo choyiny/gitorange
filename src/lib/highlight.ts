@@ -1,7 +1,6 @@
 /**
- * Syntax highlighting, loaded on demand (see useHighlight). Produces one HTML string per
- * source line so it slots into line-numbered tables; spans that cross a newline are closed
- * at the end of the line and reopened on the next, so every line is well-formed on its own.
+ * Lazy-loaded syntax highlighting. Returns one HTML string per line; spans crossing a newline
+ * are closed and reopened so each line is well-formed.
  */
 import hljs from 'highlight.js/lib/core';
 import bash from 'highlight.js/lib/languages/bash';
@@ -125,11 +124,7 @@ export function highlightLines(
   }
 }
 
-/**
- * Highlights a diff hunk's lines. Each side (old: context + deletions, new: context +
- * additions) is highlighted as contiguous text so multi-line strings and comments color
- * correctly, then each diff line takes its HTML from the side it belongs to.
- */
+/** Highlights a diff hunk; each side is highlighted whole so multi-line tokens color right. */
 export function highlightHunkLines(
   lines: string[],
   language: string

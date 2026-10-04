@@ -83,7 +83,7 @@ function CommitRow({
   );
 }
 
-/** Commits grouped by day, newest-first input is preserved within each group. */
+/** Commits grouped by day, preserving input order. */
 export function CommitList({
   commits,
   base,
@@ -91,7 +91,7 @@ export function CommitList({
 }: {
   commits: Commit[];
   base: string;
-  /** Pass it to show each commit's checks (one request for the whole list). */
+  /** Shows each commit's checks (one request for the list). */
   repo?: RepoDetail;
 }) {
   const statuses = useCommitStatuses(

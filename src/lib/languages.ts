@@ -1,7 +1,4 @@
-/**
- * Maps a file path to a highlight.js language name. Kept separate from the highlighter so
- * detection is synchronous and doesn't pull highlight.js into the main bundle.
- */
+/** File path → highlight.js language. Separate so highlight.js stays out of the main bundle. */
 const BY_EXTENSION: Record<string, string> = {
   js: 'javascript',
   mjs: 'javascript',

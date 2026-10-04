@@ -1,7 +1,7 @@
 import { env, SELF } from 'cloudflare:test';
 import { describe, expect, it } from 'vitest';
 
-/** Regression test for the harness itself: migrations applied and the worker boots. */
+/** Harness check: migrations applied and the worker boots. */
 describe('test harness', () => {
   it('applies D1 migrations before the suite runs', async () => {
     const { results } = await env.DB.prepare(

@@ -4,10 +4,7 @@ import { users } from '../db/auth.schema';
 import type { DrizzleDB } from '../db/middleware';
 import { isReservedUsername, USERNAME_RE } from './usernames';
 
-/**
- * Usernames and the team slug share one URL namespace (`/<name>/<repo>`), so neither may take
- * a name the other already uses. Comparison is case-insensitive, like the URLs.
- */
+/** Usernames and the team slug share the URL namespace; compared case-insensitively. */
 export async function namespaceTaken(
   db: DrizzleDB,
   name: string,

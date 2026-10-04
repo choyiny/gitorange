@@ -1,7 +1,4 @@
-/**
- * Where a repository Markdown file lives, so relative links and images in it can be resolved
- * like GitHub does: against the file's directory, at the ref being viewed.
- */
+/** A repository Markdown file's location, for resolving its relative links and images. */
 export interface RepoMarkdownContext {
   owner: string;
   repo: string;
@@ -27,10 +24,7 @@ const decode = (s: string) => {
 const encodePath = (path: string) =>
   path.split('/').map(encodeURIComponent).join('/');
 
-/**
- * Resolves a relative URL from a Markdown file to a repository path, or null when the URL isn't
- * relative (absolute URLs, `#anchors`, empty). `/x` is relative to the repository root.
- */
+/** Relative URL → repository path, or null if not relative. `/x` is from the repository root. */
 export function resolveRepoPath(
   dir: string,
   url: string
@@ -71,10 +65,7 @@ export function repoLinkHref(
   return `${base}/${view}/${encodePath(ctx.ref)}${tail}${r.fragment}`;
 }
 
-/**
- * Raw-file URL for a relative image in repository Markdown, or null to leave it alone. The raw
- * endpoint follows Git LFS pointers, so LFS-stored images work too.
- */
+/** Raw-file URL for a relative image in repository Markdown (follows LFS pointers), or null. */
 export function repoImageSrc(
   ctx: RepoMarkdownContext,
   src: string

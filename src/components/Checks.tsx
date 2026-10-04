@@ -30,10 +30,7 @@ export function CommitStatus({ repo, sha }: { repo: RepoDetail; sha: string }) {
   return <ChecksBadge repo={repo} checks={q.data} align="right" />;
 }
 
-/**
- * Checks for many commits in one request (commit lists, pull request lists), keyed by SHA.
- * Refreshes while any of them is still running; live updates refresh it on changes too.
- */
+/** Checks for many commits in one request, keyed by SHA; polls while any is running. */
 export function useCommitStatuses(
   repo: RepoDetail | undefined,
   shas: (string | null | undefined)[]
@@ -52,11 +49,7 @@ export function useCommitStatuses(
   });
 }
 
-/**
- * A commit's combined check state as a ✓ / ✗ / spinner. Clicking it opens a summary like
- * GitHub's: what passed or failed, how long each took, and a link to each run. Nothing renders
- * when no checks ran.
- */
+/** A commit's combined check state (✓ / ✗ / spinner); opens a summary; empty with no checks. */
 export function ChecksBadge({
   repo,
   checks,

@@ -322,8 +322,7 @@ describe('auto-merge review', () => {
     const flag = d.review!.flags[0];
     // Only changed files count.
     expect(flag.paths).toEqual(['migrations/0001.sql']);
-    // The explanation, its diagram as a Mermaid block, and the code excerpt taken from the
-    // real diff (the made-up path is dropped).
+    // Explanation, Mermaid diagram, and an excerpt from the real diff (made-up path dropped).
     expect(flag.detail).toContain('Adds a column; check the migration.');
     expect(flag.detail).toContain('```mermaid\nerDiagram');
     expect(flag.detail).toContain(
@@ -340,7 +339,7 @@ describe('auto-merge review', () => {
       '+    1     | ALTER TABLE x ADD y;'
     );
 
-    // The PR's author may approve (for now).
+    // The PR's author may approve.
     for (const f of d.review!.flags) {
       const res = await call(
         t,
@@ -753,7 +752,7 @@ describe('code excerpts for flags', () => {
       paths: ['x'],
       raw: true,
     });
-    // An answer cut off mid-JSON (the model ran out of room) still yields its explanation…
+    // An answer cut off mid-JSON still yields its explanation…
     const cut = parseInvestigation(
       '{"detail":"Adds a table.\\n- Migrate first.","diagram":"erDiagram\\n  A {\\n    text id PK\\n  }","snippets":[{"path":"migrations/0008.sql","sta',
       []
@@ -881,7 +880,7 @@ describe('flags show before and after, and their diagram', () => {
       'erDiagram\n  SETTINGS {\n    text key PK "NEW"\n  }'
     );
     expect(mermaidSource('flowchart LR\nA-->B')).toBe('flowchart LR\nA-->B');
-    // Crammed onto one line (what models do with a single string): not drawable.
+    // A single line is not drawable.
     expect(mermaidSource('erDiagram SETTINGS { text key PK }')).toBeNull();
     // As a list of lines, comments dropped.
     expect(

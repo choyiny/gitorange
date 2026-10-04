@@ -151,8 +151,7 @@ actionsRouter.openapi(listRoute, async (c) => {
       .limit(PAGE_SIZE)
       .offset((page - 1) * PAGE_SIZE)
       .all(),
-    // The latest name each workflow file ran under. With MAX() in a grouped query, SQLite takes
-    // the other columns from the row holding the maximum, i.e. each file's newest run.
+    // SQLite bare columns: with MAX(), the other columns come from each file's newest run.
     db
       .select({
         path: workflowRuns.workflowPath,
@@ -204,10 +203,7 @@ async function getRun(
     .get();
 }
 
-/**
- * A run whose Workflow died (crashed, or was terminated outside the app) would otherwise stay
- * "in progress" forever. When a viewer looks at an unfinished run, ask Workflows for the truth.
- */
+/** Reconciles an unfinished run with its Workflow, which may have died without updating it. */
 async function reconcile(
   env: CloudflareBindings,
   db: RepoEnv['Variables']['db'],
@@ -515,10 +511,7 @@ actionsRouter.openapi(checksRoute, async (c) => {
   return c.json(checks[sha], 200);
 });
 
-/**
- * Each commit's checks: the latest run of every workflow (a re-run supersedes earlier runs of
- * the same workflow and event) and their combined state, null when nothing ran.
- */
+/** Each commit's latest run per workflow and event, and their combined state (null if none). */
 async function commitChecks(
   db: DrizzleDB,
   repositoryId: string,

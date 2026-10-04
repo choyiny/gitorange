@@ -60,15 +60,14 @@ export type GitAccess = {
   db: DrizzleD1Database<typeof schema>;
   user: typeof users.$inferSelect;
   repo: Repository;
-  /** `<owner>/<name>` as the repository's canonical URL path. */
+  /** Canonical `<owner>/<name>`. */
   fullName: string;
   perms: RepoPermissions;
 };
 
 /**
- * Shared front door for the git and Git LFS endpoints: authenticates a personal access token
- * (Basic auth, token in either slot like GitHub) and resolves read access to the repository.
- * Returns the access context, or the Response to send (401 challenge / 404).
+ * Auth for the git and LFS endpoints: PAT via Basic auth (either slot, like GitHub) plus read
+ * access. Returns the context, or a 401/404 Response.
  */
 export async function authenticateRepoRequest(
   request: Request,
@@ -116,9 +115,8 @@ export async function authenticateRepoRequest(
 }
 
 /**
- * Git smart-HTTP endpoint: `https://host/<owner>/<repo>.git`. Authenticates the user with a
- * personal access token, authorizes against the repo, then streams the request to the
- * Artifacts remote with a short-lived repo-scoped token. Artifacts credentials never leave the worker.
+ * Smart HTTP at `/<owner>/<repo>.git`: streams to the Artifacts remote with a short-lived
+ * repo-scoped token. Artifacts credentials never leave the worker.
  */
 export async function handleGitRequest(
   request: Request,
@@ -136,7 +134,7 @@ export async function handleGitRequest(
   if (service !== 'git-upload-pack' && service !== 'git-receive-pack') {
     return new Response('Unsupported service\n', { status: 403 });
   }
-  // Smart HTTP has exactly two shapes: GET the ref advertisement, POST a pack exchange.
+  // GET ref advertisement or POST pack exchange.
   const expectedMethod = endpoint === 'info/refs' ? 'GET' : 'POST';
   if (request.method !== expectedMethod) {
     return new Response('Method not allowed\n', {
@@ -164,7 +162,7 @@ export async function handleGitRequest(
     if (v) headers.set(h, v);
   }
   const git = gitFor(env, repo);
-  // Snapshot refs before a push so afterPush can tell which branches moved (for Actions).
+  // Snapshot refs so afterPush can tell which moved.
   const refsBefore =
     isPush &&
     request.method === 'POST' &&
@@ -190,7 +188,7 @@ export async function handleGitRequest(
   }
 
   if (isPush && request.method === 'POST' && upstream.ok) {
-    // Receive-pack responses are small status reports; buffer so we can sync metadata after the push lands.
+    // Receive-pack responses are small; buffer to sync metadata after the push lands.
     const body = await upstream.arrayBuffer();
     ctx.waitUntil(afterPush(env, repo.id, user.id, refsBefore, fullName));
     return new Response(body, {
@@ -205,9 +203,8 @@ export async function handleGitRequest(
 }
 
 /**
- * Bumps `updated_at`, adopts the first pushed branch as default if the default doesn't exist,
- * queues Actions runs for the refs the push moved, and starts AI resolution for pull requests
- * the push put into conflict.
+ * Bumps `updated_at`, adopts the first pushed branch as default if missing, queues Actions runs,
+ * and starts AI resolution for newly conflicting pull requests.
  */
 async function afterPush(
   env: CloudflareBindings,

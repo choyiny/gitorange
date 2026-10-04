@@ -137,7 +137,7 @@ const listRoute = createRoute({
   responses: {
     ...json200Response(
       z.object({
-        /** Each with the commit its checks ran on: the branch tip, or the pinned head once closed. */
+        /** Commit the checks ran on: the branch tip, or the pinned head once closed. */
         pulls: z.array(pullSchema.extend({ headSha: z.string().nullable() })),
         openCount: z.number(),
         closedCount: z.number(),
@@ -276,7 +276,7 @@ const resolutionSchema = z
     explanation: z.string().nullable(),
     errorMessage: z.string().nullable(),
     durationMs: z.number().nullable(),
-    /** The branches moved since this attempt, so it can no longer be applied. */
+    /** The branches moved since this attempt; it can't be applied. */
     stale: z.boolean(),
     createdAt: z.string(),
   })
@@ -413,10 +413,7 @@ const getPullRoute = createRoute({
         resolvedByAi: z.boolean(),
         aiResolution: z.boolean(),
         resolution: resolutionSchema.nullable(),
-        /**
-         * Auto-merge review of the head commit. Open PRs: null without a .gitorange/review.yml.
-         * Merged or closed PRs: the last review, kept as a record (null if there was none).
-         */
+        /** Head commit's review; null without review.yml. Closed PRs keep the last review. */
         review: reviewSchema.nullable(),
         canMerge: z.boolean(),
       }),
@@ -469,8 +466,7 @@ pullsRouter.openapi(getPullRoute, async (c) => {
         !plan.upToDate &&
         plan.conflicts.length > 0 &&
         plan.conflictFiles.length === plan.conflicts.length;
-      // Backstop for any trigger that was missed (or a PR that conflicted before AI resolution
-      // existed): seeing a PR with unresolved text conflicts makes sure an attempt exists.
+      // Backstop for missed triggers: unresolved text conflicts get a resolution attempt.
       if (conflictsResolvable && !resolvedByAi)
         c.executionCtx.waitUntil(
           ensureResolution(c.env, db, git, pr, shas).catch((e) =>
@@ -649,8 +645,7 @@ const mergeRoute = createRoute({
       content: {
         'application/json': {
           schema: z.object({
-            // One way to merge: squash the pull request and rebase it onto the latest base,
-            // keeping history linear. `squash` is accepted as an alias.
+            // Squash and rebase onto the base tip; `squash` is an alias.
             method: z.enum(['rebase', 'squash']).default('rebase'),
             title: z.string().max(256).optional(),
             message: z.string().max(65536).optional(),

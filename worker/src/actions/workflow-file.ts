@@ -1,9 +1,8 @@
 import { parse as parseYaml } from 'yaml';
 
 /**
- * The subset of the GitHub Actions workflow syntax GitOrange runs. Parsing is strict about
- * structure (so a typo fails the run with a clear message, like GitHub's "Invalid workflow file")
- * and lenient about keys that only affect GitHub's own platform (`permissions`, `concurrency`).
+ * Supported subset of GitHub Actions workflow syntax. Strict about structure; ignores
+ * GitHub-platform keys (`permissions`, `concurrency`).
  */
 
 export type Scalar = string | number | boolean;
@@ -63,9 +62,9 @@ export interface WorkflowDef {
 
 export class WorkflowFileError extends Error {}
 
-/** The longest a job may run, and the default when `timeout-minutes` is not set. */
+/** Max and default `timeout-minutes`. */
 export const MAX_JOB_MINUTES = 120;
-/** Matrix expansion cap per job, to keep one push from starting a fleet of containers. */
+/** Matrix expansion cap per job. */
 export const MAX_MATRIX_JOBS = 20;
 
 type Obj = Record<string, unknown>;
@@ -156,7 +155,7 @@ function triggers(v: unknown): Triggers {
     if (event === 'push') out.push = filter(cfg, 'on.push');
     else if (event === 'pull_request')
       out.pullRequest = filter(cfg, 'on.pull_request');
-    // Other events (schedule, workflow_dispatch, …) are accepted but never fire here yet.
+    // Other events (schedule, workflow_dispatch, …) are accepted but never fire.
   };
   if (typeof v === 'string') add(v, undefined);
   else if (Array.isArray(v)) for (const e of v) add(String(e), undefined);
@@ -273,7 +272,7 @@ function job(key: string, v: unknown): JobDef {
   };
 }
 
-/** Parses and validates a workflow file. Throws WorkflowFileError with a user-facing message. */
+/** Throws WorkflowFileError with a user-facing message. */
 export function parseWorkflow(text: string): WorkflowDef {
   let doc: unknown;
   try {
@@ -284,7 +283,7 @@ export function parseWorkflow(text: string): WorkflowDef {
     );
   }
   if (!isObj(doc)) fail('A workflow file must be a mapping');
-  // YAML 1.1 parsers read a bare `on:` key as boolean true; accept both spellings.
+  // YAML 1.1 reads a bare `on:` key as `true`.
   const on = doc.on ?? (doc as Record<string, unknown>)['true'];
   if (on === undefined) fail('`on` is required');
   if (!isObj(doc.jobs) || !Object.keys(doc.jobs).length)
@@ -294,7 +293,7 @@ export function parseWorkflow(text: string): WorkflowDef {
   for (const j of jobs)
     for (const n of j.needs)
       if (!keys.has(n)) fail(`jobs.${j.key}.needs: unknown job '${n}'`);
-  // Reject dependency cycles up front so a run can never wait forever.
+  // Reject `needs` cycles so a run can't wait forever.
   const state = new Map<string, 'visiting' | 'done'>();
   const byKey = new Map(jobs.map((j) => [j.key, j]));
   const visit = (k: string) => {
@@ -316,7 +315,7 @@ export function parseWorkflow(text: string): WorkflowDef {
   };
 }
 
-/** The UI name of a step, matching GitHub's defaults. */
+/** A step's display name, matching GitHub's defaults. */
 export function stepDisplayName(s: StepDef): string {
   if (s.name) return s.name;
   if (s.uses) return `Run ${s.uses}`;

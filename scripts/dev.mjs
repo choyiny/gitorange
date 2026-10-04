@@ -1,10 +1,6 @@
 #!/usr/bin/env node
-// `yarn dev`: runs the Vite dev server (app + worker in workerd) under a memory watchdog.
-//
-// Every few seconds it adds up the resident memory of the whole dev process tree (Node, workerd,
-// esbuild). It logs each time usage passes another whole gigabyte, which helps track down leaks,
-// and stops the server once it passes DEV_MEMORY_LIMIT_MB (default 5120 = 5 GB), so a leak can't
-// take the machine down. Set DEV_MEMORY_LIMIT_MB=0 to turn the watchdog off.
+// `yarn dev`: Vite dev server under a memory watchdog. Sums the RSS of the process tree, logs
+// each whole GB, and stops past DEV_MEMORY_LIMIT_MB (default 5120; 0 disables).
 import { execFileSync, spawn } from 'node:child_process';
 
 const LIMIT_MB = Number(process.env.DEV_MEMORY_LIMIT_MB ?? 5120);

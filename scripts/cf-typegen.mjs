@@ -1,11 +1,8 @@
 #!/usr/bin/env node
 /**
- * Regenerate worker/worker-configuration.d.ts from wrangler.jsonc.ci so the tracked types
- * file only reflects placeholder values, never a deployer's local (gitignored) wrangler.jsonc.
- *
- * `wrangler types --config` still reads wrangler.jsonc from the cwd for its runtime-types
- * phase, so swap the CI config into place, run it, then restore the local file. A crash leaves
- * the original at .wrangler.jsonc.local-backup for manual recovery.
+ * Regenerates worker/worker-configuration.d.ts from wrangler.jsonc.ci, not the local config.
+ * `wrangler types` still reads ./wrangler.jsonc, so the CI config is swapped in and the local one
+ * restored after (a crash leaves it at .wrangler.jsonc.local-backup).
  */
 import { copyFileSync, existsSync, renameSync, unlinkSync } from 'node:fs';
 import { spawnSync } from 'node:child_process';

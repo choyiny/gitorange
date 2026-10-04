@@ -5,12 +5,8 @@ import { appName } from '../lib/app-name';
 import type { AppEnv } from '../variables';
 
 /**
- * OAuth discovery at the origin root, where MCP clients look for it.
- *
- * - RFC 9728 protected-resource metadata for `/mcp`, at both the root and the path-suffixed URL
- *   (`/.well-known/oauth-protected-resource/mcp`) that RFC 9728 derives from the resource URL.
- * - RFC 8414 authorization-server metadata. The issuer is `<origin>/api/auth` (better-auth's base
- *   path), so it is also served at the path-inserted URL clients derive from that issuer.
+ * OAuth discovery at the origin root: RFC 9728 resource metadata (root and `/mcp`-suffixed) and
+ * RFC 8414 server metadata (also at the path-inserted URL for issuer `<origin>/api/auth`).
  */
 export const wellKnownRouter = new Hono<AppEnv>();
 

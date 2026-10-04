@@ -2,10 +2,8 @@ import { decoder } from '../git/bytes';
 import type { GitService } from '../git/service';
 
 /**
- * `.orangeignore`: files the auto-merge review leaves out, in `.gitignore` syntax (generated code,
- * vendored files, snapshots). Read from the target branch, like review.yml, so a pull request
- * can't hide its own files. An ignored file still counts as changed and is listed with a fixed
- * one-liner; it just isn't summarized by a model, read by the investigator, or quoted.
+ * `.orangeignore` (`.gitignore` syntax): files the review lists with a fixed one-liner but never
+ * summarizes, investigates, or quotes. Read from the target branch so a PR can't hide files.
  */
 export const IGNORE_PATH = '.orangeignore';
 

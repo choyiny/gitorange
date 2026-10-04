@@ -19,11 +19,7 @@ export type MergeResolutionParams =
     }
   | { classificationId: string; resolutionId?: undefined; sweep?: undefined };
 
-/**
- * The durable runner behind merge automation (binding MERGE_RESOLUTION): one AI conflict
- * resolution attempt, one auto-merge review of a pull request commit, or a sweep that checks the
- * open pull requests a push or merge affected.
- */
+/** MERGE_RESOLUTION: runs an AI resolution attempt, an auto-merge review, or a conflict sweep. */
 export class MergeResolutionWorkflow extends WorkflowEntrypoint<
   CloudflareBindings,
   MergeResolutionParams

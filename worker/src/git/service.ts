@@ -51,13 +51,13 @@ const isTree = (e: { mode: string }) =>
   e.mode === '40000' || e.mode === '040000';
 const isRegularFile = (mode: string) => mode === '100644' || mode === '100755';
 
-/** Text merge limits: larger or binary files are left as conflicts for a human. */
+/** Text merge limits; larger or binary files stay conflicts. */
 const MAX_MERGE_BYTES = 1024 * 1024;
 function isBinaryOrHuge(bytes: Uint8Array) {
   return bytes.length > MAX_MERGE_BYTES || bytes.subarray(0, 8000).includes(0);
 }
 
-/** A file whose edits overlap: the three versions, and diff3 output with conflict markers. */
+/** Overlapping edits: the three versions and diff3 output with markers. */
 export interface ConflictFile {
   path: string;
   base: string | null;
@@ -77,7 +77,7 @@ interface MergeState {
   labels?: { a: string; o: string; b: string };
 }
 
-/** Read-and-write operations for one repo, built on the Artifacts binding plus smart HTTP. */
+/** Reads and writes for one repo via the Artifacts binding and smart HTTP. */
 export class GitService {
   private commits = new Map<string, Commit>();
   private trees = new Map<string, Entry[]>();
@@ -171,10 +171,7 @@ export class GitService {
     return { type: 'tree', hash: treeHash, entries: await this.tree(treeHash) };
   }
 
-  /**
-   * For each entry of the tree at `path`, the most recent commit (first-parent walk,
-   * up to `depth` commits) that changed it.
-   */
+  /** Last commit (first-parent, up to `depth`) that changed each entry of the tree at `path`. */
   async lastCommitsForTree(headSha: string, path: string, depth = 60) {
     const history = await this.log(headSha, depth);
     const result: Record<string, Commit> = {};
@@ -227,7 +224,7 @@ export class GitService {
     return null;
   }
 
-  /** Commits reachable from `head` but not from `base`, oldest first (reverse BFS order, so parents precede children). */
+  /** Commits in `head` but not `base`, parents before children. */
   async commitsBetween(base: string, head: string): Promise<Commit[]> {
     const baseChain = await this.firstParentChain(base);
     await this.log(head, 1000);
@@ -358,14 +355,8 @@ export class GitService {
   // ── writes ─────────────────────────────────────────────────────────────────
 
   /**
-   * Three-way merge of trees. Takes whole-file versions when only one side changed;
-   * a file changed differently on both sides is a conflict (resolve locally).
-   */
-  /**
-   * Three-way merges trees. Files changed on both sides are merged line by line (diff3); only
-   * truly overlapping edits, or changes that can't be merged as text (binary files, a delete
-   * against an edit, a file against a directory), become conflicts. `resolutions` supplies the
-   * final contents of conflicted paths, e.g. from AI conflict resolution.
+   * Three-way tree merge; files changed on both sides merge by line (diff3). Overlaps, binaries,
+   * delete/edit, and file/directory clashes conflict. `resolutions` sets conflicted paths' contents.
    */
   async mergeTrees(
     base: string | null,
@@ -431,13 +422,13 @@ export class GitService {
   ): Promise<{ mode: string; hash: string } | null> {
     const resolved = state.resolutions?.get(path);
     if (resolved !== undefined) {
-      if (resolved === null) return null; // resolved as deleted
+      if (resolved === null) return null;
       const blob = await makeBlob(resolved);
       state.created.push(blob);
       return { mode: (oe ?? te)?.mode ?? '100644', hash: blob.sha };
     }
     const isFile = (e?: Entry) => !!e && isRegularFile(e.mode);
-    // Text merge needs both sides present as regular files (a base is optional: add/add).
+    // Both sides must be regular files; base is optional (add/add).
     if (!isFile(oe) || !isFile(te) || (be && !isFile(be))) {
       state.conflicts.push(path);
       return null;
@@ -458,7 +449,7 @@ export class GitService {
       text[2].split('\n'),
       { label: state.labels ?? { a: 'ours', o: 'base', b: 'theirs' } }
     );
-    // Mode: take a side's mode change (e.g. +x) when only one side made it.
+    // Take a one-sided mode change (e.g. +x).
     const mode = be && oe!.mode === be.mode ? te!.mode : oe!.mode;
     if (merged.conflict) {
       state.conflicts.push(path);
@@ -476,7 +467,7 @@ export class GitService {
     return { mode, hash: blob.sha };
   }
 
-  /** Computes the merged tree of `head` into `base` without writing anything. */
+  /** Merged tree of `head` into `base`; writes nothing. */
   async planMerge(
     baseSha: string,
     headSha: string,
@@ -579,7 +570,7 @@ export class GitService {
     );
   }
 
-  /** Creates the first commit on an empty repo (used for "Add a README file"). */
+  /** First commit on an empty repo ("Add a README file"). */
   async initialCommit(
     branch: string,
     files: Record<string, string>,

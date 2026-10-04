@@ -1,11 +1,6 @@
 import { DurableObject } from 'cloudflare:workers';
 
-/**
- * Live updates: one hibernating Durable Object holds every open browser WebSocket for this
- * instance. It only relays "something changed" pings; it stores nothing and never reads data.
- * Each socket carries the channels the worker authorized it for (tags), and a ping goes to the
- * sockets with that tag. Pages then refetch through the normal, permission-checked API.
- */
+/** Hibernating hub for every live WebSocket; relays "changed" pings by channel tag. */
 export class LiveHub extends DurableObject<CloudflareBindings> {
   constructor(ctx: DurableObjectState, env: CloudflareBindings) {
     super(ctx, env);
@@ -36,9 +31,7 @@ export class LiveHub extends DurableObject<CloudflareBindings> {
     }
   }
 
-  async webSocketMessage() {
-    // Clients only send keepalives, answered by the auto-response.
-  }
+  async webSocketMessage() {}
 
   async webSocketClose(ws: WebSocket, code: number) {
     try {

@@ -26,10 +26,7 @@ export function useRepoParams() {
   return { owner, repo };
 }
 
-/**
- * The part of the URL after `/:owner/:repo/<section>/`. Read from the location because the
- * outer catch-all route also defines a `*` param, so useParams()['*'] is ambiguous here.
- */
+/** The path after `/:owner/:repo/<section>/` (useParams()['*'] clashes with the outer route). */
 export function useRepoSubPath(section: string) {
   const { pathname } = useLocation();
   const parts = pathname.split('/').filter(Boolean);
@@ -85,7 +82,7 @@ function Tab({
 export function RepoLayout() {
   const { owner, repo } = useRepoParams();
   const q = useRepo();
-  // Pages under this repository update live, once we know the user can see it.
+  // Subscribe only once the user is known to have access.
   useLiveRepo(q.data ? owner : '', q.data ? repo : '');
   const { pathname } = useLocation();
   if (q.error instanceof ApiError && q.error.status === 404)

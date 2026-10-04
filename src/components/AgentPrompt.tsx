@@ -4,10 +4,7 @@ import { agentPrompt, importFromGitHubPrompt } from '@/lib/agentPrompt';
 import { CopyButton } from './CopyButton';
 import { useAppName } from '@/lib/appName';
 
-/**
- * A copy-paste prompt for a coding agent: `work` sets the repository up locally and helps make
- * changes; `import` brings an existing GitHub repository (all branches, tags, LFS files) in.
- */
+/** Copy-paste coding-agent prompt: `work` on the repository, or `import` one from GitHub. */
 export function AgentPrompt({
   repo,
   compact = false,

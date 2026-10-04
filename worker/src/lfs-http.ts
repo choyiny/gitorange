@@ -14,9 +14,8 @@ import {
 } from './lib/lfs';
 
 /**
- * Git LFS endpoint (Batch API + basic transfer adapter + minimal locks API) at
- * `https://host/<owner>/<repo>.git/info/lfs/...`. Bytes never pass through the worker:
- * the batch API hands out short-lived pre-signed R2 URLs after the usual permission checks.
+ * Git LFS Batch API, basic transfer, and stub locks at `/<owner>/<repo>.git/info/lfs/...`.
+ * Bytes go via pre-signed R2 URLs, never through the worker.
  * https://github.com/git-lfs/git-lfs/blob/main/docs/api/batch.md
  */
 const LFS_PATH =
@@ -61,7 +60,7 @@ export async function handleLfsRequest(
 
   const access = await authenticateRepoRequest(request, env, ctx, owner, name);
   if (access instanceof Response) {
-    // git-lfs reads JSON bodies; keep the auth challenge header for the credential helper.
+    // Keep the auth challenge header for the credential helper.
     return access.status === 401
       ? lfsJson(
           {
@@ -135,7 +134,7 @@ async function handleBatch(
     : [];
   const byOid = new Map(known.map((r) => [r.oid, r]));
 
-  /** Records an object R2 already holds (e.g. an upload whose verify call never arrived). */
+  /** Records an object R2 already holds (e.g. upload whose verify never arrived). */
   const adopt = async (o: BatchObject) => {
     const key = lfsKey(repo.id, o.oid);
     if (!(await storedObjectMatches(env, key, o.oid, o.size))) return false;
@@ -181,7 +180,7 @@ async function handleBatch(
             ...base,
             error: { code: 422, message: 'Object exceeds the 5 GB limit' },
           };
-        if (row || (await adopt(o))) return base; // already stored: no actions
+        if (row || (await adopt(o))) return base; // already stored
         const header = { 'x-amz-checksum-sha256': sha256Header(o.oid) };
         return {
           ...base,
@@ -254,10 +253,7 @@ async function handleVerify(
   return lfsJson({});
 }
 
-/**
- * GitOrange doesn't implement file locking. Listing and verifying report no locks so pushes
- * aren't noisy; creating or releasing a lock says so explicitly.
- */
+/** No file locking: list/verify report no locks; create/release return an explicit error. */
 function handleLocks(request: Request, endpoint: string, access: GitAccess) {
   if (endpoint === 'locks' && request.method === 'GET')
     return lfsJson({ locks: [] });

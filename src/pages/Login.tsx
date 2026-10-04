@@ -22,8 +22,7 @@ export default function Login() {
   const [busy, setBusy] = useState(false);
   if (status.isPending || isPending) return <Spinner />;
   if (status.data?.setupRequired) return <Navigate to="/setup" replace />;
-  // Part of an OAuth sign-in (e.g. an MCP client) but already signed in, say in another tab:
-  // resume the authorization request instead of going home.
+  // Already signed in during an OAuth flow: resume the authorization request.
   if (session && params.has('sig') && params.has('client_id')) {
     window.location.replace(`/api/auth/oauth2/authorize?${params.toString()}`);
     return <Spinner />;
@@ -42,7 +41,7 @@ export default function Login() {
       setError('Incorrect username or password.');
       return;
     }
-    // During an OAuth sign-in the server answers with where the flow continues (consent).
+    // During an OAuth flow the response says where it continues.
     const next = (res.data as { url?: string } | null)?.url;
     if (next) {
       window.location.href = next;

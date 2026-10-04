@@ -21,12 +21,8 @@ export type LandResult =
   { ok: true; sha: string } | { ok: false; status: 400 | 409; error: string };
 
 /**
- * Lands a pull request: squashed into one commit on top of the target branch's current tip,
- * pushed with compare-and-swap. A valid AI conflict resolution for the current commits is part
- * of the pull request, so it lands whether or not the caller names it.
- *
- * `by` is the person merging, or null when GitOrange merges on its own (auto-merge): the commit
- * is then authored as the pull request's author and the merge has no merged_by.
+ * Squashes a pull request onto the target tip and pushes with compare-and-swap, including any
+ * valid AI resolution for the current commits. `by` is null for auto-merge (PR author commits).
  */
 export async function landPull(opts: {
   env: CloudflareBindings;
@@ -103,8 +99,7 @@ export async function landPull(opts: {
           status: 400,
           error: 'Resolution commit is missing',
         };
-      // The resolved tree and its objects are already stored (on the resolution's side ref);
-      // landing is one new commit and a compare-and-swap of the base branch.
+      // The resolved tree is already stored on the resolution's side ref.
       const commit = await makeCommit({
         tree: resolved.treeHash,
         parents: [row.baseSha],
@@ -159,7 +154,7 @@ export async function landPull(opts: {
       .set({ status: 'applied', decidedAt: new Date() })
       .where(eq(mergeResolutions.id, appliedResolution));
   const now = new Date();
-  // The git push is the commit point; record it only after it succeeded.
+  // The push is the commit point; record only after it succeeds.
   await db
     .update(pullRequests)
     .set({
@@ -176,7 +171,7 @@ export async function landPull(opts: {
     .update(repositories)
     .set({ updatedAt: now })
     .where(eq(repositories.id, pr.repositoryId));
-  // Auto-merges happen in the background: tell open pages and inboxes.
+  // Auto-merges happen in the background.
   opts.after(publishChange(env, pr.repositoryId, { approvals: true }));
   if (baseBefore) {
     const updates = [

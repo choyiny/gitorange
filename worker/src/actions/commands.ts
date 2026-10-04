@@ -1,8 +1,4 @@
-/**
- * Step ↔ runner file protocol. A step appends to `$GITHUB_ENV`, `$GITHUB_OUTPUT`, and
- * `$GITHUB_PATH`; after it exits the runner reads them back. Values are either `NAME=value`
- * lines or multi-line heredocs (`NAME<<EOF` … `EOF`), exactly as on GitHub.
- */
+/** Parses `$GITHUB_ENV`/`$GITHUB_OUTPUT`: `NAME=value` lines or `NAME<<EOF` … `EOF` heredocs. */
 export function parseKeyValueFile(text: string): Record<string, string> {
   const out: Record<string, string> = {};
   const lines = text.split('\n');
@@ -32,7 +28,7 @@ export function parsePathFile(text: string): string[] {
     .filter(Boolean);
 }
 
-/** Replaces every secret value in `text` with `***`. Short values are left alone, like GitHub. */
+/** Replaces secrets with `***`; values under 4 chars are left alone, like GitHub. */
 export function mask(text: string, secrets: string[]): string {
   let out = text;
   for (const s of secrets)

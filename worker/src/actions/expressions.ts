@@ -1,8 +1,6 @@
 /**
- * GitHub Actions expressions: the `${{ … }}` language used in workflow files and `if:` conditions.
- * Supports literals, context access (`github.sha`, `matrix['node']`, `steps.build.outputs.x`),
- * `! == != < <= > >= && ||`, and the common functions. Comparison and truthiness follow GitHub's
- * rules: strings compare case-insensitively and mismatched types are compared as numbers.
+ * GitHub Actions `${{ … }}` expressions. Follows GitHub's rules: strings compare
+ * case-insensitively; mismatched types compare as numbers.
  */
 
 export type Value =
@@ -11,7 +9,7 @@ export type Value =
 export type JobStatus = 'success' | 'failure' | 'cancelled';
 
 export interface EvalOptions {
-  /** The status `success()`, `failure()`, and `cancelled()` read. Defaults to success. */
+  /** Read by `success()`/`failure()`/`cancelled()`; defaults to success. */
   status?: JobStatus;
 }
 
@@ -363,10 +361,7 @@ export function interpolate(
   );
 }
 
-/**
- * Evaluates an `if:` condition. Like GitHub, a bare `${{ }}` wrapper is optional and a condition
- * with no status function implicitly means `success() && (…)`.
- */
+/** Evaluates `if:`; `${{ }}` is optional and no status function means `success() && (…)`. */
 export function evaluateCondition(
   condition: string | boolean | undefined,
   ctx: Record<string, Value>,

@@ -12,10 +12,7 @@ import {
 
 // ── filters ──────────────────────────────────────────────────────────────────
 
-/**
- * GitHub's filter glob: `*` matches within a path segment, `**` across segments, `?` one
- * character, `+` one or more of the preceding character, `[…]` a character class.
- */
+/** GitHub filter glob: `*` in a segment, `**` across, `?`, `+` (repeat), `[…]`. */
 export function globToRegExp(pattern: string): RegExp {
   let re = '';
   for (let i = 0; i < pattern.length; i++) {
@@ -115,9 +112,8 @@ const SIZES: InstanceType[] = [
 ];
 
 /**
- * Maps `runs-on` to a container instance type. GitHub's Linux labels get `standard-2` (1 vCPU,
- * 6 GiB, 12 GB disk: a cold JavaScript install can need 6+ GB); `gitorange-standard-3` (or just
- * `standard-3`) picks a size explicitly.
+ * `runs-on` → container instance type. GitHub's Linux labels get `standard-2` (12 GB disk: a cold
+ * JS install can need 6+ GB); `[gitorange-]standard-N` picks a size explicitly.
  */
 export function instanceTypeFor(runsOn: string): InstanceType {
   const labels = runsOn.split(',').map((l) => l.trim().toLowerCase());
@@ -166,10 +162,7 @@ function safeInterpolate(text: string, ctx: Record<string, Value>): string {
   }
 }
 
-/**
- * Expands each job by its matrix and names its steps, framed by GitHub's "Set up job" and
- * "Complete job" steps so step numbers line up with what users see on GitHub.
- */
+/** Expands jobs by matrix; adds "Set up job"/"Complete job" so step numbers match GitHub. */
 export function planJobs(
   wf: WorkflowDef,
   github: Record<string, Value>
@@ -226,7 +219,7 @@ function planJob(
   };
 }
 
-/** Whether a step has a "Post" phase: saving a cache after the job's steps. */
+/** Whether a step has a "Post" phase (cache save). */
 export function hasPostStep(s: StepDef): boolean {
   const action = s.uses?.split('@')[0];
   return (
@@ -235,10 +228,7 @@ export function hasPostStep(s: StepDef): boolean {
   );
 }
 
-/**
- * Indexes of the steps with a post phase, in the order the posts run: last step first, as on
- * GitHub. Post steps are numbered after the job's steps and before "Complete job".
- */
+/** Indexes of steps with a post phase, in run order (last first). */
 export function postStepIndexes(steps: StepDef[]): number[] {
   return steps
     .map((s, i) => (hasPostStep(s) ? i : -1))

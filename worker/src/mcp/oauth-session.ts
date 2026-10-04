@@ -12,11 +12,8 @@ export interface McpSession {
 }
 
 /**
- * Bearer token → user. Access tokens are JWTs signed by this instance's better-auth (jwt plugin)
- * and bound to the `/mcp` resource, so they are verified locally against our own JWKS with no
- * network call: signature, issuer, audience, and expiry. On top of that, the user must still
- * exist and not be banned, and must not have revoked the app (its consent row), so
- * disconnecting an app in GitOrange takes effect immediately rather than at token expiry.
+ * Bearer JWT → user, verified locally against our JWKS. Also requires an unbanned user and the
+ * app's consent row, so disconnecting an app takes effect immediately.
  */
 export async function getMcpSession(
   auth: AppEnv['Variables']['auth'],
@@ -32,8 +29,7 @@ export async function getMcpSession(
     payload = await verifyJwsAccessToken(match[1], {
       jwksFetch: () => auth.api.getJwks(),
       verifyOptions: {
-        // The plugin signs `iss` from the base URL as configured, but advertises it upgraded to
-        // https on non-loopback hosts; on an https deployment the two are the same.
+        // The plugin signs `iss` from the configured base URL but advertises it upgraded to https.
         issuer: [
           `${baseURL.replace(/\/$/, '')}/api/auth`,
           oauthIssuer(baseURL),

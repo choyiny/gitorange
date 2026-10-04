@@ -12,10 +12,7 @@ import { McpToolError } from './errors';
 import { getMcpSession } from './oauth-session';
 import { TOOL_DEFINITIONS, TOOL_HANDLERS, type ToolContext } from './tools';
 
-/**
- * GitOrange's MCP server: JSON-RPC 2.0 over Streamable HTTP at `POST /mcp`, stateless, tools only.
- * Authenticated with OAuth 2.1 access tokens issued by this instance's better-auth.
- */
+/** MCP server: stateless JSON-RPC 2.0 over Streamable HTTP at `POST /mcp`, tools only. */
 const PROTOCOL_VERSION = '2025-06-18';
 const SUPPORTED_VERSIONS = ['2025-06-18', '2025-03-26', '2024-11-05'];
 
@@ -73,7 +70,7 @@ async function callTool(
   }
 }
 
-// No server-initiated stream: a tools-only server never pushes.
+// Tools-only: no server-initiated stream.
 mcpRouter.get('/', (c) => c.text('Method Not Allowed', 405, { Allow: 'POST' }));
 mcpRouter.delete('/', (c) => c.body(null, 405, { Allow: 'POST' }));
 
@@ -154,7 +151,7 @@ mcpRouter.post('/', async (c) => {
       );
     }
     default:
-      if (id === undefined) return c.body(null, 202); // an unknown notification
+      if (id === undefined) return c.body(null, 202); // unknown notification
       return c.json(rpcError(id, -32601, `Method not found: ${method}`));
   }
 });
@@ -200,10 +197,7 @@ mcpApiRouter.get('/connections', async (c) => {
   );
 });
 
-/**
- * Disconnects an app: deletes the user's consent and every token issued to that app for them.
- * Outstanding JWT access tokens stop working at once because /mcp requires the consent row.
- */
+/** Deletes the user's consent and tokens for an app; /mcp then rejects its JWTs at once. */
 mcpApiRouter.delete('/connections/:clientId', async (c) => {
   const db = c.get('db');
   const userId = c.get('user')!.id;

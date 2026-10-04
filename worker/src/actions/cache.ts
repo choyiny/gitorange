@@ -3,24 +3,18 @@ import type { GitService } from '../git/service';
 import { decoder, sha256Hex } from '../git/bytes';
 
 /**
- * The Actions cache: `actions/cache` and `actions/setup-node`'s `cache:` input.
- *
- * Each entry is one zstd tarball in R2 (`ACTIONS_CACHE`), keyed
+ * Actions cache: one zstd tarball per entry in R2 at
  * `actions-cache/<repository id>/<ref>/<key>.tar.zst`; R2's prefix listing is the only index.
- * Runners move the bytes straight to and from R2 through short-lived pre-signed URLs (entries
- * are often hundreds of MB, far beyond what a Worker request can carry).
- *
- * Scoped like GitHub: a run reads entries saved on its own ref, then on the default branch, and
- * saves only to its own ref, so a pull request can't plant an entry that main later restores.
- * Entries expire through the bucket's lifecycle rule (7 days) and a per-repository size cap.
+ * Runners move bytes via pre-signed URLs (entries exceed Worker request limits).
+ * Reads own ref then default branch; writes own ref only, so a PR can't poison main's cache.
  */
 
-/** Node.js major version in the runner image (actions/runner/Dockerfile: node:24-…); part of keys. */
+/** Node.js major in actions/runner/Dockerfile; part of keys. */
 export const RUNNER_NODE_MAJOR = '24';
 
-/** Largest entry saved: R2's single-request upload limit. */
+/** R2's single-request upload limit. */
 export const MAX_CACHE_ENTRY_BYTES = 5 * 1024 ** 3;
-/** Per-repository total; the oldest entries are evicted past it. */
+/** Per-repository total; oldest entries are evicted past it. */
 export const MAX_CACHE_BYTES_PER_REPO = 10 * 1024 ** 3;
 
 export function cacheConfigured(env: CloudflareBindings): boolean {
@@ -38,10 +32,8 @@ export const cachePrefix = (repositoryId: string) =>
   `actions-cache/${repositoryId}/`;
 
 /**
- * A ref or key as one object-key segment. Only unreserved URL characters survive as-is; every
- * other character becomes `~xx` (its UTF-8 bytes in hex). No `%`: pre-signed S3 URLs decode
- * percent-escapes, so a `%2F` would upload to a different key than the binding looks up. The
- * encoding works character by character, so a restore key's prefix stays a prefix.
+ * Encodes a ref or key as one object-key segment: non-unreserved chars become `~xx` (UTF-8 hex).
+ * Not `%`: pre-signed URLs decode percent-escapes. Per-character, so prefixes stay prefixes.
  */
 export function keySegment(text: string): string {
   let out = '';
@@ -75,18 +67,13 @@ export const cacheObjectKey = (
 
 export type CacheMatch = {
   objectKey: string;
-  /** The key of the entry found. */
   key: string;
-  /** It matched the primary key exactly (not a restore key). */
+  /** Matched the primary key, not a restore key. */
   exact: boolean;
   size: number;
 };
 
-/**
- * The entry to restore: an exact match of `key`, else the newest entry whose key starts with one
- * of `restoreKeys` (tried in order); each looked up on the run's ref first, then the default
- * branch.
- */
+/** Exact `key`, else the newest entry prefixed by a `restoreKeys` entry; each ref in order. */
 export async function findCacheEntry(
   env: CloudflareBindings,
   repositoryId: string,
@@ -123,7 +110,6 @@ export async function findCacheEntry(
   return null;
 }
 
-/** A pre-signed URL the runner downloads or uploads one entry with. */
 export function cacheUrl(
   env: CloudflareBindings,
   objectKey: string,
@@ -134,7 +120,7 @@ export function cacheUrl(
   });
 }
 
-/** Evicts a repository's oldest entries until it is within its size cap. */
+/** Evicts oldest entries until the repository is within `maxBytes`. */
 export async function enforceCacheLimit(
   env: CloudflareBindings,
   repositoryId: string,
@@ -163,7 +149,6 @@ export async function enforceCacheLimit(
   return evict;
 }
 
-/** Deletes every cache entry of a repository (when the repository is deleted). */
 export async function deleteRepositoryCache(
   env: CloudflareBindings,
   repositoryId: string
@@ -192,10 +177,8 @@ const LOCKFILES: Record<string, string> = {
 export const PACKAGE_MANAGERS = Object.keys(LOCKFILES);
 
 /**
- * The cache key for `setup-node`'s `cache:` input: GitOrange caches `node_modules` itself (not the
- * package manager's download cache, as GitHub does), so a hit makes the install step a no-op. The
- * key covers the platform, the Node.js major version, and the lockfile's contents, read from git
- * at the run's commit.
+ * Key for `setup-node`'s `cache:`, which caches `node_modules` (not the download cache) so a hit
+ * skips the install. Covers platform, Node.js major, and the lockfile at `sha`.
  */
 export async function nodeModulesKey(
   git: GitService,
@@ -223,7 +206,7 @@ export async function nodeModulesKey(
 
 // ── runner scripts ───────────────────────────────────────────────────────────
 
-/** Paths as the runner sees them: `~` is the home directory, relative paths are in the workspace. */
+/** Resolves `~` to /root and relative paths against `workspace`; drops `!` excludes. */
 export function absolutePaths(paths: string[], workspace: string): string[] {
   return paths
     .map((p) => p.trim())
@@ -241,10 +224,7 @@ export function absolutePaths(paths: string[], workspace: string): string[] {
 
 const quote = (s: string) => `'${s.replace(/'/g, `'\\''`)}'`;
 
-/**
- * Downloads an entry and unpacks it in place (`CACHE_URL` in the environment). A failed restore
- * removes what it partly unpacked and lets the job carry on without the cache.
- */
+/** Downloads and unpacks `$CACHE_URL`; on failure removes partial output and continues. */
 export function restoreScript(paths: string[], label: string): string {
   const list = paths.map(quote).join(' ');
   return [
@@ -260,7 +240,7 @@ export function restoreScript(paths: string[], label: string): string {
   ].join('\n');
 }
 
-/** Packs `paths` and uploads them (`CACHE_URL`), within the entry size limit. */
+/** Packs `paths` and uploads to `$CACHE_URL` unless over the entry size limit. */
 export function saveScript(paths: string[], key: string): string {
   const list = paths.map(quote).join(' ');
   return [

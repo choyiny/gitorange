@@ -29,7 +29,7 @@ export const json409Response = { 409: err('Conflict') };
 
 export const okSchema = z.object({ ok: z.literal(true) });
 
-/** Turns zod-openapi validation failures into the same `{ error }` shape every route returns. */
+/** Validation failures as `{ error }`, like every other route error. */
 export const validationHook = (
   result: {
     success: boolean;

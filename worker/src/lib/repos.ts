@@ -19,10 +19,7 @@ export function normalizeRepoName(name: string): string {
   return name.trim().replace(/[^A-Za-z0-9._-]+/g, '-');
 }
 
-/**
- * Who a repository belongs to, as it appears in URLs: a user (`/<username>/…`) or the shared
- * team (`/<team slug>/…`). `username` is the URL segment in both cases.
- */
+/** A repo's URL owner: a user or the team; `username` is the URL segment either way. */
 export interface Namespace {
   kind: 'user' | 'team';
   id: string;
@@ -56,7 +53,7 @@ export function teamNamespace(t: Team): Namespace {
   };
 }
 
-/** The instance's shared team, if an admin has created it. */
+/** The shared team, if created. */
 export async function getTeam(db: DrizzleDB): Promise<Team | null> {
   return (await db.select().from(teams).limit(1).get()) ?? null;
 }
@@ -89,7 +86,7 @@ export async function findRepo(db: DrizzleDB, owner: string, name: string) {
   return row ? { ...row, namespace: userNamespace(row.owner) } : undefined;
 }
 
-/** Loads a repository with the namespace it lives under (for background jobs that only have an id). */
+/** Loads a repository and its namespace by id. */
 export async function findRepoById(db: DrizzleDB, id: string) {
   const row = await db
     .select({ repo: repositories, owner: users })
@@ -116,9 +113,8 @@ export interface RepoPermissions {
 }
 
 /**
- * Site admins and the repository's owner (or, for team repos, its creator) can do anything.
- * Collaborators read and push. Everyone else reads team repos and internal personal repos;
- * private personal repos are invisible to them.
+ * Admins and owner/creator: everything. Collaborators: read and push. Others: read team and
+ * internal repos only. Must agree with `visibleTo`.
  */
 export async function permissionsFor(
   db: DrizzleDB,
@@ -143,7 +139,7 @@ export async function permissionsFor(
   return { read, write: false, admin: false };
 }
 
-/** SQL filter for repositories `user` may see in listings (mirrors permissionsFor's read rule). */
+/** SQL filter for listings; mirrors permissionsFor's read rule. */
 export function visibleTo(user: SessionUser): SQL | undefined {
   if (user.role === 'admin') return undefined;
   return or(
@@ -163,7 +159,7 @@ export function gitFor(env: CloudflareBindings, repo: Repository) {
 export type RepoEnv = AppEnv & {
   Variables: AppEnv['Variables'] & {
     repo: Repository;
-    /** The owning user (personal repos) or creator (team repos). */
+    /** Owner (personal) or creator (team). */
     repoOwner: typeof users.$inferSelect;
     namespace: Namespace;
     perms: RepoPermissions;
@@ -171,7 +167,7 @@ export type RepoEnv = AppEnv & {
   };
 };
 
-/** Loads `/:owner/:repo` into context; 404s when it doesn't exist or isn't visible. */
+/** Loads `/:owner/:repo` into context; 404s if missing or not visible. */
 export const loadRepo: MiddlewareHandler<RepoEnv> = async (c, next) => {
   const owner = c.req.param('owner');
   const name = c.req.param('repo');

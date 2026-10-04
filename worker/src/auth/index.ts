@@ -9,14 +9,13 @@ import { isValidUsername } from '../lib/usernames';
 import { APIError, createAuthMiddleware } from 'better-auth/api';
 import { namespaceTaken } from '../lib/namespaces';
 
-/** The MCP endpoint is an OAuth protected resource; its URL is the token audience (RFC 8707). */
+/** The /mcp URL: the OAuth protected resource and token audience (RFC 8707). */
 export const mcpResource = (baseURL: string) =>
   `${baseURL.replace(/\/$/, '')}/mcp`;
 
 /**
- * MCP desktop clients (Claude Code, Cursor, …) register with a loopback or app-scheme redirect
- * URI but omit `application_type`, which OpenID registration then defaults to "web" — and web
- * clients may not redirect to http://localhost. Such a client is a native app, so say so.
+ * Marks clients with only loopback or app-scheme redirect URIs and no `application_type` as
+ * native; the "web" default forbids http://localhost redirects.
  */
 function nativeClientRegistration(body: unknown) {
   const b = body as
@@ -38,9 +37,8 @@ function nativeClientRegistration(body: unknown) {
 }
 
 /**
- * Makes sure the `/mcp` protected resource exists before an OAuth endpoint needs it. Done here,
- * not with the plugin's `resources` option, because that seeds on every auth instance — and on
- * Workers there is one per request. INSERT … ON CONFLICT is safe under concurrent first requests.
+ * Seeds the `/mcp` protected resource. Not the plugin's `resources` option: that seeds on every
+ * auth instance, i.e. every request.
  */
 async function ensureMcpResource(
   db: DrizzleD1Database<typeof schema>,
@@ -59,10 +57,7 @@ async function ensureMcpResource(
     .onConflictDoNothing({ target: oauthResources.identifier });
 }
 
-/**
- * The OAuth issuer: better-auth's base URL (`<origin>/api/auth`), upgraded to https except on
- * loopback hosts — the same rule the oauth-provider plugin applies to the `iss` it signs.
- */
+/** `<origin>/api/auth`, https except on loopback: matches the `iss` oauth-provider signs. */
 export function oauthIssuer(baseURL: string) {
   const url = new URL(`${baseURL.replace(/\/$/, '')}/api/auth`);
   const loopback = ['localhost', '127.0.0.1', '[::1]'].includes(url.hostname);
@@ -70,11 +65,11 @@ export function oauthIssuer(baseURL: string) {
   return url.toString().replace(/\/$/, '');
 }
 
-/** OAuth scopes MCP clients may request. `offline_access` lets them refresh without re-consent. */
+/** OAuth scopes MCP clients may request. */
 export const OAUTH_SCOPES = ['openid', 'profile', 'email', 'offline_access'];
 
 function createAuth(env?: CloudflareBindings) {
-  // Real DB at runtime; empty object during CLI schema generation (env is undefined).
+  // No env during CLI schema generation.
   const db = env ? drizzle(env.DB, { schema }) : ({} as any);
   const baseURL = env?.BASE_URL || 'http://localhost:8080';
 
@@ -84,17 +79,16 @@ function createAuth(env?: CloudflareBindings) {
     database: drizzleAdapter(db, {
       provider: 'sqlite',
       usePlural: true,
-      // Explicit so better-auth's startup schema check sees the tables even for the CLI-only
-      // instance below, which has no database to read them from.
+      // Explicit so the schema check passes for the CLI instance, which has no database.
       schema,
     }),
     emailAndPassword: {
       enabled: true,
-      // Users arrive via first-run setup or an admin invitation — never self-signup.
+      // Users come from setup or invitations only.
       disableSignUp: true,
       minPasswordLength: 8,
     },
-    // The jwt plugin's session-JWT endpoint isn't used; it only signs OAuth access tokens here.
+    // jwt() only signs OAuth access tokens; its session-JWT endpoint is off.
     disabledPaths: ['/token'],
     plugins: [
       openAPI(),
@@ -102,21 +96,18 @@ function createAuth(env?: CloudflareBindings) {
       username({
         minUsernameLength: 1,
         maxUsernameLength: 39,
-        // Also guards better-auth's own endpoints (update-user), not just our routes.
+        // Also covers better-auth's update-user endpoint.
         usernameValidator: isValidUsername,
       }),
-      // Signing keys (JWKS) for OAuth access tokens.
       jwt(),
-      // OAuth 2.1 authorization server for MCP clients (Claude, Cursor, …): they register
-      // themselves (RFC 7591), sign in through our login page with PKCE, approve on the consent
-      // page, and receive JWT access tokens bound to the /mcp resource.
+      // OAuth 2.1 server for MCP clients: dynamic registration (RFC 7591), PKCE, JWTs for /mcp.
       oauthProvider({
         loginPage: '/login',
         consentPage: '/oauth/consent',
         scopes: OAUTH_SCOPES,
         allowDynamicClientRegistration: true,
         allowUnauthenticatedClientRegistration: true,
-        // The one protected resource is /mcp (see ensureMcpResource); any client may request it.
+        // /mcp is the only resource; any client may request it.
         enforcePerClientResources: false,
       }),
     ],
@@ -130,12 +121,12 @@ function createAuth(env?: CloudflareBindings) {
         }
       }),
     },
-    // Database-backed so limits hold across isolates (in-memory state is per-isolate on Workers).
+    // In-memory limits would be per isolate.
     rateLimit: { enabled: true, storage: 'database' },
     databaseHooks: {
       user: {
         update: {
-          // Usernames share the URL namespace with the team slug; better-auth only checks users.
+          // Usernames share the URL namespace with the team slug.
           before: async (data, ctx) => {
             const username = (data as { username?: string }).username;
             const userId = ctx?.context.session?.user.id;
@@ -156,19 +147,16 @@ function createAuth(env?: CloudflareBindings) {
     advanced: {
       cookiePrefix: 'gitorange',
       ipAddress: { ipAddressHeaders: ['cf-connecting-ip'] },
-      // Same-origin SPA: Lax is enough and keeps the cookie off cross-site requests.
       defaultCookieAttributes: {
         sameSite: 'Lax',
         secure: baseURL.startsWith('https://'),
       },
     },
-    // Only the instance's own origin; localhost is trusted only when the instance itself is local.
     trustedOrigins: [baseURL],
   });
 }
 
-// Static export: consumed by `yarn auth:generate` (no env → empty db is fine).
+// For `yarn auth:generate`.
 export const auth = createAuth();
 
-// Runtime export: called per request with c.env.
 export { createAuth };

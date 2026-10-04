@@ -9,11 +9,7 @@ import { executeRun, type StepRunner } from './executor';
 
 export type ActionsRunParams = { runId: string };
 
-/**
- * One GitOrange Actions run. Each job step is a durable Workflow step, so a run survives
- * worker restarts and resumes where it left off; the commands themselves run in a JobRunner
- * container per job.
- */
+/** One Actions run; each job step is a durable Workflow step, commands run in a JobRunner. */
 export class ActionsRun extends WorkflowEntrypoint<
   CloudflareBindings,
   ActionsRunParams
@@ -23,7 +19,7 @@ export class ActionsRun extends WorkflowEntrypoint<
       {
         env: this.env,
         db: drizzle(this.env.DB, { schema }),
-        // The executor's results are plain JSON; adapt to WorkflowStep's Serializable typing.
+        // Results are plain JSON; adapts to WorkflowStep's Serializable typing.
         step: step as unknown as StepRunner,
         runner: (jobId) => this.env.JOB_RUNNER.getByName(jobId),
       },

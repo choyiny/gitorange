@@ -21,11 +21,8 @@ import {
 export type SweepParams = { repositoryId: string; branches: string[] };
 
 /**
- * After branches move (a push, or a merge into the target branch), checks every open pull
- * request they could have put into conflict: PRs into a moved branch (their base advanced) and
- * PRs from one (new commits on the PR). The check runs as one durable sweep Workflow, a step per
- * PR, so a repository with many open PRs isn't cut short by a request's background time limit.
- * Never fails the push or merge that called it.
+ * Checks open PRs into or from moved branches for conflicts, as one durable sweep Workflow (a
+ * step per PR) so many PRs aren't cut short by the request's time limit. Never throws.
  */
 export async function autoResolveConflicts(
   env: CloudflareBindings,
@@ -43,7 +40,7 @@ export async function autoResolveConflicts(
       params: { sweep: { repositoryId: repo.id, branches } },
     });
   } catch (e) {
-    // The PR page's backstop (ensureResolution on view) still covers these PRs.
+    // ensureResolution on PR view still covers these PRs.
     console.error('[merge] could not start conflict sweep', repo.id, e);
   }
 }
@@ -108,10 +105,8 @@ export async function executeSweep(
 }
 
 /**
- * Starts an AI resolution for a pull request's current commits if it has text conflicts and
- * none was attempted for exactly these commits yet. Any earlier attempt for them counts: a
- * running or proposed one is in hand, and a failed or discarded one waits for a person (or
- * for a branch to move). Returns whether it started one.
+ * Starts an AI resolution if the PR has text conflicts and no attempt exists for these exact
+ * commits (failed or discarded ones wait for a person). Returns whether it started one.
  */
 export async function ensureResolution(
   env: CloudflareBindings,

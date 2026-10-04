@@ -4,8 +4,7 @@ import { oauthProviderClient } from '@better-auth/oauth-provider/client';
 
 export const authClient = createAuthClient({
   baseURL: window.location.origin,
-  // oauthProviderClient: on the login page of an OAuth flow (an MCP client signing in), sign-in
-  // carries the signed authorization request so the server can continue it afterwards.
+  // Sign-in during an OAuth flow carries the signed authorization request.
   plugins: [adminClient(), usernameClient(), oauthProviderClient()],
 });
 

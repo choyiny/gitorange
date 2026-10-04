@@ -15,8 +15,8 @@ import { ensureClassification } from '../review/classify';
 import { publishChange } from '../live/publish';
 
 /**
- * The two commits a PR compares. Open PRs track their live branches; once merged or closed
- * they're pinned (`refs/pull/<n>/head`, and the merge commit's first parent for the base).
+ * The commits a PR compares: live branches while open; once closed, `refs/pull/<n>/head` and
+ * the merge commit's first parent.
  */
 export async function pullShas(
   git: GitService,
@@ -42,9 +42,8 @@ export type OpenPullResult =
   | { ok: false; status: 400 | 409; error: string };
 
 /**
- * Opens a pull request from `head` into `base` (both branch names) and starts everything that
- * follows: the auto-merge review, AI conflict resolution if it already conflicts, and Actions
- * `pull_request` runs. The caller has checked push permission.
+ * Opens a PR and starts its review, AI conflict resolution if needed, and `pull_request` runs.
+ * Caller checks push permission.
  */
 export async function openPull(opts: {
   env: CloudflareBindings;
@@ -67,8 +66,7 @@ export async function openPull(opts: {
       status: 400,
       error: 'Base and head must be different branches',
     };
-  // Both sides must be branch names: resolve() also accepts SHAs and tags, and a merge
-  // pushes to refs/heads/<base>, so a non-branch base would create a stray branch.
+  // Branches only: resolve() accepts SHAs/tags, and merging pushes to refs/heads/<base>.
   const refs = await git.refs();
   const baseSha = refs.get(`refs/heads/${base}`);
   const headSha = refs.get(`refs/heads/${head}`);
@@ -99,8 +97,7 @@ export async function openPull(opts: {
       error: `A pull request already exists for ${head} (#${existing.number}).`,
     };
 
-  // Claim the next number atomically: the bump and the insert share one batch, and the
-  // insert reads the number the bump just reserved.
+  // Atomic number claim: bump and insert share a batch; the insert reads the bumped value.
   const id = crypto.randomUUID();
   const now = new Date();
   await db.batch([
@@ -161,7 +158,6 @@ export async function openPull(opts: {
   return { ok: true, pr };
 }
 
-/** Adds a comment to a pull request. */
 export async function addComment(
   env: CloudflareBindings,
   db: DrizzleDB,

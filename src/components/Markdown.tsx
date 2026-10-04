@@ -32,10 +32,7 @@ function loadMermaid(dark: boolean): Promise<MermaidApi> {
 const prefersDark = () =>
   window.matchMedia?.('(prefers-color-scheme: dark)').matches ?? false;
 
-/**
- * Draws every ```mermaid block in `root` as a diagram, like GitHub. A block that doesn't parse
- * stays as its source with a note.
- */
+/** Renders ```mermaid blocks in `root`; unparseable blocks stay as source with a note. */
 async function renderDiagrams(root: HTMLElement) {
   const blocks = [
     ...root.querySelectorAll<HTMLElement>('pre > code.language-mermaid'),
@@ -86,10 +83,7 @@ function colorDiffs(root: HTMLElement) {
   }
 }
 
-/**
- * Resolves relative image sources and links in a repository Markdown file (see `repoUrls`).
- * Runs on sanitized HTML inside an inert <template>, so nothing loads before it's rewritten.
- */
+/** Resolves relative images and links inside an inert <template>, before anything loads. */
 function rewriteRepoUrls(html: string, repo: RepoMarkdownContext): string {
   const tpl = document.createElement('template');
   tpl.innerHTML = html;

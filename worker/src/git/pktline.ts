@@ -10,7 +10,7 @@ export function pktLine(line: string | Uint8Array): Uint8Array {
 
 export type Pkt = { type: 'flush' } | { type: 'data'; data: Uint8Array };
 
-/** Splits a buffer into pkt-lines. Stops at the end of the buffer. */
+/** Splits a buffer into pkt-lines. */
 export function parsePktLines(buf: Uint8Array): Pkt[] {
   const out: Pkt[] = [];
   let off = 0;

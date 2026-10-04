@@ -3,10 +3,8 @@ import path from 'node:path';
 import type { Plugin } from 'vite';
 
 /**
- * Prepends a `/*! … *\/` license comment to every client JS and CSS file, naming each npm
- * package bundled into it with its license and copyright line. Many dependencies ship no
- * banner of their own, and MIT/BSD require the notice to travel with copies we serve.
- * BSD licenses also require the conditions and disclaimer, so their full text is included.
+ * Prepends a `/*! … *\/` banner to each client JS/CSS file listing bundled packages, licenses,
+ * and copyright lines (MIT/BSD require it). BSD licenses are included in full.
  */
 export function licenseBanners(): Plugin {
   const cache = new Map<string, string>();
@@ -73,7 +71,7 @@ export function licenseBanners(): Plugin {
   const banner = (dirs: Set<string>) => {
     const lines = [...dirs].sort().map(notice).filter(Boolean);
     if (!lines.length) return '';
-    // `*/` can't appear inside the comment; license texts never contain it, but be safe.
+    // `*/` would end the comment.
     const body = lines.join('\n\n').replace(/\*\//g, '* /');
     return `/*! Third-party software bundled in this file:\n\n${body}\n*/\n`;
   };

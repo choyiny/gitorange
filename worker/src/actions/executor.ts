@@ -49,10 +49,7 @@ import {
 type Db = DrizzleD1Database<typeof schema>;
 type Conclusion = 'success' | 'failure' | 'cancelled' | 'skipped';
 
-/**
- * The part of Cloudflare's WorkflowStep the executor uses. Results must be JSON-serializable;
- * tests pass a fake that calls `fn` directly.
- */
+/** Subset of WorkflowStep used here; results must be JSON-serializable. */
 export interface StepRunner {
   do<T>(name: string, fn: () => Promise<T>): Promise<T>;
   do<T>(
@@ -82,7 +79,7 @@ export function logKey(
   return `actions/${repoId}/${runId}/${jobId}/${step}.log`;
 }
 
-/** Loaded once per run (inside a durable step, so replays reuse it). */
+/** Loaded in a durable step, so replays reuse it. */
 interface RunContext {
   runId: string;
   repoId: string;
@@ -166,7 +163,7 @@ interface StepState {
   outputs: Record<string, string>;
 }
 
-/** Runs one workflow run to completion. Called from the ActionsRun Workflow. */
+/** Runs one workflow run to completion (ActionsRun Workflow). */
 export async function executeRun(
   deps: ExecutorDeps,
   runId: string
@@ -175,7 +172,6 @@ export async function executeRun(
   let { step } = deps;
   const ctx = await step.do('load', () => loadRun(env, db, runId));
   if (!ctx || ctx.status === 'completed') return null;
-  // Each step (run, job, and step status, logs) shows on open pages as it finishes.
   step = pingingSteps(env, step, ctx.repoId);
   deps = { ...deps, step };
 
@@ -230,7 +226,7 @@ export async function executeRun(
   const finishedKey = (k: string) =>
     (outcomes.get(k)?.length ?? 0) === (keyCount.get(k) ?? 0);
 
-  // Waves: every job whose `needs` have all finished runs now, in parallel.
+  // Waves: run every job whose `needs` have finished, in parallel.
   while (pending.size) {
     const ready = ctx.jobs.filter(
       (j) => pending.has(j.id) && j.needs.every(finishedKey)
@@ -264,7 +260,7 @@ export async function executeRun(
     await finishRun(db, runId, conclusion, null);
     return true;
   });
-  // Passing checks may be the last thing an open pull request at this commit waited on.
+  // Passing checks may unblock auto-merge of a PR at this commit.
   if (conclusion === 'success')
     await step.do('auto-merge', async () => {
       await autoMergeForCommit(env, db, ctx.repoId, ctx.headSha).catch((e) =>
@@ -317,7 +313,7 @@ function needsContext(def: JobDef, outcomes: Map<string, JobOutcome[]>) {
       outputs: Object.assign({}, ...list.map((o) => o.outputs)),
     };
   }
-  // A skipped dependency also blocks success() jobs, like GitHub.
+  // A skipped dependency blocks success() jobs, like GitHub.
   const anySkipped = def.needs.some((k) =>
     (outcomes.get(k) ?? []).every((o) => o.result === 'skipped')
   );
@@ -411,7 +407,7 @@ async function runJob(
   const deadline = Date.now() + jobTimeoutMs;
   const posts = postStepIndexes(def.steps);
   const lastStep = def.steps.length + 2 + posts.length;
-  // What each caching step restored, for its post step (step results replay deterministically).
+  // Restored cache per step index, for its post step.
   const caches = new Map<number, CacheState>();
 
   // ── Set up job ──
@@ -462,7 +458,7 @@ async function runJob(
   for (const [i, s] of def.steps.entries()) {
     const number = i + 2;
     const stepCtx = () => {
-      // env is layered workflow → job → GITHUB_ENV → step; each layer may use the ones before it.
+      // env layers: workflow → job → GITHUB_ENV → step; each sees the ones before.
       let envCtx: Record<string, string> = {};
       const layer = (vars: Record<string, string>) => {
         const next = { ...envCtx };
@@ -610,7 +606,7 @@ async function runJob(
     if (conclusion === 'failure') jobStatus = 'failure';
   }
 
-  // ── Post steps: save caches (GitHub runs them in reverse, on success only) ──
+  // ── Post steps: save caches (reverse order, on success only) ──
   for (const [k, i] of posts.entries()) {
     const number = def.steps.length + 2 + k;
     const state = caches.get(i);
@@ -656,7 +652,7 @@ async function runJob(
           }
         }
         await putLog(env, ctx, job.id, number, log);
-        // Saving is best effort, like GitHub's: it never fails the job.
+        // Best effort: never fails the job.
         await setStep(db, job.id, number, {
           status: 'completed',
           conclusion: ran ? 'success' : 'skipped',
@@ -892,8 +888,7 @@ async function buildCommand(
     }
 
     if (action === 'actions/setup-node') {
-      // GitOrange runners use the image's preinstalled Node.js (current release) rather than
-      // downloading another one per job.
+      // Uses the image's preinstalled Node.js; no per-job download.
       const requested = (withArgs['node-version'] ?? '').replace(/^v/, '');
       const lines = [
         'echo "Using the preinstalled Node.js $(node -v), npm $(npm -v)"',
@@ -981,7 +976,7 @@ async function buildCommand(
 
 // ── cache ────────────────────────────────────────────────────────────────────
 
-/** What a caching step restored; its post step saves under `key` unless it was an exact hit. */
+/** A caching step's restore; its post step saves under `key` unless `exact`. */
 export type CacheState = { key: string; paths: string[]; exact: boolean };
 
 const quoteSh = (t: string) => `'${t.replace(/'/g, `'\\''`)}'`;
@@ -993,9 +988,8 @@ function gitForRun(env: CloudflareBindings, ctx: RunContext) {
 }
 
 /**
- * Finds the entry to restore and returns the script that restores it (with its pre-signed URL)
- * plus the state its post step needs. Missing configuration or a miss is reported in the log and
- * never fails the step; `cache-hit` is written to the step's outputs either way.
+ * Restore script, its pre-signed URL, and post-step state.
+ * Misses never fail the step; `cache-hit` is always set.
  */
 async function prepareRestore(
   env: CloudflareBindings,

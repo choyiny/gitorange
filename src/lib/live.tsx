@@ -15,10 +15,8 @@ const KEEPALIVE_MS = 30_000;
 const MAX_BACKOFF_MS = 30_000;
 
 /**
- * One WebSocket per tab to `/api/live`. The server only says *what* changed (a repository, or
- * approvals); the matching queries refetch through the normal API, so pages update live without
- * a reload. It reconnects with backoff and refetches everything after reconnecting, in case a
- * ping was missed while offline.
+ * One WebSocket per tab to `/api/live`; pings invalidate the matching queries. Reconnects with
+ * backoff and refetches everything after reconnecting, since pings may have been missed.
  */
 export function LiveUpdates({ children }: { children: ReactNode }) {
   const qc = useQueryClient();
@@ -102,7 +100,7 @@ export function LiveUpdates({ children }: { children: ReactNode }) {
   );
 }
 
-/** Follows a repository live while the calling component (the repository layout) is shown. */
+/** Follows a repository live while the calling component is mounted. */
 export function useLiveRepo(owner: string, repo: string) {
   const setRepo = useContext(LiveRepoContext);
   useEffect(() => {

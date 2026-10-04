@@ -16,12 +16,11 @@ import { classificationFor } from './classify';
 import { parsePolicy, readPolicy, type ReviewPolicy } from './policy';
 
 /**
- * Where a pull request stands on auto-merge.
  * - off: the target branch has no `.gitorange/review.yml`.
- * - disabled: a maintainer turned it off for this pull request.
- * - waiting: something is still in progress (review, approvals, checks, conflict resolution).
- * - blocked: it can't merge on its own as things stand (failed checks or review, conflicts).
- * - ready: it merges now.
+ * - disabled: turned off for this pull request.
+ * - waiting: review, approvals, checks, or conflict resolution in progress.
+ * - blocked: failed checks or review, or conflicts.
+ * - ready: merges now.
  */
 export type AutoMergeStatus =
   | { state: 'off' }
@@ -173,11 +172,7 @@ export async function autoMergeStatus(
   return { state: 'ready', reasons: [] };
 }
 
-/**
- * Merges a pull request on its own if it is ready. Called whenever something it waits on
- * finishes: its review, a flag approval, an Actions run, an AI conflict resolution. Failures are
- * logged; a lost race (the base moved, or someone merged first) simply leaves it for next time.
- */
+/** Merges a pull request if ready. Failures are logged; a lost race waits for the next trigger. */
 export async function maybeAutoMerge(
   env: CloudflareBindings,
   db: DrizzleDB,
@@ -217,7 +212,7 @@ export async function maybeAutoMerge(
   return result.ok;
 }
 
-/** After an Actions run finishes: tries to auto-merge open pull requests at that commit. */
+/** Tries to auto-merge open pull requests at a commit whose Actions run finished. */
 export async function autoMergeForCommit(
   env: CloudflareBindings,
   db: DrizzleDB,

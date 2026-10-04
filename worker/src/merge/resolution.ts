@@ -35,7 +35,6 @@ const MAX_INTENT_COMMITS = 30;
 export const resolverModel = (env: CloudflareBindings) =>
   env.RESOLVER_MODEL || DEFAULT_RESOLVER_MODEL;
 
-/** AI resolution is available when the deployment has the Workflow binding. */
 export function resolutionConfigured(env: CloudflareBindings): boolean {
   return Boolean((env as Partial<CloudflareBindings>).MERGE_RESOLUTION);
 }
@@ -59,9 +58,8 @@ type StartResult =
   | { ok: false; status: 400 | 409; error: string };
 
 /**
- * Starts resolving a pull request's conflicts with AI. Only text conflicts can be resolved;
- * binary files and delete-versus-edit conflicts still need a human. Asking again while an
- * attempt for the same commits is running returns that attempt.
+ * Starts an AI resolution of text conflicts (binary and delete/edit conflicts need a human).
+ * Returns the running attempt for the same commits if there is one.
  */
 export async function startResolution(
   env: CloudflareBindings,
@@ -96,7 +94,6 @@ export async function startResolution(
       error: `These conflicts can't be resolved automatically (binary files, or a file deleted on one side and changed on the other): ${other.join(', ')}. Resolve them locally.`,
     };
 
-  // Same commits already in hand: return that attempt rather than starting another.
   const existing = await latestResolution(db, pr.id);
   if (
     existing &&
@@ -107,8 +104,7 @@ export async function startResolution(
     return { ok: true, resolution: existing };
   await supersede(env, db, pr.id, shas);
 
-  // Cap concurrent model runs per repository so a burst of PRs can't trip rate limits;
-  // the rest wait their turn and start as running ones finish (startNext).
+  // Cap concurrent runs per repository to avoid rate limits; the rest queue for startNext.
   const busy = await activeCount(db, pr.repositoryId);
   const row: MergeResolution = {
     id: crypto.randomUUID(),
@@ -172,10 +168,7 @@ async function launch(env: CloudflareBindings, db: DrizzleDB, id: string) {
   }
 }
 
-/**
- * A PR's commits moved: attempts for its older commits can't be applied anymore, so stop
- * them — terminating running Workflows saves their model time — and mark them superseded.
- */
+/** Terminates attempts for a PR's older commits and marks them superseded. */
 async function supersede(
   env: CloudflareBindings,
   db: DrizzleDB,
@@ -207,10 +200,7 @@ async function supersede(
   }
 }
 
-/**
- * Fills free slots in a repository with its oldest queued attempts, skipping any whose
- * commits moved on while they waited.
- */
+/** Starts the oldest queued attempts into free slots, skipping any whose commits moved. */
 export async function startNext(
   env: CloudflareBindings,
   db: DrizzleDB,
@@ -251,7 +241,7 @@ export async function startNext(
       await fail(db, next.row.id, 'Superseded by newer commits.', ['queued']);
       continue;
     }
-    // Claim it; another worker finishing at the same moment may have claimed it first.
+    // Claim it; a concurrent worker may have claimed it first.
     const claimed = await db
       .update(mergeResolutions)
       .set({ status: 'running' })
@@ -267,10 +257,8 @@ export async function startNext(
 }
 
 /**
- * Reuses an earlier AI resolution of the same pull request on new commits, with no model call,
- * when that is safe: every file conflicting now was resolved before, and neither side changed
- * that file since (the target branch moved, but not in those files). The resolved files are
- * re-applied on top of the new commits and land as a new proposal.
+ * Reapplies an earlier resolution on new commits without a model call when every conflicting
+ * file was resolved before and neither side changed it since. Lands as a new proposal.
  */
 export async function carryForward(
   env: CloudflareBindings,
@@ -345,7 +333,7 @@ export async function carryForward(
     errorMessage: null,
     resultSha: commit.sha,
     transcriptR2Key: prev.transcriptR2Key,
-    // Zero model time: this resolution was carried over, not recomputed.
+    // Carried over: no model time.
     durationMs: 0,
     createdById: null,
     createdAt: new Date(),
@@ -392,10 +380,7 @@ export interface ResolutionDeps {
 
 class ResolutionError extends Error {}
 
-/**
- * Workflow steps serialize what they return and retry what throws, so an expected failure is
- * returned as a value; anything else throws (and the step's retry policy applies).
- */
+/** Expected failures are returned as values; steps retry what throws. */
 type Outcome<T> =
   { value: T; error?: undefined } | { error: string; value?: undefined };
 async function outcome<T>(fn: () => Promise<T>): Promise<Outcome<T>> {
@@ -409,10 +394,8 @@ async function outcome<T>(fn: () => Promise<T>): Promise<Outcome<T>> {
 const ONCE = { retries: { limit: 0, delay: 0 } } as const;
 
 /**
- * Runs one resolution: rebuild the conflicted files, gather both sides' intent, let the model
- * resolve them, check the result, and commit it — the pull request squashed onto the base tip —
- * to the resolution's side ref. A valid result becomes part of the pull request: merging it
- * lands that commit. Only a failure to get an answer from the model needs a person.
+ * Runs one resolution: rebuild conflicted files, let the model resolve them, validate, and commit
+ * the PR squashed onto the base tip to the resolution's side ref.
  */
 export async function executeResolution(deps: ResolutionDeps, id: string) {
   const { env, db } = deps;
@@ -457,7 +440,6 @@ export async function executeResolution(deps: ResolutionDeps, id: string) {
     });
     if (!job) return;
     const { row, pr, repo, author } = job;
-    // From here on, each step shows on the pull request as it finishes.
     step = pingingSteps(env, step, pr.repositoryId, { approvals: true });
     const labels = { a: pr.baseRef, o: 'base', b: pr.headRef };
 
@@ -477,8 +459,7 @@ export async function executeResolution(deps: ResolutionDeps, id: string) {
     const result = await step.do(
       'resolve',
       {
-        // pi already retries rate limits and transient model errors inside the run; this
-        // covers the run itself dying (eviction, a failed RPC). The run is idempotent.
+        // pi retries model errors itself; this covers the run dying. The run is idempotent.
         retries: { limit: 2, delay: '30 seconds', backoff: 'exponential' },
         timeout: '15 minutes',
       },
@@ -537,7 +518,7 @@ export async function executeResolution(deps: ResolutionDeps, id: string) {
             explanation: result.explanation.trim() || null,
             touchedExtraPaths: extra.length ? extra : null,
             transcriptR2Key: transcriptKey(repo.id, id),
-            // From the request, not from this replay: Workflow code re-runs on resume.
+            // From the request: Workflow code re-runs on resume.
             durationMs: Date.now() - new Date(row.createdAt).getTime(),
           })
           .where(
@@ -564,7 +545,6 @@ export async function executeResolution(deps: ResolutionDeps, id: string) {
       return true;
     });
   }
-  // Resolved: the pull request may now be ready to merge on its own.
   if (proposed && job)
     await step.do('auto-merge', async () => {
       await maybeAutoMerge(env, db, job!.pr.id).catch((e) =>
@@ -572,7 +552,6 @@ export async function executeResolution(deps: ResolutionDeps, id: string) {
       );
       return true;
     });
-  // This attempt's slot is free: start the repository's next queued one.
   if (job)
     await step.do('next', async () => {
       await startNext(env, db, job!.pr.repositoryId);

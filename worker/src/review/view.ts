@@ -38,11 +38,7 @@ function threshold(q: ReviewPolicy['human_review']['questions'][string]) {
   return `flags from ${q.at_least} (${q.levels[Math.ceil(q.at_least)] ?? ''})`;
 }
 
-/**
- * Everything the pull request page shows about auto-merge: the review of the current head
- * commit (one-liners, each question's answer, flags with their investigation and approval) and
- * whether it will merge on its own.
- */
+/** Auto-merge state for the pull request page: the head commit's review and merge status. */
 export async function reviewView(
   db: DrizzleDB,
   git: GitService,
@@ -51,8 +47,7 @@ export async function reviewView(
 ) {
   if (!shas) return null;
   const open = pr.state === 'open';
-  // Open: the review under the target branch's current policy (none yet: one is starting).
-  // Merged or closed: the last review of the commit it ended at, kept as a record.
+  // Open: review under the current policy. Merged/closed: last review of its final commit.
   const policyFile = open ? await readPolicy(git, shas.base) : null;
   if (open && !policyFile) return null;
   const review = policyFile

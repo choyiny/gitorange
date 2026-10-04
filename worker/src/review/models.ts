@@ -54,10 +54,7 @@ export interface ReviewModels {
     questions: Record<string, ClefQuestion>
   ): Promise<Record<string, ClassifierAnswer>>;
   investigate(input: InvestigateRequest): Promise<Investigation>;
-  /**
-   * The changed files that matter for a flag, picked from their one-line summaries by a fast
-   * model, so the investigation reads only those diffs. Optional: without it, every file is read.
-   */
+  /** Picks the files relevant to a flag from their one-liners. Without it, all are read. */
   selectFiles?(input: {
     flag: string;
     summaries: string;
@@ -126,10 +123,7 @@ function parseInvestigationFiles(text: string): string[] {
   }
 }
 
-/**
- * The investigation's shape, enforced by the model (strict JSON schema): the answer is always
- * parseable, and the length caps keep it inside the output budget.
- */
+/** Strict JSON schema for the investigation; length caps keep it inside the output budget. */
 const INVESTIGATION_SCHEMA = {
   type: 'object',
   additionalProperties: false,
@@ -236,10 +230,7 @@ function unfence(text: string) {
   return m ? m[1] : text;
 }
 
-/**
- * The models on Workers AI, through the AI binding and AI Gateway (logged with the feature and
- * the review it belongs to). Every call caps its output.
- */
+/** Workers AI models through AI Gateway. Every call caps its output. */
 export function workersAiModels(
   env: CloudflareBindings,
   context: { classificationId?: string } = {}
@@ -339,7 +330,7 @@ export function workersAiModels(
               schema: INVESTIGATION_SCHEMA,
             },
           },
-          // A focused explanation, not a hard problem: little thinking, so the answer fits.
+          // Low reasoning effort so the answer fits the output budget.
           reasoning_effort: 'low',
           max_completion_tokens: 6000,
         },
@@ -417,10 +408,7 @@ export function parseInvestigation(
   };
 }
 
-/**
- * A model's Mermaid source, ready to draw: no code fence or comments, real line breaks (models
- * sometimes write them as a literal "\\n"), and null when it is a single line.
- */
+/** Cleans model Mermaid source (fences, comments, literal "\\n"); null when it is a single line. */
 export function mermaidSource(text: string): string | null {
   const lines = text
     .replace(/^```(?:mermaid)?\s*|\s*```$/g, '')

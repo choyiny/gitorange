@@ -22,11 +22,7 @@ type PublicClient = {
   logo_uri?: string;
 };
 
-/**
- * The OAuth consent page. better-auth's oauth-provider redirects here with a signed copy of the
- * authorization request; the decision is posted back with that same signed query, and the
- * response says where to send the browser (the app's callback, with a code or an error).
- */
+/** OAuth consent: posts the decision with the signed query and follows the returned redirect. */
 export default function OAuthConsent() {
   const params = new URLSearchParams(window.location.search);
   const clientId = params.get('client_id') ?? '';

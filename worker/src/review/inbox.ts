@@ -25,9 +25,8 @@ function latestPer<T extends { pullRequestId: string }>(rows: T[]) {
 }
 
 /**
- * Everything waiting on a person, across the repositories the user can merge in: flags of each
- * open pull request's latest review that nobody approved, reviews that failed, and AI conflict
- * resolutions that failed or were discarded.
+ * Items waiting on a person in repositories the user can merge in: unapproved flags, failed
+ * reviews, and failed or discarded AI conflict resolutions.
  */
 export async function approvalsFor(
   env: CloudflareBindings,
@@ -101,7 +100,7 @@ export async function approvalsFor(
       items.push({ pr, review, reviewFailed, resolutionFailed });
   }
 
-  // Only repositories the user can merge in, since approving and retrying take that.
+  // Approving and retrying require merge access.
   const repos = new Map<
     string,
     { repo: Repository; fullName: string; canMerge: boolean }

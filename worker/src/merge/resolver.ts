@@ -113,10 +113,8 @@ async function listFiles(workspace: Workspace, dir: string): Promise<string[]> {
 }
 
 /**
- * Resolves one set of merge conflicts. One instance per resolution: a durable filesystem
- * (@cloudflare/computer, in this object's SQLite) holds the conflicted files, and pi (Pi Durable
- * harness, model via the AI binding) edits them with file tools only — no shell, no network, no
- * git credentials. GitOrange reads the files back and builds the commit itself.
+ * One instance per resolution. The conflicted files live in a durable filesystem in this
+ * object's SQLite; pi edits them with file tools only (no shell, network, or git credentials).
  */
 function aiSettings(env: CloudflareBindings) {
   const gateway = aiGateway(env, 'merge-resolution');
@@ -178,9 +176,7 @@ export class MergeResolver
       ],
       tools: workspaceTools(this.workspace),
       hooks: [
-        // "Done" is checked against the files before the run ends: if conflict markers are
-        // left (models often forget the closing `>>>>>>>` line), the same run continues with
-        // the exact lines to fix. Bounded, so a stuck model still ends and fails validation.
+        // Leftover conflict markers send the run back with the lines to fix (bounded).
         hook(GenerationTask, {
           onYield: async () => {
             const leftovers = markerLines(await this.readFiles());
@@ -215,8 +211,7 @@ export class MergeResolver
         .join('\n')}\n\n` +
       `What the target branch (${request.labels.ours}) changed and why:\n${request.oursIntent}\n\n` +
       `What the pull request (${request.labels.theirs}) changes and why:\n${request.theirsIntent}`;
-    // One resolution per object, so a retried call (e.g. a Workflow step retry) joins the
-    // same operation instead of starting a second run.
+    // A retried call joins the same operation instead of starting a second run.
     const response = await this.harness.prompt(prompt, {
       operationId: 'resolve',
     });

@@ -11,7 +11,7 @@ import {
   type Namespace,
 } from './repos';
 
-/** The same name may exist once per namespace: per user for personal repos, per team for team repos. */
+/** Repo names are unique per namespace (user or team). */
 export async function nameTaken(
   db: DrizzleDB,
   repo: { ownerId: string; teamId: string | null },
@@ -34,7 +34,7 @@ export interface CreateRepositoryInput {
   name: string;
   description?: string;
   addReadme?: boolean;
-  /** Personal repos default to private; team repos are always visible to every member. */
+  /** Personal repos default to private; team repos are always internal. */
   owner?: 'user' | 'team';
   visibility?: 'private' | 'internal';
 }
@@ -43,10 +43,7 @@ export type CreateRepositoryResult =
   | { ok: true; repo: Repository; namespace: Namespace }
   | { ok: false; status: 400 | 409; error: string };
 
-/**
- * Creates a repository for `user`: the Artifacts repo first, then the D1 row (rolling storage
- * back if the insert fails), then an optional README commit. Shared by the REST API and MCP.
- */
+/** Creates the Artifacts repo, then the D1 row (rolling storage back on failure), then a README. */
 export async function createRepository(
   env: CloudflareBindings,
   db: DrizzleDB,
@@ -99,7 +96,6 @@ export async function createRepository(
     createdAt: now,
     updatedAt: now,
   };
-  // Storage first: if the D1 insert then fails, roll the Artifacts repo back.
   await env.ARTIFACTS.create(row.artifactsName, {
     setDefaultBranch: 'main',
     description: `${ns.username}/${name}`,

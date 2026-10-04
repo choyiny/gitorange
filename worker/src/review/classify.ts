@@ -36,7 +36,7 @@ import {
 import { maybeAutoMerge } from './auto-merge';
 import { IGNORE_PATH, ignoreMatcher, isLockfile, readIgnore } from './ignore';
 
-/** Review runs on the same Workflow binding as AI conflict resolution. */
+/** Shared with AI conflict resolution. */
 export const reviewConfigured = resolutionConfigured;
 
 /** Diff text sent to summarize one file; a larger file is flagged instead. */
@@ -52,7 +52,7 @@ const MODEL_RETRIES: WorkflowStepConfig = {
   retries: { limit: 3, delay: '5 seconds', backoff: 'exponential' },
   timeout: '5 minutes',
 };
-/** One investigation: a bigger prompt than a summary, so more time, and fewer retries. */
+/** One investigation: bigger prompt than a summary, so a longer timeout and fewer retries. */
 const INVESTIGATE_RETRIES: WorkflowStepConfig = {
   retries: { limit: 2, delay: '10 seconds', backoff: 'exponential' },
   timeout: '8 minutes',
@@ -79,9 +79,8 @@ export async function classificationFor(
 }
 
 /**
- * Starts reviewing a pull request's head commit if the target branch has a review.yml and this
- * commit wasn't reviewed under that policy yet. An invalid review.yml is recorded as a failed
- * review (shown on the pull request) without calling any model.
+ * Starts reviewing the head commit if the target branch has a review.yml and this commit has no
+ * review under that policy. An invalid review.yml is recorded as a failed review.
  */
 export async function ensureClassification(
   env: CloudflareBindings,
@@ -208,10 +207,7 @@ function numberedLines(d: FileDiff): NumberedLine[][] {
   });
 }
 
-/**
- * A diff for the investigating model, each line numbered: added and context lines with their
- * line in the new file, removed lines with their line in the old file (marked "old").
- */
+/** Diff with line numbers: new-file for added/context lines, old-file ("old") for removals. */
 export function renderNumberedDiff(d: FileDiff): string {
   return numberedLines(d)
     .map((hunk) =>
@@ -239,8 +235,7 @@ export function snippetLines(
   const removedFile = d.status === 'removed';
   const picked: string[] = [];
   for (const hunk of numberedLines(d)) {
-    // Removals have no new-side number: keep them when they border the range, so an excerpt
-    // shows what a change replaced.
+    // Keep removals bordering the range so an excerpt shows what a change replaced.
     let prevIn = false;
     let held: string[] = [];
     for (const l of hunk) {
@@ -263,10 +258,7 @@ export function snippetLines(
 const escapeHtml = (t: string) =>
   t.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
 
-/**
- * The flag's comment body: the explanation, its diagram as a Mermaid block, and each code
- * excerpt as an expandable block taken from the real diff (never from model output).
- */
+/** A flag's comment body. Excerpts come from the real diff, never from model output. */
 /** Text for one Markdown table cell. */
 const cell = (s: string) => s.replace(/\|/g, '\\|').replace(/\s*\n\s*/g, ' ');
 
@@ -457,10 +449,8 @@ function readingOrder(path: string): number {
 }
 
 /**
- * Diffs for the investigating model, within a budget it can read quickly: the flag's own files
- * first, then source, tests, and docs. Ignored files (lockfiles, .orangeignore) are left out, and each file
- * is capped; whatever doesn't fit is named so the model knows it exists (its one-line summary is
- * in the prompt too).
+ * Diffs for the investigating model within a budget: the flag's files first, then source, tests,
+ * docs. Ignored files are left out, each file is capped, and the overflow is listed by name.
  */
 export async function diffsFor(
   git: GitService,
@@ -520,7 +510,7 @@ export interface ReviewDeps {
   models: ReviewModels;
 }
 
-/** Runs one review to completion. Called from the MERGE_RESOLUTION Workflow. */
+/** Runs one review to completion (MERGE_RESOLUTION Workflow). */
 export async function executeClassification(deps: ReviewDeps, id: string) {
   const { env, db, models } = deps;
   let step = deps.step;
@@ -582,7 +572,6 @@ export async function executeClassification(deps: ReviewDeps, id: string) {
     });
     return;
   }
-  // From here on, each step shows on the pull request (and in approval inboxes) as it finishes.
   step = pingingSteps(env, step, job.pr.repositoryId, { approvals: true });
   const git = gitFor(env, job.repo);
   const { policy, pr, changes } = job;
@@ -590,8 +579,7 @@ export async function executeClassification(deps: ReviewDeps, id: string) {
   const tooMany =
     changes.length > policy.limits.max_files ? changes.length : null;
 
-  // 1. One line per file. A file whose summary still fails after retries is flagged rather
-  // than failing the whole review.
+  // 1. One line per file; a summary that still fails after retries flags the file.
   const files: Summarized[] = [];
   if (tooMany === null)
     for (let i = 0; i < changes.length; i += SUMMARY_BATCH)
@@ -657,7 +645,7 @@ export async function executeClassification(deps: ReviewDeps, id: string) {
       return;
     }
 
-  // 3. Record what needs a person.
+  // 3. Record flags.
   const flags = computeFlags(policy, files, answers, tooMany);
   const flagIds = await step.do('flags', async () => {
     const now = new Date();
@@ -695,8 +683,7 @@ export async function executeClassification(deps: ReviewDeps, id: string) {
     );
   });
 
-  // 4. GLM-5.3 looks into each flag with the full diffs. A failure leaves the flag without
-  // detail; it can still be approved.
+  // 4. Investigate each flag. A failure leaves the flag without detail; it can still be approved.
   const toInvestigate = flags
     .map((f, i) => ({ f, flagId: flagIds[i] }))
     .filter(({ f }) => f.source !== 'limit');
@@ -708,8 +695,7 @@ export async function executeClassification(deps: ReviewDeps, id: string) {
       step
         .do(`investigate:${i}`, INVESTIGATE_RETRIES, async () => {
           const flag = describeFlag(policy, f);
-          // Read only the files that matter for this flag, picked from the one-liners by the
-          // fast model; on any failure, read them all (within the budget).
+          // Files picked by the fast model; on failure, all files (within the budget).
           const picked = models.selectFiles
             ? await models
                 .selectFiles({

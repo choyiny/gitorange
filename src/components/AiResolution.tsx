@@ -33,11 +33,7 @@ function ResolvedFiles({
   return <DiffView files={q.data.files.filter((f) => wanted.has(f.path))} />;
 }
 
-/**
- * The AI conflict-resolution panel in the merge box. Resolutions start on their own; this shows
- * one running, the result (the model's explanation and the resolved files, which merging lands),
- * or a failure with a way to retry.
- */
+/** AI conflict-resolution panel in the merge box: running, proposed, or failed with retry. */
 export function AiResolution({
   repo,
   d,
@@ -174,8 +170,7 @@ export function AiResolution({
       </>
     );
 
-  // No attempt for these commits yet: one starts on its own (after a push, or when this page
-  // is opened), so there is nothing to click.
+  // No attempt yet; one starts automatically.
   if (!current)
     return (
       <div
@@ -189,7 +184,7 @@ export function AiResolution({
       </div>
     );
 
-  // The attempt for these commits failed or was discarded: only now does a person decide.
+  // Failed or discarded attempt: a person decides.
   return (
     <div className="Box-row ai-resolution">
       {current.status === 'failed' && (
