@@ -1,13 +1,19 @@
 import { describe, expect, it } from 'vitest';
 import { app } from '../index';
 import { mcpServerName } from '../lib/app-name';
+import { drizzle } from 'drizzle-orm/d1';
+import { schema } from '../db/schema';
+import type { StepRunner } from '../merge/resolution';
+import { executeClassification } from '../review/classify';
 import {
   addMember,
   bootstrapAdmin,
   call,
   makeEnv,
+  settle,
   type TestEnv,
 } from './helpers/app';
+import { commitPaths } from './helpers/seed';
 
 const ORIGIN = 'http://test.local';
 const REDIRECT = 'http://127.0.0.1:33418/callback';
@@ -307,6 +313,12 @@ describe('MCP server', () => {
       ['gitorange_list_repositories', true],
       ['gitorange_get_repository', true],
       ['gitorange_create_repository', false],
+      ['gitorange_list_pull_requests', true],
+      ['gitorange_get_pull_request', true],
+      ['gitorange_create_pull_request', false],
+      ['gitorange_comment_pull_request', false],
+      ['gitorange_merge_pull_request', false],
+      ['gitorange_get_run_logs', true],
     ]);
     const unknown = (await (
       await rpc(t, access_token, 'resources/list')
@@ -424,7 +436,7 @@ describe('MCP server', () => {
     const res = await call(t, '/api/mcp', { cookie: admin });
     const body = (await res.json()) as { serverUrl: string; tools: unknown[] };
     expect(body.serverUrl).toBe(`${ORIGIN}/mcp`);
-    expect(body.tools).toHaveLength(3);
+    expect(body.tools).toHaveLength(9);
     expect((await call(t, '/api/mcp')).status).toBe(401);
   });
 });
@@ -467,5 +479,304 @@ describe('instance name', () => {
       title: 'XY Space Git',
     });
     expect(init.result.instructions).toMatch(/^XY Space Git is/);
+  });
+});
+
+describe('MCP pull request tools', () => {
+  /** A repository with main (optionally holding review.yml) and a pushed feature branch. */
+  async function repoWithBranch(policy?: string) {
+    const t = makeEnv({ actions: true });
+    const admin = await bootstrapAdmin(t);
+    const { access_token } = await connect(t, admin);
+    await tool(t, access_token, 'gitorange_create_repository', {
+      name: 'app',
+      visibility: 'internal',
+    });
+    const repo = [...t.fake.repos.values()][0];
+    const base = {
+      'README.md': '# app\n',
+      ...(policy ? { '.gitorange/review.yml': policy } : {}),
+    };
+    const main = await commitPaths(repo, 'main', base, 'Initial commit');
+    repo.refs.set('refs/heads/feature', main);
+    await commitPaths(
+      repo,
+      'feature',
+      { ...base, 'src/a.ts': 'export const a = 1;\n' },
+      'Add a'
+    );
+    return { t, admin, token: access_token, repo };
+  }
+
+  it('opens, inspects, comments on, and merges a pull request', async () => {
+    const { t, token, repo } = await repoWithBranch();
+    const opened = await tool(t, token, 'gitorange_create_pull_request', {
+      repository: 'octocat/app',
+      head: 'feature',
+      title: 'Add a',
+      body: 'Adds `a`.',
+    });
+    expect(opened.isError).toBeUndefined();
+    expect(JSON.parse(opened.content[0].text)).toEqual({
+      number: 1,
+      title: 'Add a',
+      base: 'main', // the default branch when base is omitted
+      head: 'feature',
+      url: `${ORIGIN}/octocat/app/pull/1`,
+    });
+    await settle(t);
+
+    const again = await tool(t, token, 'gitorange_create_pull_request', {
+      repository: 'octocat/app',
+      head: 'feature',
+      title: 'Again',
+    });
+    expect(again.isError).toBe(true);
+    expect(again.content[0].text).toMatch(/already exists .*#1/);
+
+    const listed = JSON.parse(
+      (
+        await tool(t, token, 'gitorange_list_pull_requests', {
+          repository: 'octocat/app',
+        })
+      ).content[0].text
+    );
+    expect(listed).toMatchObject([
+      { number: 1, state: 'open', author: 'octocat' },
+    ]);
+
+    const commented = await tool(t, token, 'gitorange_comment_pull_request', {
+      repository: 'octocat/app',
+      number: 1,
+      body: 'Looks good.',
+    });
+    expect(commented.isError).toBeUndefined();
+
+    const got = JSON.parse(
+      (
+        await tool(t, token, 'gitorange_get_pull_request', {
+          repository: 'octocat/app',
+          number: 1,
+        })
+      ).content[0].text
+    );
+    expect(got).toMatchObject({
+      number: 1,
+      description: 'Adds `a`.',
+      state: 'open',
+      commits: [{ message: 'Add a' }],
+      merge: {
+        nothing_to_merge: false,
+        conflicts: [],
+        ai_conflict_resolution: null,
+      },
+      auto_merge: null, // no .gitorange/review.yml
+      recent_comments: [{ author: 'octocat', body: 'Looks good.' }],
+      can_merge: true,
+    });
+
+    const merged = await tool(t, token, 'gitorange_merge_pull_request', {
+      repository: 'octocat/app',
+      number: 1,
+    });
+    expect(merged.isError).toBeUndefined();
+    expect(merged.content[0].text).toMatch(
+      /^Merged #1 into main as [0-9a-f]{7}/
+    );
+    const tip = repo.parseCommit(repo.refs.get('refs/heads/main')!)!;
+    expect(tip.message).toBe('Add a (#1)');
+    const after = JSON.parse(
+      (
+        await tool(t, token, 'gitorange_get_pull_request', {
+          repository: 'octocat/app',
+          number: 1,
+        })
+      ).content[0].text
+    );
+    expect(after).toMatchObject({
+      state: 'merged',
+      merged: { by: 'octocat', automatically: false },
+    });
+  });
+
+  it('refuses to merge past review flags a person has not approved', async () => {
+    const { t, token } = await repoWithBranch(
+      'checks:\n  require: none\nhuman_review:\n  questions:\n    data_model:\n      ask: Does this change stored data?\n      above: 0.3\n'
+    );
+    await tool(t, token, 'gitorange_create_pull_request', {
+      repository: 'octocat/app',
+      head: 'feature',
+      title: 'Add a',
+    });
+    await settle(t);
+    const started = t.actions.resolutions.find(
+      (r) => (r.params as { classificationId?: string }).classificationId
+    )!;
+    // Keep it open: an approval would otherwise let it merge on its own.
+    await t.env.DB.prepare(
+      'UPDATE pull_requests SET auto_merge_disabled_at = 1'
+    ).run();
+    await executeClassification(
+      {
+        env: t.env,
+        db: drizzle(t.env.DB, { schema }),
+        step: {
+          do: async (_n: string, a: unknown, b?: unknown) =>
+            ((b ?? a) as () => Promise<unknown>)(),
+        } as unknown as StepRunner,
+        models: {
+          summarize: async (f) => `Changes ${f.path}.`,
+          classify: async () => ({ data_model: { type: 'noul', value: 0.9 } }),
+          investigate: async () => ({
+            detail: 'Stores a new field.',
+            diagram: null,
+            snippets: [],
+            paths: [],
+          }),
+        },
+      },
+      (started.params as { classificationId: string }).classificationId
+    );
+
+    const got = JSON.parse(
+      (
+        await tool(t, token, 'gitorange_get_pull_request', {
+          repository: 'octocat/app',
+          number: 1,
+        })
+      ).content[0].text
+    );
+    expect(got.auto_merge).toMatchObject({
+      state: 'disabled',
+      flags: [
+        {
+          title: 'Does this change stored data?',
+          finding: 'Stores a new field.',
+          approved_by: null,
+        },
+      ],
+    });
+    const refused = await tool(t, token, 'gitorange_merge_pull_request', {
+      repository: 'octocat/app',
+      number: 1,
+    });
+    expect(refused.isError).toBe(true);
+    expect(refused.content[0].text).toMatch(
+      /1 review flag waiting for a person's approval/
+    );
+  });
+
+  it('needs push access to open or merge, and hides repositories you cannot read', async () => {
+    const { t, admin } = await repoWithBranch();
+    const reader = await addMember(t, admin, 'grace');
+    const { access_token } = await connect(t, reader);
+    const open = await tool(t, access_token, 'gitorange_create_pull_request', {
+      repository: 'octocat/app',
+      head: 'feature',
+      title: 'Nope',
+    });
+    expect(open.isError).toBe(true);
+    expect(open.content[0].text).toMatch(/push access/);
+    const missing = await tool(t, access_token, 'gitorange_get_pull_request', {
+      repository: 'octocat/nope',
+      number: 1,
+    });
+    expect(missing.content[0].text).toMatch(
+      /No repository named octocat\/nope/
+    );
+  });
+});
+
+describe('MCP run logs', () => {
+  it('returns the logs of failed steps, or one chosen step, for a run', async () => {
+    const t = makeEnv({ actions: true });
+    const admin = await bootstrapAdmin(t);
+    const { access_token } = await connect(t, admin);
+    await tool(t, access_token, 'gitorange_create_repository', {
+      name: 'app',
+      visibility: 'internal',
+    });
+    const repoId = (await t.env.DB.prepare(
+      'SELECT id FROM repositories'
+    ).first<{
+      id: string;
+    }>())!.id;
+    const log = (n: number) => `actions/${repoId}/run1/job1/${n}.log`;
+    await t.env.DB.batch([
+      t.env.DB.prepare(
+        `INSERT INTO workflow_runs (id, repository_id, run_number, workflow_path, name, event, ref, head_sha, display_title, status, conclusion, created_at)
+         VALUES ('run1', ?, 7, '.github/workflows/ci.yml', 'CI', 'pull_request', 'refs/pull/1/head', 'abc', 'x', 'completed', 'failure', 0)`
+      ).bind(repoId),
+      t.env.DB.prepare(
+        `INSERT INTO workflow_jobs (id, run_id, job_key, name, runs_on, needs, status, conclusion)
+         VALUES ('job1', 'run1', 'test', 'test', 'ubuntu-latest', '[]', 'completed', 'failure')`
+      ),
+      ...[
+        [1, 'Set up job', 'success'],
+        [2, 'Install', 'success'],
+        [3, 'Build', 'failure'],
+        [4, 'Test', 'skipped'],
+      ].map(([n, name, conclusion]) =>
+        t.env.DB.prepare(
+          `INSERT INTO workflow_steps (id, job_id, number, name, status, conclusion, log_r2_key)
+           VALUES (?, 'job1', ?, ?, 'completed', ?, ?)`
+        ).bind(
+          `s${n}`,
+          n,
+          name,
+          conclusion,
+          conclusion === 'skipped' ? null : log(n as number)
+        )
+      ),
+    ]);
+    await t.env.ACTIONS_LOGS.put(log(2), 'yarn install\nDone in 3s.\n');
+    await t.env.ACTIONS_LOGS.put(
+      log(3),
+      Array.from({ length: 500 }, (_, i) => `line ${i + 1}`).join('\n') +
+        '\nError: Failed to load native binding\n'
+    );
+
+    const failed = JSON.parse(
+      (
+        await tool(t, access_token, 'gitorange_get_run_logs', {
+          repository: 'octocat/app',
+          run_number: 7,
+        })
+      ).content[0].text
+    );
+    expect(failed).toMatchObject({ workflow: 'CI', conclusion: 'failure' });
+    const job = failed.jobs[0];
+    expect(job.steps.map((s: { name: string }) => s.name)).toEqual([
+      'Set up job',
+      'Install',
+      'Build',
+      'Test',
+    ]);
+    // Only the failed step's log, and only its end.
+    expect(job.logs).toHaveLength(1);
+    expect(job.logs[0]).toMatchObject({ step: 3, name: 'Build' });
+    expect(job.logs[0].log).toContain('Error: Failed to load native binding');
+    expect(job.logs[0].log).toContain('showing the last 300 of 501 lines');
+    expect(job.logs[0].log).not.toContain('line 1\n');
+
+    const chosen = JSON.parse(
+      (
+        await tool(t, access_token, 'gitorange_get_run_logs', {
+          repository: 'octocat/app',
+          run_number: 7,
+          job: 'test',
+          step: 2,
+        })
+      ).content[0].text
+    );
+    expect(chosen.jobs[0].logs).toEqual([
+      { step: 2, name: 'Install', log: 'yarn install\nDone in 3s.' },
+    ]);
+
+    const missing = await tool(t, access_token, 'gitorange_get_run_logs', {
+      repository: 'octocat/app',
+      run_number: 99,
+    });
+    expect(missing.isError).toBe(true);
   });
 });

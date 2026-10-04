@@ -69,7 +69,11 @@ and better-auth. Git storage is **Cloudflare Artifacts**: one Artifacts repo per
 - **NEVER push directly to `main`**.
 - **NEVER deploy** (`yarn deploy` or any `wrangler deploy`) — deployments are done by humans. The one
   exception is the `/gitorange-onboarding` skill, which a deployer runs and confirms step by step.
-- Submit work as a pull request for human review.
+- Submit work as a pull request for human review, on **git.xyspace.dev** (`origin`,
+  `choyiny/gitorange`): push the branch, then open it with the `gitorange_create_pull_request` MCP tool
+  (server `xy-space-gitorange`) and follow it with `gitorange_get_pull_request`. GitHub (`github` remote) is a
+  mirror for CodeQL and Dependabot; keep it in sync with `git push github main` after merges. Never approve
+  auto-merge review flags on someone's behalf.
 
 ## Package Manager
 

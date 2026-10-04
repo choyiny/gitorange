@@ -119,8 +119,11 @@ mcpRouter.post('/', async (c) => {
           },
           instructions:
             `${appName(c.env)} is a self-hosted, GitHub-style git server. Use these tools to find and create ` +
-            'repositories. Never ask the user to paste a personal access token into the conversation; ' +
-            'have them run git commands that need one themselves.',
+            'repositories and to work with pull requests: push a branch with git, open a pull request, then ' +
+            'follow its checks and auto-merge review with gitorange_get_pull_request. Merging is always rebase ' +
+            'and merge. Review flags need a person to approve them in the web UI; never try to work around ' +
+            'them. Never ask the user to paste a personal access token into the conversation; have them run ' +
+            'git commands that need one themselves.',
         })
       );
     }
@@ -145,6 +148,7 @@ mcpRouter.post('/', async (c) => {
             env: c.env,
             user: session.user,
             baseURL,
+            after: (work) => c.executionCtx.waitUntil(work),
           })
         )
       );

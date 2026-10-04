@@ -94,7 +94,7 @@ Pages update without a reload. One hibernating Durable Object, `LiveHub` ([`work
 
 ## MCP server and OAuth 2.1
 
-`POST /mcp` is a [Model Context Protocol](https://modelcontextprotocol.io) server ([`worker/src/mcp/`](../worker/src/mcp/)): JSON-RPC 2.0 over Streamable HTTP, stateless, tools only (`gitorange_list_repositories`, `gitorange_get_repository`, `gitorange_create_repository`). It is hand-rolled rather than built on an MCP SDK; the whole method set is `initialize`, `ping`, `tools/list`, and `tools/call`.
+`POST /mcp` is a [Model Context Protocol](https://modelcontextprotocol.io) server ([`worker/src/mcp/`](../worker/src/mcp/)): JSON-RPC 2.0 over Streamable HTTP, stateless, tools only: repositories (`gitorange_list_repositories`, `gitorange_get_repository`, `gitorange_create_repository`) and pull requests (`gitorange_list_pull_requests`, `gitorange_get_pull_request`, `gitorange_create_pull_request`, `gitorange_comment_pull_request`, `gitorange_merge_pull_request`), plus `gitorange_get_run_logs` for Actions step logs (failed steps by default, read from R2). The pull request tools share `openPull`, `addComment` ([`lib/pulls.ts`](../worker/src/lib/pulls.ts)), and `landPull` with the web API; merging refuses while auto-merge review flags are unapproved, so approving stays a person's job in the web UI. It is hand-rolled rather than built on an MCP SDK; the whole method set is `initialize`, `ping`, `tools/list`, and `tools/call`.
 
 GitOrange is its own OAuth 2.1 authorization server, through better-auth's [`@better-auth/oauth-provider`](https://www.better-auth.com/docs/plugins/oauth-provider) plugin (plus `jwt()` for signing keys). Users, the login page, and sessions are the ones GitOrange already has.
 

@@ -18,12 +18,15 @@ import {
 } from '../lib/repos';
 import type { SessionUser } from '../variables';
 import { McpToolError } from './errors';
+import { PULL_TOOLS } from './pull-tools';
 
 export type ToolContext = {
   db: DrizzleDB;
   env: CloudflareBindings;
   user: SessionUser;
   baseURL: string;
+  /** Runs follow-up work after the response (reviews, Actions, conflict sweeps). */
+  after: (work: Promise<unknown>) => void;
 };
 export type ToolResult = {
   content: Array<{ type: 'text'; text: string }>;
@@ -340,6 +343,7 @@ export const TOOL_MODULES: ToolModule[] = [
   listRepositories,
   getRepository,
   createRepositoryTool,
+  ...PULL_TOOLS,
 ];
 export const TOOL_DEFINITIONS = TOOL_MODULES.map((m) => m.definition);
 export const TOOL_HANDLERS = new Map(

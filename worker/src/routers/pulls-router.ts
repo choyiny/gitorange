@@ -7,7 +7,6 @@ import {
   prReviewFlags,
   pullRequestComments,
   pullRequests,
-  repositories,
   type MergeResolution,
   type PullRequest,
 } from '../db/app.schema';
@@ -35,9 +34,9 @@ import {
   publicUserSchema,
 } from './schemas';
 import { compareShas } from './repos-router';
-import { queueRuns } from '../actions/trigger';
 import { ensureResolution } from '../merge/auto';
 import { landPull, pullRef } from '../merge/land';
+import { addComment, openPull, pullShas } from '../lib/pulls';
 import { ensureClassification, retryClassification } from '../review/classify';
 import { maybeAutoMerge } from '../review/auto-merge';
 import { reviewView } from '../review/view';
@@ -103,29 +102,6 @@ function serializePull(
 
 const fullName = (c: Context<RepoEnv>) =>
   `${c.get('namespace').username}/${c.get('repo').name}`;
-
-/**
- * The two commits a PR compares. Open PRs track their live branches; once merged or
- * closed, the head is pinned at refs/pull/N/head so the diff survives branch deletion.
- */
-async function pullShas(
-  git: GitService,
-  pr: PullRequest
-): Promise<{ base: string; head: string } | null> {
-  if (pr.state === 'merged' && pr.mergeCommitSha) {
-    const merge = await git.commit(pr.mergeCommitSha);
-    const head = (await git.resolve(pullRef(pr.number))) ?? merge?.parents[1];
-    if (!merge || !head) return null;
-    return { base: merge.parents[0], head };
-  }
-  const head =
-    pr.state === 'open'
-      ? await git.resolve(pr.headRef)
-      : ((await git.resolve(pullRef(pr.number))) ??
-        (await git.resolve(pr.headRef)));
-  const base = await git.resolve(pr.baseRef);
-  return head && base ? { base, head } : null;
-}
 
 const numberParams = ownerRepoParams.extend({
   number: z.coerce.number().int().min(1),
@@ -244,105 +220,23 @@ pullsRouter.openapi(createPullRoute, async (c) => {
       403
     );
   const db = c.get('db');
-  const git = c.get('git');
-  const repo = c.get('repo');
   const body = c.req.valid('json');
-  if (body.base === body.head)
-    return c.json({ error: 'Base and head must be different branches' }, 400);
-  // Both sides must be branch names: resolve() also accepts SHAs and tags, and a merge
-  // pushes to refs/heads/<base>, so a non-branch base would create a stray branch.
-  const refs = await git.refs();
-  const baseSha = refs.get(`refs/heads/${body.base}`);
-  const headSha = refs.get(`refs/heads/${body.head}`);
-  if (!baseSha || !headSha) return c.json({ error: 'Branch not found' }, 400);
-  if ((await git.mergeBase(baseSha, headSha)) === headSha) {
-    return c.json(
-      {
-        error: `There isn't anything to compare. ${body.base} is up to date with ${body.head}.`,
-      },
-      400
-    );
-  }
-  const existing = await db
-    .select({ number: pullRequests.number })
-    .from(pullRequests)
-    .where(
-      and(
-        eq(pullRequests.repositoryId, repo.id),
-        eq(pullRequests.state, 'open'),
-        eq(pullRequests.baseRef, body.base),
-        eq(pullRequests.headRef, body.head)
-      )
-    )
-    .get();
-  if (existing)
-    return c.json(
-      {
-        error: `A pull request already exists for ${body.head} (#${existing.number}).`,
-      },
-      409
-    );
-
-  // Claim the next number atomically: the bump and the insert share one batch, and the
-  // insert reads the number the bump just reserved.
-  const id = crypto.randomUUID();
-  const now = new Date();
   const author = c.get('user')!;
-  await db.batch([
-    db
-      .update(repositories)
-      .set({
-        nextPrNumber: sql`${repositories.nextPrNumber} + 1`,
-        updatedAt: now,
-      })
-      .where(eq(repositories.id, repo.id)),
-    db.insert(pullRequests).values({
-      id,
-      repositoryId: repo.id,
-      number:
-        sql`(SELECT next_pr_number - 1 FROM repositories WHERE id = ${repo.id})` as unknown as number,
-      title: body.title.trim(),
-      body: body.body,
-      authorId: author.id,
-      baseRef: body.base,
-      headRef: body.head,
-      state: 'open',
-      createdAt: now,
-      updatedAt: now,
-    }),
-  ]);
-  const pr = (await db
-    .select()
-    .from(pullRequests)
-    .where(eq(pullRequests.id, id))
-    .get())!;
-  await git
-    .setRef(pullRef(pr.number), headSha)
-    .catch((e) => console.error('[pulls] pin ref failed', e));
-  c.executionCtx.waitUntil(
-    ensureClassification(c.env, db, git, pr, {
-      base: baseSha,
-      head: headSha,
-    }).catch((e) => console.error('[review] start failed', e))
-  );
-  // A PR opened against a moved base may already conflict.
-  c.executionCtx.waitUntil(
-    ensureResolution(c.env, db, git, pr, {
-      base: baseSha,
-      head: headSha,
-    }).catch((e) => console.error('[merge] auto-resolve failed', e))
-  );
-  c.executionCtx.waitUntil(
-    queueRuns(c.env, db, repo, fullName(c), {
-      kind: 'pull_request',
-      number: pr.number,
-      title: pr.title,
-      baseRef: pr.baseRef,
-      headRef: pr.headRef,
-      headSha,
-      actorId: author.id,
-    }).catch((e) => console.error('[actions] queue failed', e))
-  );
+  const result = await openPull({
+    env: c.env,
+    db,
+    git: c.get('git'),
+    repo: c.get('repo'),
+    repoFullName: fullName(c),
+    author,
+    title: body.title,
+    body: body.body,
+    base: body.base,
+    head: body.head,
+    after: (work) => c.executionCtx.waitUntil(work),
+  });
+  if (!result.ok) return c.json({ error: result.error }, result.status);
+  const pr = result.pr;
   return c.json(serializePull(pr, await usersById(db, [author.id])), 201);
 });
 
@@ -1004,25 +898,14 @@ pullsRouter.openapi(createCommentRoute, async (c) => {
   const pr = await getPull(c, c.req.valid('param').number);
   if (!pr) return c.json({ error: 'Not Found' }, 404);
   const user = c.get('user')!;
-  const now = new Date();
-  const row = {
-    id: crypto.randomUUID(),
-    pullRequestId: pr.id,
-    authorId: user.id,
-    body: c.req.valid('json').body,
-    createdAt: now,
-    updatedAt: now,
-  };
-  await c
-    .get('db')
-    .batch([
-      c.get('db').insert(pullRequestComments).values(row),
-      c
-        .get('db')
-        .update(pullRequests)
-        .set({ updatedAt: now })
-        .where(eq(pullRequests.id, pr.id)),
-    ]);
+  const row = await addComment(
+    c.env,
+    c.get('db'),
+    pr,
+    user.id,
+    c.req.valid('json').body
+  );
+  const now = row.createdAt;
   const people = await usersById(c.get('db'), [user.id]);
   return c.json(
     {

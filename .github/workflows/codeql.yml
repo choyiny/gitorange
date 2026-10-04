@@ -11,6 +11,9 @@ on:
 jobs:
   analyze:
     name: Analyze (${{ matrix.language }})
+    # CodeQL's actions only run on GitHub. On GitOrange (git.xyspace.dev) the job is skipped, so the
+    # run passes instead of failing; GitHub's mirror keeps the scanning.
+    if: github.server_url == 'https://github.com'
     runs-on: ubuntu-latest
     timeout-minutes: 30
     permissions:
