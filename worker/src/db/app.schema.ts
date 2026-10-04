@@ -105,6 +105,34 @@ export const personalAccessTokens = sqliteTable(
   (t) => [index('personal_access_tokens_user_idx').on(t.userId)]
 );
 
+// Alternate addresses a member authors git commits with (the account email is the primary one).
+// An address belongs to one member instance-wide. Only verified rows attribute commits; an
+// unverified row reserves its address until `verification_expires_at`, after which anyone may
+// claim it (the stale row is replaced).
+export const userEmails = sqliteTable(
+  'user_emails',
+  {
+    id: text('id').primaryKey(),
+    userId: text('user_id')
+      .notNull()
+      .references(() => users.id, { onDelete: 'cascade' }),
+    // Lowercased.
+    email: text('email').notNull().unique(),
+    // Optional free-text label, e.g. "Work".
+    label: text('label'),
+    verifiedAt: integer('verified_at', { mode: 'timestamp' }),
+    // SHA-256 of the secret in the verification link; the plaintext is only ever emailed.
+    verificationTokenHash: text('verification_token_hash').unique(),
+    verificationExpiresAt: integer('verification_expires_at', {
+      mode: 'timestamp',
+    }),
+    // When the last verification email went out (resends are rate-limited).
+    verificationSentAt: integer('verification_sent_at', { mode: 'timestamp' }),
+    createdAt: integer('created_at', { mode: 'timestamp' }).notNull(),
+  },
+  (t) => [index('user_emails_user_idx').on(t.userId)]
+);
+
 export const pullRequests = sqliteTable(
   'pull_requests',
   {
@@ -403,3 +431,4 @@ export type WorkflowStep = typeof workflowSteps.$inferSelect;
 export type MergeResolution = typeof mergeResolutions.$inferSelect;
 export type PrClassification = typeof prClassifications.$inferSelect;
 export type PrReviewFlag = typeof prReviewFlags.$inferSelect;
+export type UserEmail = typeof userEmails.$inferSelect;

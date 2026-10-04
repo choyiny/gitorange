@@ -12,6 +12,7 @@ import { pullsRouter } from './routers/pulls-router';
 import { reposRouter } from './routers/repos-router';
 import { setupRouter } from './routers/setup-router';
 import { tokensRouter } from './routers/tokens-router';
+import { emailsRouter } from './routers/emails-router';
 import { usersRouter } from './routers/users-router';
 import { namespacesRouter, teamRouter } from './routers/teams-router';
 import { mcpApiRouter, mcpRouter } from './mcp';
@@ -86,6 +87,9 @@ app.route('/api/mcp', mcpApiRouter);
 app.use('/api/tokens/*', requireAuth);
 app.use('/api/tokens', requireAuth);
 app.route('/api/tokens', tokensRouter);
+app.use('/api/emails/*', requireAuth);
+app.use('/api/emails', requireAuth);
+app.route('/api/emails', emailsRouter);
 
 app.doc('/api/doc', {
   openapi: '3.0.0',

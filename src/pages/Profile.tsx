@@ -1,6 +1,6 @@
 import { Link, useParams } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
-import { OrganizationIcon, RepoIcon } from '@primer/octicons-react';
+import { MailIcon, OrganizationIcon, RepoIcon } from '@primer/octicons-react';
 import { api, qk } from '@/lib/uiApi';
 import { ApiError } from '@/lib/api';
 import { useCurrentUser } from '@/lib/auth';
@@ -68,9 +68,26 @@ export default function Profile() {
                 repositories
               </p>
             ) : (
-              <p className="f6 color-fg-muted mt-2">
-                Joined {timeAgo(data.owner.createdAt)}
-              </p>
+              <>
+                {data.owner.email && (
+                  <p
+                    className="f5 mt-2 d-flex flex-items-center"
+                    style={{ gap: 6, minWidth: 0 }}
+                  >
+                    <MailIcon className="color-fg-muted flex-shrink-0" />
+                    <a
+                      href={`mailto:${data.owner.email}`}
+                      className="color-fg-default text-truncate"
+                      title={data.owner.email}
+                    >
+                      {data.owner.email}
+                    </a>
+                  </p>
+                )}
+                <p className="f6 color-fg-muted mt-2">
+                  Joined {timeAgo(data.owner.createdAt)}
+                </p>
+              </>
             )}
           </div>
           <div className="flex-1">

@@ -1,5 +1,5 @@
 import { NavLink } from 'react-router-dom';
-import { KeyIcon, PlugIcon } from '@primer/octicons-react';
+import { KeyIcon, MailIcon, PlugIcon } from '@primer/octicons-react';
 
 /** The sidebar shared by the personal settings pages. */
 export function SettingsNav() {
@@ -11,6 +11,9 @@ export function SettingsNav() {
       style={{ height: 'fit-content' }}
       aria-label="Settings"
     >
+      <NavLink to="/settings/emails" className={item} style={{ gap: 8 }}>
+        <MailIcon /> Emails
+      </NavLink>
       <NavLink to="/settings/tokens" className={item} style={{ gap: 8 }}>
         <KeyIcon /> Personal access tokens
       </NavLink>

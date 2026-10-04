@@ -20,6 +20,9 @@ and better-auth. Git storage is **Cloudflare Artifacts**: one Artifacts repo per
   private (owner, collaborators, site admins) or internal; team repos (`repositories.team_id`, one shared `teams` row) are
   always internal. Owner/creator, site admins, and collaborators push and merge. Usernames and the team slug share the URL
   namespace (`worker/src/lib/namespaces.ts`).
+- Commit attribution (`worker/src/lib/commit-authors.ts`): every API commit's author/committer carries `user` — the member
+  whose account email or _verified_ alternate (`user_emails`, Settings → Emails, verified by an emailed link) it is.
+  Lookups are batched per response (`attributeCommits`), never per commit.
 - Git LFS (`worker/src/lfs-http.ts`, `worker/src/lib/lfs.ts`): Batch API at `/<owner>/<repo>.git/info/lfs/...`,
   sharing the git endpoint's auth. Bytes go client ↔ R2 directly via pre-signed URLs (needs the
   `R2_ACCESS_KEY_ID`/`R2_SECRET_ACCESS_KEY` secrets); D1 `lfs_objects` holds bare R2 keys, never URLs. One copy

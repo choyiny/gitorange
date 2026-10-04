@@ -21,7 +21,7 @@ import { languageFor } from '@/lib/languages';
 import { useHighlighter } from '@/lib/useHighlight';
 import { dirOf } from '@/lib/repoUrls';
 import { ApiError } from '@/lib/api';
-import { Avatar } from '@/components/Avatar';
+import { CommitAuthor } from '@/components/CommitAuthor';
 import { BranchSelect } from '@/components/BranchSelect';
 import { CloneButton } from '@/components/CloneButton';
 import { AgentPrompt } from '@/components/AgentPrompt';
@@ -212,8 +212,12 @@ function LatestCommitBar({ repo, data }: { repo: RepoDetail; data: Contents }) {
   const base = `/${repo.fullName}`;
   return (
     <div className="latest-commit">
-      <Avatar user={{ username: c.author.name }} size={20} />
-      <span className="text-bold flex-shrink-0">{c.author.name}</span>
+      <CommitAuthor
+        commit={c}
+        size={20}
+        className="text-bold flex-shrink-0"
+        showCommitter={false}
+      />
       <Link
         to={`${base}/commit/${c.hash}`}
         className="color-fg-muted latest-commit-message"

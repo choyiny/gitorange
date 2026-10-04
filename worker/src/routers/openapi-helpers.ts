@@ -26,6 +26,7 @@ export const json401Response = { 401: err('Unauthorized') };
 export const json403Response = { 403: err('Forbidden') };
 export const json404Response = { 404: err('Not Found') };
 export const json409Response = { 409: err('Conflict') };
+export const json429Response = { 429: err('Too Many Requests') };
 
 export const okSchema = z.object({ ok: z.literal(true) });
 

@@ -120,7 +120,11 @@ const namespaceRoute = createRoute({
     ...json200Response(
       z.object({
         kind: z.enum(['user', 'team']),
-        owner: publicUserSchema.extend({ createdAt: z.string() }),
+        owner: publicUserSchema.extend({
+          createdAt: z.string(),
+          // A member's account email, shown to every signed-in member; null for the team.
+          email: z.string().nullable(),
+        }),
         repositories: z.array(repoSchema),
       }),
       'A user or the team, with the repositories the viewer can see'
@@ -150,6 +154,7 @@ namespacesRouter.openapi(namespaceRoute, async (c) => {
           name: ns.name,
           image: null,
           createdAt: team.createdAt.toISOString(),
+          email: null,
         },
         repositories: repos.map((r) => serializeRepo(r, ns)),
       },
@@ -185,6 +190,7 @@ namespacesRouter.openapi(namespaceRoute, async (c) => {
         name: ns.name,
         image: ns.image,
         createdAt: user.createdAt.toISOString(),
+        email: user.email,
       },
       repositories: repos.map((r) => serializeRepo(r, ns)),
     },

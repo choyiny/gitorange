@@ -33,12 +33,14 @@ export type RepoDetail = Repo & {
   branches: { name: string; sha: string }[];
   openPullCount: number;
 };
+/** A git identity; `user` is the member whose account email or verified alternate it is. */
+export type CommitIdentity = { name: string; email: string; user: User | null };
 export type Commit = {
   hash: string;
   treeHash: string;
   message: string;
-  author: { name: string; email: string };
-  committer: { name: string; email: string };
+  author: CommitIdentity;
+  committer: CommitIdentity;
   parents: string[];
   authoredAt: number;
   committedAt: number;
@@ -241,8 +243,24 @@ export type Team = {
 };
 export type Namespace = {
   kind: 'user' | 'team';
-  owner: User & { createdAt: string };
+  /** `email` is a member's account email (null for the team). */
+  owner: User & { createdAt: string; email: string | null };
   repositories: Repo[];
+};
+export type AlternateEmail = {
+  id: string;
+  email: string;
+  label: string | null;
+  verified: boolean;
+  verifiedAt: string | null;
+  verificationExpiresAt: string | null;
+  createdAt: string;
+};
+export type Emails = {
+  primary: string;
+  alternates: AlternateEmail[];
+  /** False when the instance cannot send email, so verification links cannot go out. */
+  emailConfigured: boolean;
 };
 export type Token = {
   id: string;
@@ -445,6 +463,29 @@ export const api = {
     }),
   deleteToken: (id: string) =>
     apiFetch(`/api/tokens/${id}`, { method: 'DELETE' }),
+  emails: () => apiFetch<Emails>('/api/emails'),
+  addEmail: (body: { email: string; label: string | null }) =>
+    apiFetch<{ email: AlternateEmail; emailed: boolean }>('/api/emails', {
+      method: 'POST',
+      json: body,
+    }),
+  updateEmail: (id: string, body: { label: string | null }) =>
+    apiFetch<AlternateEmail>(`/api/emails/${id}`, {
+      method: 'PATCH',
+      json: body,
+    }),
+  deleteEmail: (id: string) =>
+    apiFetch(`/api/emails/${id}`, { method: 'DELETE' }),
+  resendEmailVerification: (id: string) =>
+    apiFetch<{ email: AlternateEmail; emailed: boolean }>(
+      `/api/emails/${id}/resend`,
+      { method: 'POST' }
+    ),
+  verifyEmail: (token: string) =>
+    apiFetch<AlternateEmail>('/api/emails/verify', {
+      method: 'POST',
+      json: { token },
+    }),
 
   repos: () => apiFetch<Repo[]>('/api/repos'),
   createRepo: (body: {
@@ -598,6 +639,7 @@ export const qk = {
   members: ['members'] as const,
   invitations: ['invitations'] as const,
   tokens: ['tokens'] as const,
+  emails: ['emails'] as const,
   mcp: ['mcp'] as const,
   approvals: ['approvals'] as const,
   mcpConnections: ['mcp', 'connections'] as const,

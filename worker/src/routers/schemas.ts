@@ -30,13 +30,21 @@ export const repoSchema = z
   })
   .openapi('Repository');
 
+// A git identity, plus the member it belongs to when the email is a member's account email or a
+// verified alternate (Settings → Emails).
+const commitIdentitySchema = z.object({
+  name: z.string(),
+  email: z.string(),
+  user: publicUserSchema.nullable(),
+});
+
 export const commitSchema = z
   .object({
     hash: z.string(),
     treeHash: z.string(),
     message: z.string(),
-    author: z.object({ name: z.string(), email: z.string() }),
-    committer: z.object({ name: z.string(), email: z.string() }),
+    author: commitIdentitySchema,
+    committer: commitIdentitySchema,
     parents: z.array(z.string()),
     authoredAt: z.number(),
     committedAt: z.number(),

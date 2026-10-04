@@ -36,6 +36,7 @@ import SettingsMcp from './pages/SettingsMcp';
 import OAuthConsent from './pages/OAuthConsent';
 import RunView from './pages/RunView';
 import SettingsTokens from './pages/SettingsTokens';
+import SettingsEmails, { VerifyEmail } from './pages/SettingsEmails';
 import Admin from './pages/Admin';
 import { NotFound } from './pages/NotFound';
 
@@ -96,6 +97,11 @@ const App = () => (
                 <Route path="/approvals" element={<Approvals />} />
                 <Route path="/settings/tokens" element={<SettingsTokens />} />
                 <Route path="/settings/mcp" element={<SettingsMcp />} />
+                <Route path="/settings/emails" element={<SettingsEmails />} />
+                <Route
+                  path="/settings/emails/verify"
+                  element={<VerifyEmail />}
+                />
                 <Route path="/oauth/consent" element={<OAuthConsent />} />
                 <Route
                   path="/admin"

@@ -14,7 +14,11 @@ export async function commitFiles(
   branch: string,
   files: Record<string, string>,
   message: string,
-  parents?: string[]
+  parents?: string[],
+  author: { name: string; email: string } = {
+    name: 'Dev',
+    email: 'dev@example.com',
+  }
 ) {
   const blobs = await Promise.all(
     Object.entries(files).map(
@@ -35,7 +39,7 @@ export async function commitFiles(
   const commit = await makeCommit({
     tree: tree.sha,
     parents: parent,
-    author: { name: 'Dev', email: 'dev@example.com', timestamp: clock++ },
+    author: { ...author, timestamp: clock++ },
     message,
   });
   repo.add(...blobs.map(([, b]) => b), tree, commit);

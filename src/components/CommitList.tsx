@@ -9,7 +9,7 @@ import {
   shortSha,
   timeAgo,
 } from '@/lib/format';
-import { Avatar } from './Avatar';
+import { CommitAuthor } from './CommitAuthor';
 import { CopyButton } from './CopyButton';
 import { ChecksBadge, useCommitStatuses } from './Checks';
 
@@ -59,10 +59,7 @@ function CommitRow({
           className="f6 color-fg-muted mt-1 d-flex flex-items-center flex-wrap"
           style={{ columnGap: 6, rowGap: 2 }}
         >
-          <Avatar user={{ username: c.author.name }} size={16} />
-          <span className="text-bold color-fg-default no-wrap">
-            {c.author.name}
-          </span>
+          <CommitAuthor commit={c} size={16} />
           <span className="no-wrap">committed {timeAgo(c.committedAt)}</span>
         </div>
       </div>

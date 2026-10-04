@@ -34,6 +34,7 @@ import {
   presign,
 } from '../lib/lfs';
 import { toPublicUser, userByUsername, type PublicUser } from '../lib/users';
+import { attributeCommits } from '../lib/commit-authors';
 import {
   json200Response,
   json201Response,
@@ -481,7 +482,11 @@ reposRouter.openapi(contentsRoute, async (c) => {
     git.log(sha, 1),
   ]);
   if (!entry) return c.json({ error: 'Path not found' }, 404);
-  const base = { ref, path, commitSha: sha, latestCommit: latest[0] ?? null };
+  const [latestCommit = null] = await attributeCommits(
+    c.get('db'),
+    latest.slice(0, 1)
+  );
+  const base = { ref, path, commitSha: sha, latestCommit };
   if (entry.type === 'tree') {
     const entries = entry.entries
       .map((e) => ({ ...e, path: path ? `${path}/${e.name}` : e.name }))
@@ -563,7 +568,20 @@ reposRouter.openapi(treeCommitsRoute, async (c) => {
   const { ref, path } = c.req.valid('query');
   const sha = await c.get('git').resolve(ref);
   if (!sha) return c.json({ error: 'Ref not found' }, 404);
-  return c.json(await c.get('git').lastCommitsForTree(sha, path), 200);
+  const byName = await c.get('git').lastCommitsForTree(sha, path);
+  // Many entries share a commit: attribute each distinct commit once.
+  const distinct = [
+    ...new Map(Object.values(byName).map((x) => [x.hash, x])).values(),
+  ];
+  const attributed = new Map(
+    (await attributeCommits(c.get('db'), distinct)).map((x) => [x.hash, x])
+  );
+  return c.json(
+    Object.fromEntries(
+      Object.entries(byName).map(([name, x]) => [name, attributed.get(x.hash)!])
+    ),
+    200
+  );
 });
 
 const SVG_TYPE = 'image/svg+xml';
@@ -708,7 +726,10 @@ reposRouter.openapi(commitsRoute, async (c) => {
     .get('git')
     .log(sha, perPage + 1, (page - 1) * perPage);
   return c.json(
-    { commits: commits.slice(0, perPage), hasMore: commits.length > perPage },
+    {
+      commits: await attributeCommits(c.get('db'), commits.slice(0, perPage)),
+      hasMore: commits.length > perPage,
+    },
     200
   );
 });
@@ -736,7 +757,8 @@ reposRouter.openapi(commitRoute, async (c) => {
   const files = await git.fileDiffs(
     await git.diffTrees(parent?.treeHash ?? null, commit.treeHash)
   );
-  return c.json({ commit, files }, 200);
+  const [attributed] = await attributeCommits(c.get('db'), [commit]);
+  return c.json({ commit: attributed, files }, 200);
 });
 
 const compareRoute = createRoute({
@@ -772,7 +794,10 @@ reposRouter.openapi(compareRoute, async (c) => {
   ]);
   if (!baseSha || !headSha) return c.json({ error: 'Branch not found' }, 404);
   const result = await compareShas(git, baseSha, headSha);
-  return c.json(result, 200);
+  return c.json(
+    { ...result, commits: await attributeCommits(c.get('db'), result.commits) },
+    200
+  );
 });
 
 export async function compareShas(

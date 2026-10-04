@@ -1,4 +1,5 @@
 import { and, desc, eq, sql } from 'drizzle-orm';
+import { attributeCommits } from '../lib/commit-authors';
 import {
   pullRequests,
   repositories,
@@ -212,7 +213,8 @@ const getRepository: ToolModule = {
         .get(),
     ]);
     const head = branches.find((b) => b.name === repo.defaultBranch);
-    const commit = head ? await git.commit(head.sha) : null;
+    const raw = head ? await git.commit(head.sha) : null;
+    const [commit = null] = raw ? await attributeCommits(ctx.db, [raw]) : [];
     return {
       content: [
         json({
@@ -230,6 +232,7 @@ const getRepository: ToolModule = {
                 sha: commit.hash,
                 message: commit.message.split('\n')[0],
                 author: commit.author.name,
+                author_username: commit.author.user?.username ?? null,
                 committed_at: new Date(commit.committedAt * 1000).toISOString(),
               }
             : null,

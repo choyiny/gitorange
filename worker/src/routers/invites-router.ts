@@ -1,6 +1,6 @@
 import { OpenAPIHono, createRoute, z } from '@hono/zod-openapi';
-import { and, desc, eq, isNull } from 'drizzle-orm';
-import { invitations } from '../db/app.schema';
+import { and, desc, eq, gt, isNotNull, isNull, or } from 'drizzle-orm';
+import { invitations, userEmails } from '../db/app.schema';
 import { users } from '../db/auth.schema';
 import { sendInviteEmail } from '../lib/email';
 import { namespaceTaken } from '../lib/namespaces';
@@ -101,6 +101,25 @@ invitesRouter.openapi(createInviteRoute, async (c) => {
     .get();
   if (existing)
     return c.json({ error: 'A user with that email already exists' }, 409);
+  // A member's verified alternate commit email, or one still awaiting verification.
+  const claimed = await db
+    .select({ id: userEmails.id })
+    .from(userEmails)
+    .where(
+      and(
+        eq(userEmails.email, normalized),
+        or(
+          isNotNull(userEmails.verifiedAt),
+          gt(userEmails.verificationExpiresAt, new Date())
+        )
+      )
+    )
+    .get();
+  if (claimed)
+    return c.json(
+      { error: "That email is one of a member's commit emails" },
+      409
+    );
   const token = randomToken('inv_', 24);
   const now = new Date();
   const row = {

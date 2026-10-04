@@ -3,7 +3,7 @@ import { useQuery } from '@tanstack/react-query';
 import { api, qk, type RepoDetail } from '@/lib/uiApi';
 import { firstLine, restOfMessage, shortSha, timeAgo } from '@/lib/format';
 import { ApiError } from '@/lib/api';
-import { Avatar } from '@/components/Avatar';
+import { CommitAuthor } from '@/components/CommitAuthor';
 import { DiffTotals, DiffView } from '@/components/DiffView';
 import { Spinner } from '@/components/Spinner';
 import { NotFound } from './NotFound';
@@ -40,8 +40,7 @@ export default function CommitView() {
           className="Box-body d-flex flex-items-center flex-wrap f6"
           style={{ gap: 6 }}
         >
-          <Avatar user={{ username: commit.author.name }} size={20} />
-          <span className="text-bold">{commit.author.name}</span>
+          <CommitAuthor commit={commit} size={20} />
           <span className="color-fg-muted">
             committed {timeAgo(commit.committedAt)}
           </span>

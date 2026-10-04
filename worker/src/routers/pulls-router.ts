@@ -34,6 +34,7 @@ import {
   publicUserSchema,
 } from './schemas';
 import { compareShas } from './repos-router';
+import { attributeCommits } from '../lib/commit-authors';
 import { ensureResolution } from '../merge/auto';
 import { landPull, pullRef } from '../merge/land';
 import { addComment, openPull, pullShas } from '../lib/pulls';
@@ -611,7 +612,13 @@ pullsRouter.openapi(pullCommitsRoute, async (c) => {
   if (!pr) return c.json({ error: 'Not Found' }, 404);
   const shas = await pullShas(c.get('git'), pr);
   if (!shas) return c.json([], 200);
-  return c.json(await c.get('git').commitsBetween(shas.base, shas.head), 200);
+  return c.json(
+    await attributeCommits(
+      c.get('db'),
+      await c.get('git').commitsBetween(shas.base, shas.head)
+    ),
+    200
+  );
 });
 
 const pullFilesRoute = createRoute({
