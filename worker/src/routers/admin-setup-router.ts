@@ -22,6 +22,7 @@ const checkSchema = z.object({
     'Connectivity',
     'Variables',
     'AI Gateway',
+    'Usage & cost',
   ]),
   title: z.string(),
   status,

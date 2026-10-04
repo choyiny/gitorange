@@ -1,3 +1,6 @@
+import { drizzle } from 'drizzle-orm/d1';
+import { schema } from '../db/schema';
+import { latestSync } from '../usage/sync';
 /**
  * Site admin → Setup: checks this deployment's secrets, bindings, and variables and says how to
  * fix what's wrong. Computed per request, nothing stored. Never returns or logs a secret's value:
@@ -13,7 +16,12 @@ export type SetupStep = { text: string; code?: string; link?: string };
 export type SetupCheck = {
   id: string;
   category:
-    'Secrets' | 'Bindings' | 'Connectivity' | 'Variables' | 'AI Gateway';
+    | 'Secrets'
+    | 'Bindings'
+    | 'Connectivity'
+    | 'Variables'
+    | 'AI Gateway'
+    | 'Usage & cost';
   title: string;
   status: SetupStatus;
   detail: string;
@@ -855,6 +863,202 @@ async function gatewayChecks(ctx: Ctx): Promise<SetupCheck[]> {
   ];
 }
 
+// ── Usage & cost ─────────────────────────────────────────────────────────────
+
+/** Resource vars that scope Cloudflare analytics to this deployment, and what each one measures. */
+const USAGE_VARS: [string, string, string][] = [
+  ['WORKER_NAME', 'Worker requests and CPU', 'gitorange'],
+  [
+    'D1_DATABASE_ID',
+    'D1 rows read and written, storage',
+    '<the database_id of DB>',
+  ],
+  [
+    'ACTIONS_LOGS_BUCKET_NAME',
+    'R2 usage of the Actions logs bucket',
+    'gitorange-actions-logs',
+  ],
+  ['ARTIFACTS_NAMESPACE', 'Artifacts operations', 'gitorange'],
+  [
+    'ACTIONS_WORKFLOW_NAME',
+    'Workflows usage of Actions runs',
+    'gitorange-actions-run',
+  ],
+  [
+    'MERGE_RESOLUTION_WORKFLOW_NAME',
+    'Workflows usage of AI resolution and review',
+    'gitorange-merge-resolution',
+  ],
+];
+
+const DO_NAMESPACES: [string, string][] = [
+  ['JOB_RUNNER_NAMESPACE_ID', 'JobRunner'],
+  ['MERGE_RESOLVER_NAMESPACE_ID', 'MergeResolver'],
+  ['LIVE_NAMESPACE_ID', 'LiveHub'],
+];
+
+async function usageChecks(ctx: Ctx): Promise<SetupCheck[]> {
+  const { env } = ctx;
+  const value = (k: string) => String(env[k] ?? '').trim();
+  const out: SetupCheck[] = [];
+  const token = value('CF_ANALYTICS_TOKEN');
+  out.push(
+    token
+      ? {
+          id: 'usage-token',
+          category: 'Usage & cost',
+          title: 'CF_ANALYTICS_TOKEN',
+          status: 'ok',
+          detail: 'Set. Usage & cost pulls Cloudflare analytics daily.',
+          fix: [],
+        }
+      : {
+          id: 'usage-token',
+          category: 'Usage & cost',
+          title: 'CF_ANALYTICS_TOKEN',
+          status: 'warning',
+          detail:
+            "Not set. Usage & cost shows only GitOrange's own records (Actions runners, AI tokens, emails), not Cloudflare's analytics.",
+          fix: [
+            {
+              text: 'Create an account API token with only Account Analytics: Read, scoped to this account.',
+              link: 'https://dash.cloudflare.com/?to=/:account/api-tokens',
+            },
+            ...secretFix(ctx, 'CF_ANALYTICS_TOKEN'),
+          ],
+        }
+  );
+
+  const missingVars = USAGE_VARS.filter(([k]) => {
+    const v = value(k);
+    return !v || isPlaceholder(v);
+  });
+  out.push(
+    missingVars.length
+      ? {
+          id: 'usage-vars',
+          category: 'Usage & cost',
+          title: 'Usage resource variables',
+          status: 'warning',
+          detail: `Not set, so these aren't measured: ${missingVars
+            .map(([k, what]) => `${k} (${what})`)
+            .join('; ')}.`,
+          fix: varFix(
+            ctx,
+            missingVars.map(([k, , ex]) => `"${k}": "${ex}"`).join(',\n')
+          ),
+        }
+      : {
+          id: 'usage-vars',
+          category: 'Usage & cost',
+          title: 'Usage resource variables',
+          status: 'ok',
+          detail:
+            'Worker, D1, buckets, Artifacts namespace, and Workflows are all named.',
+          fix: [],
+        }
+  );
+
+  const badIds = DO_NAMESPACES.filter(
+    ([k]) => !/^[0-9a-f]{32}$/.test(value(k))
+  );
+  out.push(
+    badIds.length
+      ? {
+          id: 'usage-do-namespaces',
+          category: 'Usage & cost',
+          title: 'Durable Object namespace IDs',
+          status: 'warning',
+          detail: `${badIds
+            .map(([k]) =>
+              value(k) ? `${k} isn't a 32-character hex ID` : `${k} is not set`
+            )
+            .join('; ')}, so Durable Object usage for ${badIds
+            .map(([, c]) => c)
+            .join(', ')} isn't measured.`,
+          fix: [
+            {
+              text: `Open Durable Objects in the dashboard and select ${badIds
+                .map(
+                  ([, c]) => `${ctx.local ? 'gitorange-dev' : 'gitorange'}_${c}`
+                )
+                .join(
+                  ', '
+                )}. The namespace ID is the 32-character hex string in the page URL (…/durable-objects/view/<ID>/overview).`,
+              link: 'https://dash.cloudflare.com/?to=/:account/workers/durable-objects',
+            },
+            {
+              text: 'For JobRunner, the container application lists it too (durable_objects.namespace_id):',
+              code: 'yarn wrangler containers list\nyarn wrangler containers info <application id> --json',
+            },
+            ...varFix(
+              ctx,
+              badIds.map(([k]) => `"${k}": "<namespace id>"`).join(',\n')
+            ),
+          ],
+        }
+      : {
+          id: 'usage-do-namespaces',
+          category: 'Usage & cost',
+          title: 'Durable Object namespace IDs',
+          status: 'ok',
+          detail: 'JobRunner, MergeResolver, and LiveHub are all set.',
+          fix: [],
+        }
+  );
+
+  if (token && env.DB) {
+    try {
+      const last = await withTimeout(
+        latestSync(drizzle(env.DB as D1Database, { schema }))
+      );
+      const failed = last ? Object.entries(last.errors ?? {}) : [];
+      out.push(
+        !last
+          ? {
+              id: 'usage-sync',
+              category: 'Usage & cost',
+              title: 'Last usage sync',
+              status: 'warning',
+              detail: 'Never synced yet. The daily sync runs at 02:30 UTC.',
+              fix: [
+                {
+                  text: 'Or open Site admin → Usage & cost and click Sync now.',
+                },
+              ],
+            }
+          : failed.length
+            ? {
+                id: 'usage-sync',
+                category: 'Usage & cost',
+                title: 'Last usage sync',
+                status: 'warning',
+                detail: `${last.id}: ${failed.length} metric${failed.length === 1 ? '' : 's'} unavailable. ${failed
+                  .slice(0, 5)
+                  .map(([k, e]) => `${k}: ${String(e).slice(0, 160)}`)
+                  .join(' · ')}`,
+                fix: [
+                  {
+                    text: 'Most are fixed by the variables above. A "not configured" metric is skipped on purpose; an API error usually means the token lacks Account Analytics: Read or a field name changed.',
+                  },
+                ],
+              }
+            : {
+                id: 'usage-sync',
+                category: 'Usage & cost',
+                title: 'Last usage sync',
+                status: 'ok',
+                detail: `${last.id}: every metric synced.`,
+                fix: [],
+              }
+      );
+    } catch {
+      // D1 problems are reported by the D1 check.
+    }
+  }
+  return out;
+}
+
 const ORDER: Record<SetupStatus, number> = { error: 0, warning: 1, ok: 2 };
 
 /** Every check, errors first. */
@@ -874,6 +1078,7 @@ export async function runSetupChecks(
     r2BucketChecks(ctx),
     presignChecks(ctx),
     gatewayChecks(ctx),
+    usageChecks(ctx),
   ]);
   const checks = [
     ...secretChecks(ctx),
@@ -885,6 +1090,7 @@ export async function runSetupChecks(
     ...emailCheck(ctx),
     ...variableChecks(ctx),
     ...probes[4],
+    ...probes[5],
   ];
   // Stable sort: within a status, keep the category order above.
   return checks.sort((a, b) => ORDER[a.status] - ORDER[b.status]);

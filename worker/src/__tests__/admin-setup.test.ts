@@ -61,6 +61,17 @@ function fullEnv(overrides: Record<string, unknown> = {}): TestEnv {
   t.env = {
     ...t.env,
     AI_GATEWAY: 'default',
+    // Usage & cost, fully configured.
+    CF_ANALYTICS_TOKEN: 'test-analytics-token-value',
+    WORKER_NAME: 'gitorange',
+    D1_DATABASE_ID: '00000000-0000-0000-0000-000000000000',
+    ACTIONS_LOGS_BUCKET_NAME: 'gitorange-actions-logs-test',
+    ARTIFACTS_NAMESPACE: 'gitorange',
+    ACTIONS_WORKFLOW_NAME: 'gitorange-actions-run',
+    MERGE_RESOLUTION_WORKFLOW_NAME: 'gitorange-merge-resolution',
+    JOB_RUNNER_NAMESPACE_ID: '2e9b604bd8074f37b34f857cad04e2c7',
+    MERGE_RESOLVER_NAMESPACE_ID: '78f866a1c792450095145fbd79082892',
+    LIVE_NAMESPACE_ID: '9a896aa6a1754ed78b6415ec9b0fd5a7',
     MERGE_RESOLVER: { getByName: () => ({}) },
     AI: {
       gateway: () => ({ getUrl: async () => 'https://gateway.example/' }),
@@ -70,6 +81,21 @@ function fullEnv(overrides: Record<string, unknown> = {}): TestEnv {
     ...overrides,
   } as unknown as CloudflareBindings;
   return t;
+}
+
+/** Records one finished usage sync with these per-metric errors. */
+async function syncedOnce(t: TestEnv, errors: Record<string, string>) {
+  await t.env.DB.prepare(
+    'INSERT INTO usage_syncs (id, started_at, completed_at, status, errors) VALUES (?, ?, ?, ?, ?)'
+  )
+    .bind(
+      '2026-10-03',
+      Date.now() - 1000,
+      Date.now(),
+      Object.keys(errors).length ? 'partial' : 'ok',
+      JSON.stringify(errors)
+    )
+    .run();
 }
 
 /** Applies `drop` by deleting keys after the full env is built. */
@@ -114,6 +140,7 @@ describe('Site admin → Setup', () => {
 
   it('reports everything OK for a complete deployment, and never leaks secrets', async () => {
     const t = fullEnv();
+    await syncedOnce(t, {});
     const probed = fakeR2Api();
     const admin = await bootstrapAdmin(t);
     const { body, text } = await checks(t, admin);
@@ -136,6 +163,10 @@ describe('Site admin → Setup', () => {
       'probe-email',
       'var-base-url',
       'ai-gateway',
+      'usage-token',
+      'usage-vars',
+      'usage-do-namespaces',
+      'usage-sync',
     ])
       expect(byId(body, id)?.status, id).toBe('ok');
     expect(byId(body, 'probe-d1').detail).toMatch(/every migration/);
@@ -145,6 +176,57 @@ describe('Site admin → Setup', () => {
       '/gitorange-actions-cache-test/__gitorange-setup-probe',
     ]);
     for (const v of Object.values(SECRETS)) expect(text).not.toContain(v);
+    expect(text).not.toContain('test-analytics-token-value');
+  });
+
+  it('warns about Usage & cost configuration: token, resource vars, namespace IDs, last sync', async () => {
+    const t = without(
+      fullEnv({
+        LIVE_NAMESPACE_ID: 'not-an-id',
+        D1_DATABASE_ID: '<your-d1-database-id>',
+      }),
+      'JOB_RUNNER_NAMESPACE_ID',
+      'MERGE_RESOLVER_NAMESPACE_ID',
+      'WORKER_NAME'
+    );
+    fakeR2Api();
+    const admin = await bootstrapAdmin(t);
+    let { body } = await checks(t, admin);
+    // Usage & cost is optional: warnings, never errors.
+    expect(
+      body.checks.filter(
+        (c) => c.category === 'Usage & cost' && c.status === 'error'
+      )
+    ).toEqual([]);
+    const vars = byId(body, 'usage-vars');
+    expect(vars.status).toBe('warning');
+    expect(vars.detail).toContain('WORKER_NAME (Worker requests and CPU)');
+    expect(vars.detail).toContain('D1_DATABASE_ID');
+    const ids = byId(body, 'usage-do-namespaces');
+    expect(ids.status).toBe('warning');
+    expect(ids.detail).toContain('JOB_RUNNER_NAMESPACE_ID is not set');
+    expect(ids.detail).toContain(
+      "LIVE_NAMESPACE_ID isn't a 32-character hex ID"
+    );
+    expect(ids.fix.map((f) => f.text).join(' ')).toContain('page URL');
+    expect(byId(body, 'usage-sync').detail).toMatch(/Never synced/);
+
+    await syncedOnce(t, { do_requests: 'GraphQL: unknown field namespaceId' });
+    ({ body } = await checks(t, admin));
+    expect(byId(body, 'usage-sync').detail).toContain('1 metric unavailable');
+    expect(byId(body, 'usage-sync').detail).toContain(
+      'unknown field namespaceId'
+    );
+
+    const noToken = without(fullEnv(), 'CF_ANALYTICS_TOKEN');
+    fakeR2Api();
+    ({ body } = await checks(noToken, admin));
+    expect(byId(body, 'usage-token')).toMatchObject({ status: 'warning' });
+    expect(
+      byId(body, 'usage-token')
+        .fix.map((f) => f.code)
+        .join(' ')
+    ).toContain('yarn wrangler secret put CF_ANALYTICS_TOKEN');
   });
 
   it('flags missing secrets as errors, with the commands to set them', async () => {
