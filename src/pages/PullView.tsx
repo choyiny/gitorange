@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { Fragment, useState } from 'react';
 import { Link, NavLink, useOutletContext, useParams } from 'react-router-dom';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import {
@@ -29,7 +29,7 @@ import { MarkdownEditor } from '@/components/CommentForm';
 import { Markdown } from '@/components/Markdown';
 import { ChecksBox } from '@/components/Checks';
 import { AiResolution } from '@/components/AiResolution';
-import { AutoMergeReview } from '@/components/AutoMergeReview';
+import { AutoMergeStatus, ReviewComment } from '@/components/AutoMergeReview';
 import { Spinner } from '@/components/Spinner';
 import { NotFound } from './NotFound';
 import { PrStateBadge } from './PrIcons';
@@ -117,7 +117,7 @@ function MergeBox({
 }: {
   repo: RepoDetail;
   d: PullDetail;
-  onDone: () => void;
+  onDone: () => Promise<unknown>;
 }) {
   const pr = d.pull;
   const [confirming, setConfirming] = useState(false);
@@ -246,7 +246,7 @@ function MergeBox({
           </div>
         </div>
         {showAi && <AiResolution repo={repo} d={d} onChange={onDone} />}
-        {d.review && <AutoMergeReview repo={repo} d={d} onChange={onDone} />}
+        {d.review && <AutoMergeStatus repo={repo} d={d} onChange={onDone} />}
         {d.canMerge &&
           d.mergeable &&
           (confirming ? (
@@ -276,7 +276,7 @@ function Conversation({
 }: {
   repo: RepoDetail;
   d: PullDetail;
-  refresh: () => void;
+  refresh: () => Promise<unknown>;
 }) {
   const me = useCurrentUser()!;
   const pr = d.pull;
@@ -285,6 +285,17 @@ function Conversation({
   const [error, setError] = useState<string | null>(null);
   const [branchDeleted, setBranchDeleted] = useState(false);
   const canEdit = d.canMerge || pr.author.id === me.id;
+  // Index of the first comment after the review (comments.length: after them all).
+  const reviewAt = !d.review
+    ? -1
+    : d.review.classification
+      ? (() => {
+          const at = d.comments.findIndex(
+            (c) => c.createdAt > d.review!.classification!.createdAt
+          );
+          return at < 0 ? d.comments.length : at;
+        })()
+      : d.comments.length;
   const send = async (andState?: 'open' | 'closed') => {
     setBusy(true);
     setError(null);
@@ -316,14 +327,22 @@ function Conversation({
           me={pr.author.id === me.id}
           label="Author"
         />
-        {d.comments.map((c) => (
-          <TimelineComment
-            key={c.id}
-            c={c}
-            me={c.author.id === me.id}
-            label={c.author.id === pr.author.id ? 'Author' : undefined}
-          />
+        {d.comments.map((c, i) => (
+          <Fragment key={c.id}>
+            {/* The auto-merge review sits in the timeline where it happened. */}
+            {reviewAt === i && (
+              <ReviewComment repo={repo} d={d} onChange={refresh} />
+            )}
+            <TimelineComment
+              c={c}
+              me={c.author.id === me.id}
+              label={c.author.id === pr.author.id ? 'Author' : undefined}
+            />
+          </Fragment>
         ))}
+        {reviewAt === d.comments.length && (
+          <ReviewComment repo={repo} d={d} onChange={refresh} />
+        )}
         {pr.state === 'merged' && (
           <>
             <TimelineEvent
@@ -521,10 +540,11 @@ export default function PullView() {
   if (!q.data) return <Spinner />;
   const d = q.data;
   const pr = d.pull;
+  // Resolves once the pull request itself has reloaded, so callers can show the new state.
   const refresh = () => {
-    qc.invalidateQueries({ queryKey: qk.pull(o, repo.name, num) });
-    qc.invalidateQueries({ queryKey: qk.repo(o, repo.name) });
-    qc.invalidateQueries({ queryKey: ['repo', o, repo.name, 'pulls'] });
+    void qc.invalidateQueries({ queryKey: qk.repo(o, repo.name) });
+    void qc.invalidateQueries({ queryKey: ['repo', o, repo.name, 'pulls'] });
+    return qc.invalidateQueries({ queryKey: qk.pull(o, repo.name, num) });
   };
   const base = `/${repo.fullName}/pull/${num}`;
   const canEdit = d.canMerge || pr.author.id === me.id;

@@ -503,7 +503,10 @@ const getPullRoute = createRoute({
         resolvedByAi: z.boolean(),
         aiResolution: z.boolean(),
         resolution: resolutionSchema.nullable(),
-        /** Auto-merge review; null when the target branch has no .gitorange/review.yml. */
+        /**
+         * Auto-merge review of the head commit. Open PRs: null without a .gitorange/review.yml.
+         * Merged or closed PRs: the last review, kept as a record (null if there was none).
+         */
         review: reviewSchema.nullable(),
         canMerge: z.boolean(),
       }),
@@ -566,10 +569,9 @@ pullsRouter.openapi(getPullRoute, async (c) => {
         );
     }
   }
-  const review =
-    pr.state === 'open' ? await reviewView(db, git, pr, shas) : null;
+  const review = await reviewView(db, git, pr, shas);
   // Backstop for missed triggers: a reviewable commit without a review gets one.
-  if (shas && review && !review.classification)
+  if (shas && pr.state === 'open' && review && !review.classification)
     c.executionCtx.waitUntil(
       ensureClassification(c.env, db, git, pr, shas).catch((e) =>
         console.error('[review] start failed', e)
@@ -793,6 +795,7 @@ const approveFlagRoute = createRoute({
   request: { params: flagParams },
   responses: {
     ...json200Response(z.object({ ok: z.literal(true) }), 'Approved'),
+    ...json400Response,
     ...json403Response,
     ...json404Response,
   },
@@ -805,6 +808,8 @@ pullsRouter.openapi(approveFlagRoute, async (c) => {
   const { number, flagId } = c.req.valid('param');
   const pr = await getPull(c, number);
   if (!pr) return c.json({ error: 'Not Found' }, 404);
+  if (pr.state !== 'open')
+    return c.json({ error: 'This pull request is no longer open' }, 400);
   const flag = await db
     .select({ id: prReviewFlags.id })
     .from(prReviewFlags)

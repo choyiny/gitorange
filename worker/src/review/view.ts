@@ -1,6 +1,8 @@
-import { asc, eq } from 'drizzle-orm';
+import { and, asc, desc, eq } from 'drizzle-orm';
+import { decoder } from '../git/bytes';
 import type { DrizzleDB } from '../db/middleware';
 import {
+  prClassifications,
   prReviewFlags,
   type ClassifierAnswer,
   type PrReviewFlag,
@@ -8,7 +10,7 @@ import {
 } from '../db/app.schema';
 import type { GitService } from '../git/service';
 import { usersById, type PublicUser } from '../lib/users';
-import { autoMergeStatus } from './auto-merge';
+import { autoMergeStatus, type AutoMergeStatus } from './auto-merge';
 import { classificationFor, crosses } from './classify';
 import {
   parsePolicy,
@@ -45,16 +47,39 @@ export async function reviewView(
   pr: PullRequest,
   shas: { base: string; head: string } | null
 ) {
-  const policyFile =
-    shas && pr.state === 'open' ? await readPolicy(git, shas.base) : null;
-  if (!shas || !policyFile) return null;
+  if (!shas) return null;
+  const open = pr.state === 'open';
+  // Open: the review under the target branch's current policy (none yet: one is starting).
+  // Merged or closed: the last review of the commit it ended at, kept as a record.
+  const policyFile = open ? await readPolicy(git, shas.base) : null;
+  if (open && !policyFile) return null;
+  const review = policyFile
+    ? await classificationFor(db, pr.id, shas.head, policyFile.sha)
+    : await db
+        .select()
+        .from(prClassifications)
+        .where(
+          and(
+            eq(prClassifications.pullRequestId, pr.id),
+            eq(prClassifications.headSha, shas.head)
+          )
+        )
+        .orderBy(desc(prClassifications.createdAt))
+        .limit(1)
+        .get();
+  if (!open && !review) return null;
+  // Questions and flag titles come from the policy the review used.
+  const policyText = review
+    ? await git
+        .blob(review.policySha)
+        .then((b) => (b ? decoder.decode(b) : null))
+    : (policyFile?.text ?? null);
   let policy: ReviewPolicy | null = null;
   try {
-    policy = parsePolicy(policyFile.text);
+    if (policyText) policy = parsePolicy(policyText);
   } catch {
     // Shown through the failed review's message.
   }
-  const review = await classificationFor(db, pr.id, shas.head, policyFile.sha);
   const flags = review
     ? await db
         .select()
@@ -67,7 +92,9 @@ export async function reviewView(
     db,
     flags.map((f) => f.approvedById ?? '').filter(Boolean)
   );
-  const status = await autoMergeStatus(db, git, pr);
+  const status: AutoMergeStatus = open
+    ? await autoMergeStatus(db, git, pr)
+    : { state: 'off' };
   const answers = review?.answers ?? {};
   return {
     classification: review
