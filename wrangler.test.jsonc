@@ -45,6 +45,7 @@
     "LFS_BUCKET_NAME": "gitorange-lfs-test",
     "ACTIONS_CACHE_BUCKET_NAME": "gitorange-actions-cache-test",
     "RESOLVER_MODEL": "@cf/zai-org/glm-5.3",
+    "AI_GATEWAY": "off",
     "SUMMARY_MODEL": "@cf/zai-org/glm-5.3-flash",
     "REVIEW_MODEL": "@cf/zai-org/glm-5.3",
   },

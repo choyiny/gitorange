@@ -1,3 +1,4 @@
+import { aiGateway, type AiFeature } from '../lib/ai-gateway';
 import type { ClassifierAnswer } from '../db/app.schema';
 
 /** Default models; `SUMMARY_MODEL` and `REVIEW_MODEL` override them. */
@@ -235,84 +236,115 @@ function unfence(text: string) {
   return m ? m[1] : text;
 }
 
-/** The models on Workers AI, through the AI binding. Every call caps its output. */
-export function workersAiModels(env: CloudflareBindings): ReviewModels {
-  const run = (model: string, input: unknown) =>
-    env.AI.run(model as never, input as never) as Promise<unknown>;
+/**
+ * The models on Workers AI, through the AI binding and AI Gateway (logged with the feature and
+ * the review it belongs to). Every call caps its output.
+ */
+export function workersAiModels(
+  env: CloudflareBindings,
+  context: { classificationId?: string } = {}
+): ReviewModels {
+  const tags: Record<string, string> = context.classificationId
+    ? { classification: context.classificationId }
+    : {};
+  const run = (model: string, input: unknown, feature: AiFeature) => {
+    const gateway = aiGateway(env, feature, tags);
+    return env.AI.run(
+      model as never,
+      input as never,
+      (gateway ? { gateway } : undefined) as never
+    ) as Promise<unknown>;
+  };
   return {
     async summarize(f) {
-      const out = await run(summaryModel(env), {
-        messages: [
-          { role: 'system', content: SUMMARY_SYSTEM },
-          {
-            role: 'user',
-            content: `File: ${f.path} (${f.status}, +${f.additions} −${f.deletions})\n\n\`\`\`diff\n${f.diff}\n\`\`\``,
-          },
-        ],
-        max_completion_tokens: 2048,
-        reasoning_effort: 'low',
-      });
+      const out = await run(
+        summaryModel(env),
+        {
+          messages: [
+            { role: 'system', content: SUMMARY_SYSTEM },
+            {
+              role: 'user',
+              content: `File: ${f.path} (${f.status}, +${f.additions} −${f.deletions})\n\n\`\`\`diff\n${f.diff}\n\`\`\``,
+            },
+          ],
+          max_completion_tokens: 2048,
+          reasoning_effort: 'low',
+        },
+        'review-summary'
+      );
       const line = chatText(out).split('\n')[0]?.trim();
       if (!line) throw new Error('The summary model returned nothing');
       return line.slice(0, 400);
     },
 
     async classify(model, state, questions) {
-      const out = (await run(classifierModel(model), {
-        model,
-        state,
-        questions,
-      })) as { answers?: Record<string, ClefAnswer> };
+      const out = (await run(
+        classifierModel(model),
+        {
+          model,
+          state,
+          questions,
+        },
+        'review-classify'
+      )) as { answers?: Record<string, ClefAnswer> };
       if (!out.answers) throw new Error('The classifier returned no answers');
       return toAnswers(out.answers);
     },
 
     async selectFiles({ flag, summaries, paths }) {
-      const out = await run(summaryModel(env), {
-        messages: [
-          { role: 'system', content: SELECT_SYSTEM },
-          {
-            role: 'user',
-            content: `Flag: ${flag}\n\nChanged files:\n${summaries}`,
+      const out = await run(
+        summaryModel(env),
+        {
+          messages: [
+            { role: 'system', content: SELECT_SYSTEM },
+            {
+              role: 'user',
+              content: `Flag: ${flag}\n\nChanged files:\n${summaries}`,
+            },
+          ],
+          response_format: {
+            type: 'json_schema',
+            json_schema: { name: 'files', strict: true, schema: SELECT_SCHEMA },
           },
-        ],
-        response_format: {
-          type: 'json_schema',
-          json_schema: { name: 'files', strict: true, schema: SELECT_SCHEMA },
+          reasoning_effort: 'low',
+          max_completion_tokens: 2000,
         },
-        reasoning_effort: 'low',
-        max_completion_tokens: 2000,
-      });
+        'review-select'
+      );
       const picked = parseInvestigationFiles(chatText(out));
       const known = new Set(paths);
       return picked.filter((p) => known.has(p)).slice(0, 12);
     },
 
     async investigate(req) {
-      const out = await run(reviewModel(env), {
-        messages: [
-          { role: 'system', content: INVESTIGATE_SYSTEM },
-          {
-            role: 'user',
-            content:
-              `Flag: ${req.flag}\n\n` +
-              `Pull request: ${req.title}\n${req.description || '(no description)'}\n\n` +
-              `Changed files:\n${req.summaries}\n\n` +
-              `Diffs:\n${req.diffs}`,
+      const out = await run(
+        reviewModel(env),
+        {
+          messages: [
+            { role: 'system', content: INVESTIGATE_SYSTEM },
+            {
+              role: 'user',
+              content:
+                `Flag: ${req.flag}\n\n` +
+                `Pull request: ${req.title}\n${req.description || '(no description)'}\n\n` +
+                `Changed files:\n${req.summaries}\n\n` +
+                `Diffs:\n${req.diffs}`,
+            },
+          ],
+          response_format: {
+            type: 'json_schema',
+            json_schema: {
+              name: 'investigation',
+              strict: true,
+              schema: INVESTIGATION_SCHEMA,
+            },
           },
-        ],
-        response_format: {
-          type: 'json_schema',
-          json_schema: {
-            name: 'investigation',
-            strict: true,
-            schema: INVESTIGATION_SCHEMA,
-          },
+          // A focused explanation, not a hard problem: little thinking, so the answer fits.
+          reasoning_effort: 'low',
+          max_completion_tokens: 6000,
         },
-        // A focused explanation, not a hard problem: little thinking, so the answer fits.
-        reasoning_effort: 'low',
-        max_completion_tokens: 6000,
-      });
+        'review-investigate'
+      );
       const text = chatText(out);
       if (!text) throw new Error('The review model returned nothing');
       const cut =

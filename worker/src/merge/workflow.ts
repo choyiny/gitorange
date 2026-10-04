@@ -34,7 +34,14 @@ export class MergeResolutionWorkflow extends WorkflowEntrypoint<
     const runner = step as unknown as StepRunner;
     if (event.payload.classificationId) {
       await executeClassification(
-        { env: this.env, db, step: runner, models: workersAiModels(this.env) },
+        {
+          env: this.env,
+          db,
+          step: runner,
+          models: workersAiModels(this.env, {
+            classificationId: event.payload.classificationId,
+          }),
+        },
         event.payload.classificationId
       );
       return;

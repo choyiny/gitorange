@@ -12,6 +12,7 @@ import {
 import { PiHarness } from 'agents/harness/pi';
 import { Lifecycle } from 'agents/lifecycle';
 import { createAI } from 'agents/models/pi-ai';
+import { aiGateway } from '../lib/ai-gateway';
 
 /** The default model for conflict resolution; `RESOLVER_MODEL` overrides it. */
 export const DEFAULT_RESOLVER_MODEL = '@cf/zai-org/glm-5.3';
@@ -117,11 +118,17 @@ async function listFiles(workspace: Workspace, dir: string): Promise<string[]> {
  * harness, model via the AI binding) edits them with file tools only — no shell, no network, no
  * git credentials. GitOrange reads the files back and builds the commit itself.
  */
+function aiSettings(env: CloudflareBindings) {
+  const gateway = aiGateway(env, 'merge-resolution');
+  return gateway ? { binding: env.AI, gateway } : { binding: env.AI };
+}
+
 export class MergeResolver
   extends DurableObject<CloudflareBindings>
   implements ConflictResolverApi
 {
-  readonly ai = createAI({ binding: this.env.AI });
+  // Through AI Gateway (cost and logs per feature), unless AI_GATEWAY is "off".
+  readonly ai = createAI(aiSettings(this.env));
   readonly workspace = new Workspace({
     storage: this.ctx.storage as unknown as DurableObjectStorageLike,
   });

@@ -85,6 +85,7 @@
     "ACTIONS_CACHE_BUCKET_NAME": "gitorange-actions-cache",
     // Workers AI model that resolves merge conflicts (pi agent with file tools).
     "RESOLVER_MODEL": "@cf/zai-org/glm-5.3",
+    "AI_GATEWAY": "default",
     "SUMMARY_MODEL": "@cf/zai-org/glm-5.3-flash",
     "REVIEW_MODEL": "@cf/zai-org/glm-5.3"
   },
@@ -137,6 +138,7 @@
         "LFS_BUCKET_NAME": "gitorange-lfs-dev",
         "ACTIONS_CACHE_BUCKET_NAME": "gitorange-actions-cache-dev",
         "RESOLVER_MODEL": "@cf/zai-org/glm-5.3",
+        "AI_GATEWAY": "default",
         "SUMMARY_MODEL": "@cf/zai-org/glm-5.3-flash",
         "REVIEW_MODEL": "@cf/zai-org/glm-5.3"
       }
