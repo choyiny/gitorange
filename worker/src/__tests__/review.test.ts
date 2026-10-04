@@ -306,8 +306,20 @@ describe('auto-merge review', () => {
       await settle(t);
     }
     expect((await pullRow(t))!.state).toBe('merged');
+    // The review stays on the merged PR as a record, with who approved what.
     d = await review(t, admin);
-    expect(d.review).toBeNull(); // merged PRs have no review panel
+    expect(d.review!.classification!.verdict).toBe('human');
+    expect(d.review!.flags.map((f) => f.approvedBy?.username)).toEqual([
+      'octocat',
+      'octocat',
+    ]);
+    expect(d.review!.autoMerge.state).toBe('off');
+    const late = await call(
+      t,
+      `/api/repos/octocat/app/pulls/1/review/flags/${d.review!.flags[0].id}/approve`,
+      { cookie: admin, method: 'POST' }
+    );
+    expect(late.status).toBe(400);
   });
 
   it('needs merge permission to approve a flag', async () => {
