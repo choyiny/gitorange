@@ -1,17 +1,17 @@
 import { OpenAPIHono, createRoute, z } from '@hono/zod-openapi';
 import type { Context } from 'hono';
-import { and, asc, desc, eq, inArray, sql } from 'drizzle-orm';
+import { and, asc, desc, eq, inArray, isNull, sql } from 'drizzle-orm';
 import {
   mergeResolutions,
+  prClassifications,
+  prReviewFlags,
   pullRequestComments,
   pullRequests,
   repositories,
   type MergeResolution,
   type PullRequest,
 } from '../db/app.schema';
-import { MergeConflictError, type GitService } from '../git/service';
-import { GitPushError, ZERO_SHA } from '../git/remote';
-import { makeCommit } from '../git/objects';
+import type { GitService } from '../git/service';
 import {
   latestResolution,
   resolutionConfigured,
@@ -35,8 +35,12 @@ import {
   publicUserSchema,
 } from './schemas';
 import { compareShas } from './repos-router';
-import { onRefsUpdated, queueRuns } from '../actions/trigger';
-import { autoResolveConflicts, ensureResolution } from '../merge/auto';
+import { queueRuns } from '../actions/trigger';
+import { ensureResolution } from '../merge/auto';
+import { landPull, pullRef } from '../merge/land';
+import { ensureClassification, retryClassification } from '../review/classify';
+import { maybeAutoMerge } from '../review/auto-merge';
+import { reviewView } from '../review/view';
 
 export const pullsRouter = new OpenAPIHono<RepoEnv>({
   defaultHook: validationHook,
@@ -55,6 +59,8 @@ const pullSchema = z
     headRef: z.string(),
     mergeCommitSha: z.string().nullable(),
     mergedBy: publicUserSchema.nullable(),
+    /** GitOrange merged it on its own (auto-merge); mergedBy is then null. */
+    mergedAutomatically: z.boolean(),
     mergedAt: z.string().nullable(),
     closedAt: z.string().nullable(),
     createdAt: z.string(),
@@ -86,6 +92,7 @@ function serializePull(
     headRef: pr.headRef,
     mergeCommitSha: pr.mergeCommitSha,
     mergedBy: pr.mergedById ? (people.get(pr.mergedById) ?? ghost) : null,
+    mergedAutomatically: pr.mergedAutomatically,
     mergedAt: pr.mergedAt?.toISOString() ?? null,
     closedAt: pr.closedAt?.toISOString() ?? null,
     createdAt: pr.createdAt.toISOString(),
@@ -93,8 +100,6 @@ function serializePull(
     commentCount,
   };
 }
-
-const pullRef = (n: number) => `refs/pull/${n}/head`;
 
 const fullName = (c: Context<RepoEnv>) =>
   `${c.get('namespace').username}/${c.get('repo').name}`;
@@ -314,6 +319,12 @@ pullsRouter.openapi(createPullRoute, async (c) => {
   await git
     .setRef(pullRef(pr.number), headSha)
     .catch((e) => console.error('[pulls] pin ref failed', e));
+  c.executionCtx.waitUntil(
+    ensureClassification(c.env, db, git, pr, {
+      base: baseSha,
+      head: headSha,
+    }).catch((e) => console.error('[review] start failed', e))
+  );
   // A PR opened against a moved base may already conflict.
   c.executionCtx.waitUntil(
     ensureResolution(c.env, db, git, pr, {
@@ -382,6 +393,84 @@ function serializeResolution(
   };
 }
 
+const answerSchema = z.union([
+  z.object({ type: z.literal('noul'), value: z.number() }),
+  z.object({
+    type: z.literal('choice'),
+    value: z.string(),
+    confidence: z.number(),
+    probabilities: z.record(z.string(), z.number()),
+  }),
+  z.object({
+    type: z.literal('score'),
+    value: z.number(),
+    confidence: z.number(),
+    probabilities: z.record(z.string(), z.number()),
+  }),
+]);
+
+const reviewSchema = z
+  .object({
+    classification: z
+      .object({
+        id: z.string(),
+        status: z.enum([
+          'summarizing',
+          'classifying',
+          'investigating',
+          'done',
+          'failed',
+        ]),
+        verdict: z.enum(['auto', 'human']).nullable(),
+        headSha: z.string(),
+        summaryModel: z.string(),
+        classifierModel: z.string(),
+        files: z.array(
+          z.object({
+            path: z.string(),
+            status: z.enum(['added', 'removed', 'modified']),
+            additions: z.number(),
+            deletions: z.number(),
+            summary: z.string(),
+          })
+        ),
+        errorMessage: z.string().nullable(),
+        durationMs: z.number().nullable(),
+        createdAt: z.string(),
+      })
+      .nullable(),
+    questions: z.array(
+      z.object({
+        id: z.string(),
+        ask: z.string(),
+        type: z.enum(['noul', 'choice', 'score']),
+        threshold: z.string(),
+        answer: answerSchema.nullable(),
+        flagged: z.boolean(),
+      })
+    ),
+    flags: z.array(
+      z.object({
+        id: z.string(),
+        source: z.enum(['question', 'path', 'limit']),
+        key: z.string(),
+        title: z.string(),
+        value: z.unknown(),
+        paths: z.array(z.string()),
+        detail: z.string().nullable(),
+        detailModel: z.string().nullable(),
+        approvedBy: publicUserSchema.nullable(),
+        approvedAt: z.string().nullable(),
+      })
+    ),
+    autoMerge: z.object({
+      state: z.enum(['off', 'disabled', 'waiting', 'blocked', 'ready']),
+      reasons: z.array(z.string()),
+      disabledAt: z.string().nullable(),
+    }),
+  })
+  .openapi('PullReview');
+
 // ── one PR ───────────────────────────────────────────────────────────────────
 
 const commentSchema = z.object({
@@ -414,6 +503,8 @@ const getPullRoute = createRoute({
         resolvedByAi: z.boolean(),
         aiResolution: z.boolean(),
         resolution: resolutionSchema.nullable(),
+        /** Auto-merge review; null when the target branch has no .gitorange/review.yml. */
+        review: reviewSchema.nullable(),
         canMerge: z.boolean(),
       }),
       'Pull request'
@@ -475,6 +566,15 @@ pullsRouter.openapi(getPullRoute, async (c) => {
         );
     }
   }
+  const review =
+    pr.state === 'open' ? await reviewView(db, git, pr, shas) : null;
+  // Backstop for missed triggers: a reviewable commit without a review gets one.
+  if (shas && review && !review.classification)
+    c.executionCtx.waitUntil(
+      ensureClassification(c.env, db, git, pr, shas).catch((e) =>
+        console.error('[review] start failed', e)
+      )
+    );
   return c.json(
     {
       pull: serializePull(pr, people, comments.length),
@@ -495,6 +595,7 @@ pullsRouter.openapi(getPullRoute, async (c) => {
       aiResolution: resolutionConfigured(c.env),
       resolvedByAi,
       resolution: resolution ? serializeResolution(resolution, shas) : null,
+      review,
       canMerge: c.get('perms').write,
     },
     200
@@ -573,6 +674,16 @@ pullsRouter.openapi(updatePullRoute, async (c) => {
           shas
         ).catch((e) => console.error('[merge] auto-resolve failed', e))
       );
+    if (shas)
+      c.executionCtx.waitUntil(
+        ensureClassification(
+          c.env,
+          c.get('db'),
+          c.get('git'),
+          { ...pr, state: 'open' },
+          shas
+        ).catch((e) => console.error('[review] start failed', e))
+      );
   }
   return c.json({ ok: true as const }, 200);
 });
@@ -649,155 +760,149 @@ const mergeRoute = createRoute({
 pullsRouter.openapi(mergeRoute, async (c) => {
   if (!c.get('perms').write)
     return c.json({ error: 'You do not have permission to merge' }, 403);
+  const pr = await getPull(c, c.req.valid('param').number);
+  if (!pr) return c.json({ error: 'Not Found' }, 404);
+  const body = c.req.valid('json');
+  const user = c.get('user')!;
+  const result = await landPull({
+    env: c.env,
+    db: c.get('db'),
+    repo: c.get('repo'),
+    repoFullName: fullName(c),
+    git: c.get('git'),
+    pr,
+    by: user,
+    author: user,
+    title: body.title,
+    message: body.message,
+    resolutionId: body.resolutionId,
+    after: (work) => c.executionCtx.waitUntil(work),
+  });
+  if (!result.ok) return c.json({ error: result.error }, result.status);
+  return c.json({ sha: result.sha }, 200);
+});
+
+// ── auto-merge review ────────────────────────────────────────────────────────
+
+const flagParams = numberParams.extend({ flagId: z.string() });
+
+const approveFlagRoute = createRoute({
+  method: 'post',
+  path: '/{owner}/{repo}/pulls/{number}/review/flags/{flagId}/approve',
+  tags: ['Pull requests'],
+  request: { params: flagParams },
+  responses: {
+    ...json200Response(z.object({ ok: z.literal(true) }), 'Approved'),
+    ...json403Response,
+    ...json404Response,
+  },
+});
+pullsRouter.openapi(approveFlagRoute, async (c) => {
+  // Approving clears a pull request for auto-merge, so it takes merge permission.
+  if (!c.get('perms').write)
+    return c.json({ error: 'You do not have permission to approve' }, 403);
+  const db = c.get('db');
+  const { number, flagId } = c.req.valid('param');
+  const pr = await getPull(c, number);
+  if (!pr) return c.json({ error: 'Not Found' }, 404);
+  const flag = await db
+    .select({ id: prReviewFlags.id })
+    .from(prReviewFlags)
+    .innerJoin(
+      prClassifications,
+      eq(prClassifications.id, prReviewFlags.classificationId)
+    )
+    .where(
+      and(
+        eq(prReviewFlags.id, flagId),
+        eq(prClassifications.pullRequestId, pr.id)
+      )
+    )
+    .get();
+  if (!flag) return c.json({ error: 'Not Found' }, 404);
+  await db
+    .update(prReviewFlags)
+    .set({ approvedById: c.get('user')!.id, approvedAt: new Date() })
+    .where(and(eq(prReviewFlags.id, flagId), isNull(prReviewFlags.approvedAt)));
+  c.executionCtx.waitUntil(
+    maybeAutoMerge(c.env, db, pr.id).catch((e) =>
+      console.error('[review] auto-merge failed', e)
+    )
+  );
+  return c.json({ ok: true as const }, 200);
+});
+
+const retryReviewRoute = createRoute({
+  method: 'post',
+  path: '/{owner}/{repo}/pulls/{number}/review/retry',
+  tags: ['Pull requests'],
+  request: { params: numberParams },
+  responses: {
+    ...json200Response(z.object({ ok: z.literal(true) }), 'Review restarted'),
+    ...json400Response,
+    ...json403Response,
+    ...json404Response,
+  },
+});
+pullsRouter.openapi(retryReviewRoute, async (c) => {
+  if (!c.get('perms').write)
+    return c.json({ error: 'You do not have permission to do that' }, 403);
+  const pr = await getPull(c, c.req.valid('param').number);
+  if (!pr) return c.json({ error: 'Not Found' }, 404);
+  const shas = pr.state === 'open' ? await pullShas(c.get('git'), pr) : null;
+  if (!shas)
+    return c.json({ error: 'Only open pull requests are reviewed' }, 400);
+  const row = await retryClassification(
+    c.env,
+    c.get('db'),
+    c.get('git'),
+    pr,
+    shas
+  );
+  if (!row)
+    return c.json(
+      { error: 'The target branch has no .gitorange/review.yml' },
+      400
+    );
+  return c.json({ ok: true as const }, 200);
+});
+
+const autoMergeRoute = createRoute({
+  method: 'put',
+  path: '/{owner}/{repo}/pulls/{number}/auto-merge',
+  tags: ['Pull requests'],
+  request: {
+    params: numberParams,
+    body: {
+      content: {
+        'application/json': { schema: z.object({ enabled: z.boolean() }) },
+      },
+    },
+  },
+  responses: {
+    ...json200Response(z.object({ ok: z.literal(true) }), 'Updated'),
+    ...json403Response,
+    ...json404Response,
+  },
+});
+pullsRouter.openapi(autoMergeRoute, async (c) => {
+  if (!c.get('perms').write)
+    return c.json({ error: 'You do not have permission to do that' }, 403);
   const db = c.get('db');
   const pr = await getPull(c, c.req.valid('param').number);
   if (!pr) return c.json({ error: 'Not Found' }, 404);
-  if (pr.state !== 'open')
-    return c.json({ error: 'Pull request is not open' }, 400);
-  const body = c.req.valid('json');
-  const user = c.get('user')!;
-  const owner = c.get('repoOwner');
-  const git = c.get('git');
-  const headSha = await git.resolve(pr.headRef);
-  if (!headSha)
-    return c.json({ error: 'The head branch no longer exists' }, 400);
-  const title = body.title?.trim() || `${pr.title} (#${pr.number})`;
-  const message = body.message ?? '';
-  const author = {
-    name: user.name,
-    email: user.email,
-    timestamp: Math.floor(Date.now() / 1000),
-  };
-  const fullMessage = message ? `${title}\n\n${message}` : title;
-  const refsBefore = await git.refs();
-  const baseBefore = refsBefore.get(`refs/heads/${pr.baseRef}`);
-  let sha: string;
-  let appliedResolution: string | null = null;
-  try {
-    // A valid AI resolution for the current commits is part of the pull request: merging
-    // lands it, whether or not the caller names it.
-    let resolutionId = body.resolutionId;
-    if (!resolutionId) {
-      const latest = await latestResolution(db, pr.id);
-      if (
-        latest?.status === 'proposed' &&
-        latest.baseSha === baseBefore &&
-        latest.headSha === headSha
-      )
-        resolutionId = latest.id;
-    }
-    if (resolutionId) {
-      const row = await db
-        .select()
-        .from(mergeResolutions)
-        .where(
-          and(
-            eq(mergeResolutions.id, resolutionId),
-            eq(mergeResolutions.pullRequestId, pr.id)
-          )
-        )
-        .get();
-      if (!row || row.status !== 'proposed' || !row.resultSha)
-        return c.json({ error: 'This resolution is no longer available' }, 400);
-      if (row.baseSha !== baseBefore || row.headSha !== headSha)
-        return c.json(
-          {
-            error:
-              'The branches changed since this resolution was made. Resolve the conflicts again.',
-          },
-          409
-        );
-      const resolved = await git.commit(row.resultSha);
-      if (!resolved)
-        return c.json({ error: 'Resolution commit is missing' }, 400);
-      // The resolved tree and its objects are already stored (on the resolution's side ref);
-      // landing is one new commit and a compare-and-swap of the base branch.
-      const commit = await makeCommit({
-        tree: resolved.treeHash,
-        parents: [row.baseSha],
-        author,
-        message: fullMessage,
-      });
-      await git.client.push(
-        [
-          {
-            ref: `refs/heads/${pr.baseRef}`,
-            old: row.baseSha,
-            new: commit.sha,
-          },
-          {
-            ref: pullRef(pr.number),
-            old: refsBefore.get(pullRef(pr.number)) ?? ZERO_SHA,
-            new: headSha,
-          },
-        ],
-        [commit]
-      );
-      sha = commit.sha;
-      appliedResolution = row.id;
-    } else {
-      ({ sha } = await git.merge({
-        base: pr.baseRef,
-        head: pr.headRef,
-        method: 'squash',
-        message: fullMessage,
-        author,
-        extraRefs: [{ ref: pullRef(pr.number), sha: headSha }],
-      }));
-    }
-  } catch (e) {
-    if (e instanceof MergeConflictError)
-      return c.json({ error: e.message }, 409);
-    if (e instanceof GitPushError)
-      return c.json(
-        { error: 'Base branch was modified. Review and try the merge again.' },
-        409
-      );
-    return c.json(
-      { error: e instanceof Error ? e.message : 'Merge failed' },
-      400
-    );
-  }
-  if (appliedResolution)
-    await db
-      .update(mergeResolutions)
-      .set({ status: 'applied', decidedAt: new Date() })
-      .where(eq(mergeResolutions.id, appliedResolution));
-  const now = new Date();
-  // The git push is the commit point; record it only after it succeeded.
+  const { enabled } = c.req.valid('json');
   await db
     .update(pullRequests)
-    .set({
-      state: 'merged',
-      mergeCommitSha: sha,
-      mergedById: user.id,
-      mergedAt: now,
-      closedAt: now,
-      updatedAt: now,
-    })
+    .set({ autoMergeDisabledAt: enabled ? null : new Date() })
     .where(eq(pullRequests.id, pr.id));
-  await db
-    .update(repositories)
-    .set({ updatedAt: now })
-    .where(eq(repositories.id, pr.repositoryId));
-  if (baseBefore)
+  if (enabled)
     c.executionCtx.waitUntil(
-      autoResolveConflicts(c.env, c.get('repo'), [
-        { ref: `refs/heads/${pr.baseRef}`, old: baseBefore, new: sha },
-      ])
-    );
-  if (baseBefore)
-    c.executionCtx.waitUntil(
-      onRefsUpdated(
-        c.env,
-        db,
-        c.get('repo'),
-        fullName(c),
-        [{ ref: `refs/heads/${pr.baseRef}`, old: baseBefore, new: sha }],
-        user.id
+      maybeAutoMerge(c.env, db, pr.id).catch((e) =>
+        console.error('[review] auto-merge failed', e)
       )
     );
-  return c.json({ sha }, 200);
+  return c.json({ ok: true as const }, 200);
 });
 
 // ── AI conflict resolution ───────────────────────────────────────────────────

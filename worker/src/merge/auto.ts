@@ -9,6 +9,7 @@ import type { GitService } from '../git/service';
 import type { DrizzleDB } from '../db/middleware';
 import type { RefUpdate } from '../actions/trigger';
 import { findRepoById, gitFor } from '../lib/repos';
+import { ensureClassification } from '../review/classify';
 import {
   carryForward,
   resolutionConfigured,
@@ -85,6 +86,11 @@ export async function executeSweep(
           git.resolve(pr.headRef),
         ]);
         if (!base || !head) return false;
+        // New commits on the PR, or a new review.yml on its target: review for auto-merge.
+        await ensureClassification(env, db, git, pr as PullRequest, {
+          base,
+          head,
+        });
         return await ensureResolution(env, db, git, pr as PullRequest, {
           base,
           head,

@@ -37,6 +37,11 @@ and better-auth. Git storage is **Cloudflare Artifacts**: one Artifacts repo per
   `MergeResolver` DO (Cloudflare Computer workspace + Pi Durable harness, model `RESOLVER_MODEL` via the `AI`
   binding). A valid resolution (`merge_resolutions.status = 'proposed'` for the current shas) makes the PR mergeable.
   Tests drive `executeResolution`/`executeSweep` with fake steps and a fake resolver.
+- Auto-merge (`worker/src/review/`): opt-in via `.gitorange/review.yml` on the target branch. Per head commit: GLM
+  one-liner per file → Clef classifies the one-liners against the policy's questions → flags (questions, path rules,
+  limits) investigated by GLM-5.3 and approved by people (`pr_classifications`, `pr_review_flags`). `maybeAutoMerge`
+  lands via `landPull` (shared with the merge button) when `autoMergeStatus` is ready. Tests drive
+  `executeClassification` with fake models.
 - Artifacts has no local emulator: `yarn dev` runs `env.dev`, which uses the remote service in the
   `gitorange-dev` namespace. Tests use `wrangler.test.jsonc` (no remote bindings) plus an in-memory
   Artifacts fake.

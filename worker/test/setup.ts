@@ -18,6 +18,8 @@ const TABLES = [
   'workflow_steps',
   'workflow_jobs',
   'workflow_runs',
+  'pr_review_flags',
+  'pr_classifications',
   'merge_resolutions',
   'lfs_objects',
   'pull_request_comments',
