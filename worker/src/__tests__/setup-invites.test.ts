@@ -83,6 +83,11 @@ describe('invitations', () => {
     expect(body.invitation.email).toBe('bob@example.com');
     expect(t.sent).toHaveLength(1);
     expect(t.sent[0].text).toContain(body.inviteUrl);
+    // Usage & cost: each accepted email is counted for today.
+    const counted = await t.env.DB.prepare(
+      "SELECT quantity, source FROM usage_daily WHERE metric = 'email.sends'"
+    ).first<{ quantity: number; source: string }>();
+    expect(counted).toEqual({ quantity: 1, source: 'gitorange' });
 
     const token = body.inviteUrl.split('/invite/')[1];
     expect((await call(t, `/api/invites/token/${token}`)).status).toBe(200);

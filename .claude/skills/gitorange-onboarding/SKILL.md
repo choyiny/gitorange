@@ -122,6 +122,7 @@ Fill in the top level (production):
 - `vars.BASE_URL`, `vars.FROM_EMAIL`
 - `vars.R2_ACCOUNT_ID` — the same account ID (keep `LFS_BUCKET_NAME` as `gitorange-lfs` unless they named the bucket differently)
 - Leave the AI defaults (`RESOLVER_MODEL`, `SUMMARY_MODEL`, `REVIEW_MODEL`, `AI_GATEWAY: "default"`) unless the user asks; `AI_GATEWAY: "off"` calls Workers AI without a gateway.
+- `vars.D1_DATABASE_ID` — the same `database_id`, so Site admin → Usage & cost reads this database's analytics. Keep `WORKER_NAME`, `ACTIONS_LOGS_BUCKET_NAME`, `ARTIFACTS_NAMESPACE`, `ACTIONS_WORKFLOW_NAME`, and `MERGE_RESOLUTION_WORKFLOW_NAME` as shipped unless they renamed those resources. Leave the three `*_NAMESPACE_ID` vars empty for now (Step 5.5).
 
 Also replace the `FROM_EMAIL` and `R2_ACCOUNT_ID` placeholders in `env.dev.vars` so local development works later.
 
@@ -148,6 +149,20 @@ If they created the R2 token in Step 2.5, have the user set both values themselv
 ! yarn wrangler secret put R2_ACCESS_KEY_ID
 ! yarn wrangler secret put R2_SECRET_ACCESS_KEY
 ```
+
+### Step 5.5: Usage & cost (optional)
+
+Site admin → **Usage & cost** shows what this deployment costs on Cloudflare. Without anything more it shows what GitOrange records itself (Actions runner time, Workers AI calls, emails). For Cloudflare's own analytics, filtered to this deployment's resources and pulled by a daily cron:
+
+1. Ask the user to create an account API token: https://dash.cloudflare.com/?to=/:account/api-tokens → **Create Token → Custom token**, with the single permission **Account → Account Analytics → Read**, scoped to this account. Then have them set it themselves (never paste it into the chat):
+
+   ```
+   ! yarn wrangler secret put CF_ANALYTICS_TOKEN
+   ```
+
+2. For Durable Object usage, ask them to open https://dash.cloudflare.com/?to=/:account/workers/durable-objects, select each of `JobRunner`, `MergeResolver`, and `LiveHub`, and read its namespace ID from the page. Put the IDs in `vars.JOB_RUNNER_NAMESPACE_ID`, `vars.MERGE_RESOLVER_NAMESPACE_ID`, and `vars.LIVE_NAMESPACE_ID`, then run `yarn deploy` again.
+
+Skipping this is fine: the page labels what isn't set up, and nothing else depends on it.
 
 ### Step 6: Fix `BASE_URL` for workers.dev (workers.dev only)
 
@@ -183,6 +198,7 @@ Report, with real values substituted:
 - Live updates: `LiveHub` Durable Object (binding `LIVE`)
 - Daily Cron Trigger (`triggers.crons`, kept as shipped): deletes Actions runs past their retention (Site admin → Settings, 90 days by default)
 - Instance name, invitation sender, and AI models can later be changed in Site admin → Settings without a deploy; the wrangler vars are only defaults
+- Usage & cost: Cloudflare analytics `<on (CF_ANALYTICS_TOKEN set) | off>`, daily sync at 02:30 UTC; Durable Object namespace IDs `<set | not set yet>`
 - Admin account `<username>`
 - To update later: `git pull && yarn install && yarn db:migrate:prod && yarn deploy`. A deploy restarts running Actions jobs (each restarts from the beginning, up to 3 attempts), so prefer deploying when no CI is running.
 
@@ -199,4 +215,5 @@ Site admin → Setup shows what's misconfigured on the deployed worker, with the
 - **LFS upload fails with `SignatureDoesNotMatch` / `AccessDenied`** — the R2 token lacks Object Read & Write on the bucket, or `R2_ACCOUNT_ID` / `LFS_BUCKET_NAME` don't match it.
 - **`wrangler deploy` says it "could not finish applying its Durable Object-managed Container application settings"** — the Worker itself deployed; run `yarn deploy` again to finish.
 - **Actions jobs never start** — Docker wasn't running when the runner image was built (Checkpoint 1.5), or the `containers` entry was removed.
+- **Usage & cost says "not configured" or "unavailable"** — `CF_ANALYTICS_TOKEN` is missing or lacks Account Analytics: Read, or a resource var (`D1_DATABASE_ID`, the `*_NAMESPACE_ID`s) is empty or wrong. Each line on the page gives the reason.
 - **No AI resolution or auto-merge review** — the `ai` binding or the `MERGE_RESOLUTION` Workflow is missing, or (for review) the repository has no `.gitorange/review.yml` on its default branch.

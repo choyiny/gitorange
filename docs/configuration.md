@@ -43,12 +43,39 @@ Variables marked **Default only** are defaults: **Site admin → Settings** over
 | `LFS_BUCKET_NAME`           | `gitorange-lfs`             | The LFS bucket's name; must match `r2_buckets[].bucket_name` (a binding doesn't expose its name)                                                                                                                                                                                                                                                                                                                                       |
 | `ACTIONS_CACHE_BUCKET_NAME` | `gitorange-actions-cache`   | The Actions cache bucket's name; must match the `ACTIONS_CACHE` binding's `bucket_name`. Without it (or the R2 token secrets), jobs run without a cache                                                                                                                                                                                                                                                                                |
 
+### Usage & cost
+
+Site admin → **Usage & cost** shows what this deployment uses on Cloudflare and what it would cost. GitOrange records Actions runner time, Workers AI calls, and emails itself. Everything else comes from Cloudflare's GraphQL Analytics API, which a daily cron (`triggers.crons`: `30 2 * * *`, 02:30 UTC) pulls into D1. Every query is filtered to the resources named below, so other things on the account never show up as GitOrange's. Leave a variable empty to skip that metric; it then shows as "not configured".
+
+| Variable                         | Example                      | Purpose                                                                                                             |
+| -------------------------------- | ---------------------------- | ------------------------------------------------------------------------------------------------------------------- |
+| `WORKER_NAME`                    | `gitorange`                  | This Worker's script name (the top-level `name`), for Workers requests and CPU time                                 |
+| `D1_DATABASE_ID`                 | `xxxxxxxx-xxxx-…`            | The `DB` database's `database_id`, for rows read and written and storage                                            |
+| `ACTIONS_LOGS_BUCKET_NAME`       | `gitorange-actions-logs`     | The `ACTIONS_LOGS` bucket's name. With `LFS_BUCKET_NAME` and `ACTIONS_CACHE_BUCKET_NAME`, the R2 buckets to measure |
+| `ARTIFACTS_NAMESPACE`            | `gitorange`                  | The `artifacts[].namespace`, for Artifacts operations                                                               |
+| `ACTIONS_WORKFLOW_NAME`          | `gitorange-actions-run`      | The `ACTIONS_RUN` Workflow's `name`                                                                                 |
+| `MERGE_RESOLUTION_WORKFLOW_NAME` | `gitorange-merge-resolution` | The `MERGE_RESOLUTION` Workflow's `name`                                                                            |
+| `JOB_RUNNER_NAMESPACE_ID`        | `0123…cdef`                  | Durable Object namespace ID of `JobRunner`: dashboard → Durable Objects → the class; the ID is on its page          |
+| `MERGE_RESOLVER_NAMESPACE_ID`    | `0123…cdef`                  | Same, for `MergeResolver`                                                                                           |
+| `LIVE_NAMESPACE_ID`              | `0123…cdef`                  | Same, for `LiveHub`                                                                                                 |
+
+`R2_ACCOUNT_ID` is the account the queries read, and `AI_GATEWAY` names the gateway whose request count is shown (for the whole gateway, which other apps or a dev instance may share, so it is never added to GitOrange's totals).
+
+The figures are estimates, not an invoice:
+
+- Prices live in one table, [`worker/src/usage/pricing.ts`](../worker/src/usage/pricing.ts), with the date they were last checked and their sources. Costs are computed on read, so fixing a price re-prices history.
+- Included allowances and the $5 plan fee are per Cloudflare account. The page shows GitOrange's usage at list price and the cost if GitOrange had the allowances to itself. If other things run on the account, the real bill for GitOrange's usage falls between the two.
+- Containers: memory and disk are billed on the provisioned instance size, so runner time × size is exact. vCPU is billed on active use, so runner time × vCPUs is an upper bound. Workers AI is billed in neurons. The page prices recorded token counts at Cloudflare's per-model rates.
+- Not measured: Artifacts storage, Workflows storage, container egress, and Workers Logs events, which have no analytics dataset. Some Durable Objects, Workers CPU, Artifacts, and AI Gateway cost fields are not in Cloudflare's docs yet. If Cloudflare rejects one, only that metric shows as unavailable, with the reason.
+- The cron re-reads the last three days, since analytics settle late. It also fills in up to four older days each run, so a new install has the last 30 days (Cloudflare's retention) after about a week. **Sync now** re-reads today and the last three days.
+
 ## Secrets
 
 | Secret                                     | How to set                                                                                                                                                                                                                                                              |
 | ------------------------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `BETTER_AUTH_SECRET`                       | Signs sessions and encrypts the MCP server's OAuth signing keys; changing it signs everyone out and disconnects every MCP app. Production: `wrangler secret put BETTER_AUTH_SECRET`. Local: `.dev.vars` (see `.dev.vars.example`). Generate with `openssl rand -hex 32` |
 | `R2_ACCESS_KEY_ID`, `R2_SECRET_ACCESS_KEY` | S3-compatible credentials of an R2 API token with **Object Read & Write** on the LFS bucket, used only to sign short-lived LFS URLs. Without them Git LFS answers "not configured"; everything else works                                                               |
+| `CF_ANALYTICS_TOKEN`                       | Optional. An account API token with only **Account Analytics: Read**, for Usage & cost. Production: `wrangler secret put CF_ANALYTICS_TOKEN`. Without it, the page shows only what GitOrange records itself (Actions runners, Workers AI calls, emails)                 |
 
 ## Environments
 

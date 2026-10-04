@@ -1,5 +1,10 @@
 import { DIAGRAM_SCHEMA, diagramSource } from './diagram';
 import { aiGateway, type AiFeature } from '../lib/ai-gateway';
+import {
+  classificationTarget,
+  recordAiUsage,
+  usageFromResponse,
+} from '../usage/record';
 import type { ClassifierAnswer } from '../db/app.schema';
 
 export const classifierModel = (name: 'clef' | 'clef-flash') =>
@@ -230,13 +235,25 @@ export function workersAiModels(
   const tags: Record<string, string> = context.classificationId
     ? { classification: context.classificationId }
     : {};
-  const run = (model: string, input: unknown, feature: AiFeature) => {
+  // Usage & cost: each call's tokens, attributed to the review's pull request and repository.
+  let target: ReturnType<typeof classificationTarget> | undefined;
+  const run = async (model: string, input: unknown, feature: AiFeature) => {
     const gateway = aiGateway(env, feature, tags);
-    return env.AI.run(
+    const out = (await env.AI.run(
       model as never,
       input as never,
       (gateway ? { gateway } : undefined) as never
-    ) as Promise<unknown>;
+    )) as unknown;
+    const id = context.classificationId;
+    target ??= id ? classificationTarget(env, id) : Promise.resolve(null);
+    await recordAiUsage(env, {
+      feature,
+      model,
+      classificationId: id ?? null,
+      ...((await target) ?? {}),
+      ...usageFromResponse(out),
+    });
+    return out;
   };
   return {
     reviewModelId: ids.review,

@@ -38,6 +38,7 @@ import RunView from './pages/RunView';
 import SettingsTokens from './pages/SettingsTokens';
 import SettingsEmails, { VerifyEmail } from './pages/SettingsEmails';
 import Admin from './pages/Admin';
+import AdminUsage from './pages/AdminUsage';
 import { NotFound } from './pages/NotFound';
 
 const queryClient = new QueryClient({
@@ -108,6 +109,14 @@ const App = () => (
                   element={
                     <AdminOnly>
                       <Admin />
+                    </AdminOnly>
+                  }
+                />
+                <Route
+                  path="/admin/usage"
+                  element={
+                    <AdminOnly>
+                      <AdminUsage />
                     </AdminOnly>
                   }
                 />

@@ -181,7 +181,36 @@ describe('AI conflict resolution', () => {
     const requests = await runResolution(t, id, () => ({
       files: { 'notes.txt': resolved },
       explanation: 'Kept the uppercase from main and the detail from the PR.',
+      transcript: JSON.stringify([
+        { role: 'user', content: 'Resolve' },
+        {
+          role: 'assistant',
+          usage: { input: 1000, output: 200, cacheRead: 500, cacheWrite: 0 },
+        },
+        { role: 'toolResult', content: 'ok' },
+        {
+          role: 'assistant',
+          usage: { input: 300, output: 50, cacheRead: 0, cacheWrite: 0 },
+        },
+      ]),
     }));
+
+    // Usage & cost: the conversation's tokens, attributed to the PR and repository.
+    const usage = await t.env.DB.prepare('SELECT * FROM ai_usage').all<
+      Record<string, unknown>
+    >();
+    expect(usage.results).toHaveLength(1);
+    expect(usage.results[0]).toMatchObject({
+      id: `merge-resolution:${id}`,
+      feature: 'merge-resolution',
+      merge_resolution_id: id,
+      requests: 2,
+      tokens_in: 1800,
+      tokens_out: 250,
+      tokens_cached: 500,
+    });
+    expect(usage.results[0].repository_id).toBeTruthy();
+    expect(usage.results[0].pull_request_id).toBeTruthy();
 
     // The model saw the file with diff3 markers and both sides' intent.
     expect(requests[0].files['notes.txt']).toContain('<<<<<<< main');

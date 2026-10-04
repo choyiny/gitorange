@@ -313,6 +313,7 @@ describe('MCP server', () => {
       ['gitorange_get_repository', true],
       ['gitorange_get_repository_insights', true],
       ['gitorange_create_repository', false],
+      ['gitorange_get_usage', true],
       ['gitorange_list_pull_requests', true],
       ['gitorange_get_pull_request', true],
       ['gitorange_create_pull_request', false],
@@ -328,6 +329,34 @@ describe('MCP server', () => {
       error: { code: number };
     };
     expect(unknown.error.code).toBe(-32601);
+  });
+
+  it('reports usage and cost to site admins only', async () => {
+    const t = makeEnv();
+    const admin = await bootstrapAdmin(t);
+    const { access_token } = await connect(t, admin);
+    const ok = await tool(t, access_token, 'gitorange_get_usage', {
+      month: '2026-09',
+    });
+    expect(ok.isError).toBeUndefined();
+    const body = JSON.parse(ok.content[0].text);
+    expect(body).toMatchObject({
+      month: '2026-09',
+      cloudflare_analytics_configured: false,
+      plan_fee_usd_account_wide: 5,
+      web_url: `${ORIGIN}/admin/usage?month=2026-09`,
+    });
+    expect(body.lines.length).toBeGreaterThan(5);
+    const bad = await tool(t, access_token, 'gitorange_get_usage', {
+      month: 'September',
+    });
+    expect(bad.isError).toBe(true);
+
+    const bob = await addMember(t, admin, 'bob');
+    const { access_token: bobToken } = await connect(t, bob);
+    const denied = await tool(t, bobToken, 'gitorange_get_usage');
+    expect(denied).toMatchObject({ isError: true });
+    expect(denied.content[0].text).toContain('site admins');
   });
 
   it('creates a repository as the signed-in user and finds it again', async () => {
@@ -438,7 +467,7 @@ describe('MCP server', () => {
     const res = await call(t, '/api/mcp', { cookie: admin });
     const body = (await res.json()) as { serverUrl: string; tools: unknown[] };
     expect(body.serverUrl).toBe(`${ORIGIN}/mcp`);
-    expect(body.tools).toHaveLength(12);
+    expect(body.tools).toHaveLength(13);
     expect((await call(t, '/api/mcp')).status).toBe(401);
   });
 });

@@ -18,6 +18,7 @@ import { findRepoById, gitFor } from '../lib/repos';
 import { getSetting } from '../lib/settings';
 import { maybeAutoMerge } from '../review/auto-merge';
 import { type ConflictResolverApi, type ResolveRequest } from './resolver';
+import { recordAiUsage, usageFromTranscript } from '../usage/record';
 
 /** Where a proposed resolution's commit waits until it is applied. */
 export const resolutionRef = (id: string) => `refs/resolutions/${id}`;
@@ -468,6 +469,23 @@ export async function executeResolution(deps: ResolutionDeps, id: string) {
           .resolve({ ...request, model: row.model });
         await env.ACTIONS_LOGS.put(transcriptKey(repo.id, id), r.transcript, {
           httpMetadata: { contentType: 'application/json' },
+        });
+        // Usage & cost: the whole conversation's tokens, one row per resolution (a retried
+        // step rejoins the same run, so its record replaces this one).
+        let messages: unknown = [];
+        try {
+          messages = JSON.parse(r.transcript);
+        } catch {
+          // Not JSON: recorded without token counts.
+        }
+        await recordAiUsage(env, {
+          id: `merge-resolution:${id}`,
+          feature: 'merge-resolution',
+          model: row.model,
+          repositoryId: repo.id,
+          pullRequestId: pr.id,
+          mergeResolutionId: id,
+          ...usageFromTranscript(messages),
         });
         const { transcript: _, ...rest } = r;
         return rest;

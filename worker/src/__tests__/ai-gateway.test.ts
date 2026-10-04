@@ -83,6 +83,59 @@ describe('AI Gateway', () => {
     );
   });
 
+  it("records each call's tokens for usage, with the review's pull request", async () => {
+    const { env: e } = recordingEnv('default');
+    const AI = {
+      run: async (model: string) =>
+        model.includes('clef')
+          ? { answers: {} }
+          : {
+              choices: [{ message: { content: 'Adds a.' } }],
+              usage: {
+                prompt_tokens: 120,
+                completion_tokens: 30,
+                prompt_tokens_details: { cached_tokens: 20 },
+              },
+            },
+    };
+    const models = workersAiModels({ ...e, AI } as never, {
+      classificationId: 'no-such-classification',
+    });
+    await models.summarize({
+      path: 'a.ts',
+      status: 'added',
+      additions: 1,
+      deletions: 0,
+      diff: '+a',
+    });
+    await models.classify('clef', { files: [] }, {});
+    const rows = (
+      await env.DB.prepare(
+        'SELECT feature, model, tokens_in, tokens_out, tokens_cached, classification_id, repository_id FROM ai_usage ORDER BY feature DESC'
+      ).all()
+    ).results;
+    expect(rows).toEqual([
+      {
+        feature: 'review-summary',
+        model: '@cf/zai-org/glm-5.3-flash',
+        tokens_in: 120,
+        tokens_out: 30,
+        tokens_cached: 20,
+        classification_id: 'no-such-classification',
+        repository_id: null,
+      },
+      {
+        feature: 'review-classify',
+        model: '@cf/cloudflare/clef',
+        tokens_in: null,
+        tokens_out: null,
+        tokens_cached: null,
+        classification_id: 'no-such-classification',
+        repository_id: null,
+      },
+    ]);
+  });
+
   it('"off" calls Workers AI directly; unset means the default gateway', () => {
     const base = { BASE_URL: 'https://git.example.com' };
     expect(

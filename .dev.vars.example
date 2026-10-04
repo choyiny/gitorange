@@ -2,3 +2,5 @@ BETTER_AUTH_SECRET=change-me-to-a-long-random-string
 # Git LFS: an R2 API token with Object Read & Write on the LFS bucket (S3-compatible credentials).
 R2_ACCESS_KEY_ID=
 R2_SECRET_ACCESS_KEY=
+# Usage & cost (Site admin): an account API token with Account Analytics: Read. Optional.
+CF_ANALYTICS_TOKEN=

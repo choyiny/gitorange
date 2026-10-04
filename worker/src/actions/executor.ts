@@ -38,6 +38,7 @@ import {
 } from './expressions';
 import { WORKSPACE, type JobRunnerApi, type StepRequest } from './job-runner';
 import { instanceTypeFor, postStepIndexes } from './plan';
+import { runnerStarted, runnersStopped } from '../usage/record';
 import { githubContext, readWorkflowFiles } from './trigger';
 import {
   parseWorkflow,
@@ -449,6 +450,7 @@ async function runJob(
         } catch (e) {
           console.warn('[actions] runner destroy failed', job.id, e);
         }
+        await runnersStopped(db, [job.id]);
         const wait = (deps.restartDelayMs ?? 15_000) * attempt;
         if (wait > 0) await new Promise((r) => setTimeout(r, wait));
         await db
@@ -561,6 +563,7 @@ async function runJob(
     } catch (e) {
       console.error('[actions] runner destroy failed', job.id, e);
     }
+    await runnersStopped(db, [job.id]);
     const outputs: Record<string, string> = {};
     for (const [k, v] of Object.entries(def.outputs)) {
       try {
@@ -650,6 +653,14 @@ async function runAttempt(
       let ok = true;
       try {
         const size = instanceTypeFor(job.runsOn);
+        // Usage & cost: the container is billed from boot until destroy.
+        await runnerStarted(db, {
+          id: `${job.id}:${/:attempt:(\d+)$/.exec(name)?.[1] ?? '1'}`,
+          jobId: job.id,
+          repositoryId: ctx.repoId,
+          instanceType: size,
+          deadlineAt: new Date(Date.now() + jobTimeoutMs + 10 * 60_000),
+        });
         const { ms } = await runner.boot(size, jobTimeoutMs);
         log = [
           ...(restartNote ? [restartNote] : []),

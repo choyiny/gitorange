@@ -1,5 +1,6 @@
 import type { DrizzleDB } from '../db/middleware';
 import { getSettings } from './settings';
+import { countUsage } from '../usage/record';
 
 function escapeHtml(s: string) {
   return s.replace(/[&<>"']/g, (ch) => `&#${ch.charCodeAt(0)};`);
@@ -27,6 +28,8 @@ async function send(
   if (!env.EMAIL || !from.email) return false;
   try {
     await env.EMAIL.send({ from, ...m });
+    // Usage & cost: Email Sending bills per accepted message.
+    await countUsage(env, 'email.sends');
     return true;
   } catch (e) {
     console.error(`[${kind}] email send failed`, e);

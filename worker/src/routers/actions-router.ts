@@ -19,6 +19,7 @@ import {
   validationHook,
 } from './openapi-helpers';
 import { ownerRepoParams, publicUserSchema } from './schemas';
+import { runnersStopped } from '../usage/record';
 
 export const actionsRouter = new OpenAPIHono<RepoEnv>({
   defaultHook: validationHook,
@@ -443,7 +444,7 @@ actionsRouter.openapi(cancelRoute, async (c) => {
     c.executionCtx.waitUntil(
       Promise.allSettled(
         jobIds.map((id) => c.env.JOB_RUNNER.getByName(id).destroy())
-      )
+      ).then(() => runnersStopped(db, jobIds))
     );
   return c.json({ ok: true as const }, 200);
 });

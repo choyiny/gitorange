@@ -53,6 +53,7 @@ Fill in:
 - `vars.FROM_EMAIL` — an address on your Email Sending domain, e.g. `noreply@example.com`.
 - `vars.R2_ACCOUNT_ID` — your account ID again (pre-signed LFS URLs point at `https://<account>.r2.cloudflarestorage.com`).
 - `routes` — uncomment and set `pattern` to your hostname if you're using a custom domain.
+- `vars.D1_DATABASE_ID` — the same `database_id` again, so **Site admin → Usage & cost** reads this database's analytics. The other usage variables (`WORKER_NAME`, the bucket, namespace, and Workflow names) already match the names above. After the first deploy, fill in `JOB_RUNNER_NAMESPACE_ID`, `MERGE_RESOLVER_NAMESPACE_ID`, and `LIVE_NAMESPACE_ID` from the dashboard's **Durable Objects** page (each class's namespace ID). Until then, Durable Object usage shows as "not configured".
 
 Keep `triggers.crons` as shipped: a daily job deletes Actions runs past their retention (set in **Site admin → Settings**, 90 days by default). `APP_NAME`, `FROM_EMAIL`, and the model variables are defaults that a site admin can change later in **Site admin → Settings** without a deploy.
 
@@ -76,6 +77,14 @@ yarn wrangler secret put R2_SECRET_ACCESS_KEY   # paste its Secret Access Key
 ```
 
 Setting a secret rolls out a new version of the worker; sign-in fails until `BETTER_AUTH_SECRET` is set, and Git LFS answers "not configured" until both R2 secrets are set.
+
+Optionally, for **Site admin → Usage & cost**: create an account API token (**Manage Account → Account API Tokens → Create Token → Custom token**) with the single permission **Account → Account Analytics → Read**, then:
+
+```bash
+yarn wrangler secret put CF_ANALYTICS_TOKEN     # paste the token
+```
+
+Without it, the page shows only what GitOrange records itself (Actions runner time, Workers AI calls, emails). With it, a daily cron (02:30 UTC) pulls this deployment's Cloudflare analytics, filtered to its own Worker, Durable Objects, Workflows, D1 database, R2 buckets, and Artifacts namespace. See [Configuration](configuration.md#usage--cost).
 
 ## 7. Create the admin account
 

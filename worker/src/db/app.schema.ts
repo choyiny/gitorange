@@ -5,6 +5,7 @@ import {
   index,
   uniqueIndex,
   primaryKey,
+  real,
 } from 'drizzle-orm/sqlite-core';
 import { sql } from 'drizzle-orm';
 import { users } from './auth.schema';
@@ -458,7 +459,103 @@ export const workflowSteps = sqliteTable(
   (t) => [uniqueIndex('workflow_steps_job_number_uq').on(t.jobId, t.number)]
 );
 
+// ── usage & cost ─────────────────────────────────────────────────────────────
+
+/**
+ * One Actions runner container, from boot to destroy. A job restarted after an interruption has
+ * one row per attempt. Container memory and disk are billed on the provisioned instance size, so
+ * duration × size is the bill (vCPU is billed on active use: duration × vCPUs is an upper bound).
+ * Rows outlive their job and repository so past months keep their cost.
+ */
+export const runnerSessions = sqliteTable(
+  'runner_sessions',
+  {
+    /** `<job id>:<attempt>`, so a retried boot step updates its own row. */
+    id: text('id').primaryKey(),
+    jobId: text('job_id').references(() => workflowJobs.id, {
+      onDelete: 'set null',
+    }),
+    repositoryId: text('repository_id').references(() => repositories.id, {
+      onDelete: 'set null',
+    }),
+    instanceType: text('instance_type').notNull(),
+    startedAt: integer('started_at', { mode: 'timestamp_ms' }).notNull(),
+    /** Null while running, or when the executor died before destroying the container. */
+    stoppedAt: integer('stopped_at', { mode: 'timestamp_ms' }),
+    /** Hard stop: the JobRunner's orphan alarm destroys the container by this time. */
+    deadlineAt: integer('deadline_at', { mode: 'timestamp_ms' }).notNull(),
+  },
+  (t) => [
+    index('runner_sessions_started_idx').on(t.startedAt),
+    index('runner_sessions_job_idx').on(t.jobId),
+  ]
+);
+
+/** One Workers AI call (or one merge resolution's whole conversation), with its token counts. */
+export const aiUsage = sqliteTable(
+  'ai_usage',
+  {
+    id: text('id').primaryKey(),
+    createdAt: integer('created_at', { mode: 'timestamp_ms' }).notNull(),
+    /** `AiFeature` from lib/ai-gateway.ts. */
+    feature: text('feature').notNull(),
+    model: text('model').notNull(),
+    repositoryId: text('repository_id').references(() => repositories.id, {
+      onDelete: 'set null',
+    }),
+    pullRequestId: text('pull_request_id').references(() => pullRequests.id, {
+      onDelete: 'set null',
+    }),
+    classificationId: text('classification_id'),
+    mergeResolutionId: text('merge_resolution_id'),
+    /** Model calls this row covers (a merge resolution makes several). */
+    requests: integer('requests').notNull().default(1),
+    /** Null when the model did not report usage. */
+    tokensIn: integer('tokens_in'),
+    tokensOut: integer('tokens_out'),
+    tokensCached: integer('tokens_cached'),
+  },
+  (t) => [index('ai_usage_created_idx').on(t.createdAt)]
+);
+
+/**
+ * Daily usage per metric and resource. `source` is `cloudflare` (GraphQL Analytics, filtered to
+ * this deployment's resources) or `gitorange` (counted by the app, e.g. emails sent). Costs are
+ * computed on read from worker/src/usage/pricing.ts, so a price fix re-prices history.
+ */
+export const usageDaily = sqliteTable(
+  'usage_daily',
+  {
+    /** UTC day, YYYY-MM-DD. */
+    date: text('date').notNull(),
+    product: text('product').notNull(),
+    metric: text('metric').notNull(),
+    /** Script, namespace, bucket, database, or gateway the number is for; '' when none. */
+    resource: text('resource').notNull().default(''),
+    quantity: real('quantity').notNull(),
+    source: text('source', { enum: ['cloudflare', 'gitorange'] }).notNull(),
+    fetchedAt: integer('fetched_at', { mode: 'timestamp_ms' }).notNull(),
+  },
+  (t) => [primaryKey({ columns: [t.date, t.metric, t.resource] })]
+);
+
+/** The latest sync of Cloudflare analytics per day, with the probes that failed. */
+export const usageSyncs = sqliteTable('usage_syncs', {
+  /** The UTC day synced, YYYY-MM-DD. */
+  id: text('id').primaryKey(),
+  startedAt: integer('started_at', { mode: 'timestamp_ms' }).notNull(),
+  completedAt: integer('completed_at', { mode: 'timestamp_ms' }),
+  status: text('status', { enum: ['ok', 'partial', 'error'] }).notNull(),
+  /** Probe id → error message, for probes that failed or were not configured. */
+  errors: text('errors', { mode: 'json' })
+    .$type<Record<string, string>>()
+    .notNull(),
+});
+
 export type Repository = typeof repositories.$inferSelect;
+export type RunnerSession = typeof runnerSessions.$inferSelect;
+export type AiUsage = typeof aiUsage.$inferSelect;
+export type UsageDaily = typeof usageDaily.$inferSelect;
 export type Team = typeof teams.$inferSelect;
 export type LfsObject = typeof lfsObjects.$inferSelect;
 export type PullRequest = typeof pullRequests.$inferSelect;

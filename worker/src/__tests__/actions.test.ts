@@ -638,6 +638,22 @@ describe('Actions restarts after interruptions', () => {
       'Step 4 (Run npm test) was interrupted: Durable Object reset because its code was updated.'
     );
     expect(await stepLog(s, jobs[0].id, 4)).toBe('ran npm test');
+    // Usage & cost: one runner session per attempt, both stopped, at the job's size.
+    const sessions = await s.t.env.DB.prepare(
+      'SELECT id, job_id, repository_id, instance_type, stopped_at FROM runner_sessions ORDER BY id'
+    ).all<Record<string, unknown>>();
+    expect(sessions.results.map((x) => x.id)).toEqual([
+      `${jobs[0].id}:1`,
+      `${jobs[0].id}:2`,
+    ]);
+    for (const x of sessions.results) {
+      expect(x).toMatchObject({
+        job_id: jobs[0].id,
+        instance_type: 'standard-2',
+      });
+      expect(x.repository_id).toBeTruthy();
+      expect(x.stopped_at).not.toBeNull();
+    }
   });
 
   it('restarts when the runner reports its container stopped under the step', async () => {
@@ -757,6 +773,34 @@ describe('Actions API', () => {
     });
     expect(s.t.actions.destroyed).toEqual([jobs[0].id]);
     expect(jobs[0].steps.every((x) => x.status === 'completed')).toBe(true);
+  });
+
+  it("marks a cancelled job's runner as stopped for usage", async () => {
+    const s = await setup();
+    await pushFiles(s, 'main', { '.github/workflows/ci.yml': CI });
+    const [run] = (await runs(s.t, s.admin)).runs;
+    const { jobs } = await runDetail(s.t, s.admin, 1);
+    await s.t.env.DB.prepare(
+      `INSERT INTO runner_sessions (id, job_id, repository_id, instance_type, started_at, stopped_at, deadline_at)
+       VALUES (?, ?, NULL, 'standard-2', ?, NULL, ?)`
+    )
+      .bind(
+        `${jobs[0].id}:1`,
+        jobs[0].id,
+        Date.now() - 60_000,
+        Date.now() + 3_600_000
+      )
+      .run();
+    expect(run.status).not.toBe('completed');
+    await call(s.t, '/api/repos/octocat/app/actions/runs/1/cancel', {
+      cookie: s.admin,
+      method: 'POST',
+    });
+    await settle(s.t);
+    const row = await s.t.env.DB.prepare(
+      'SELECT stopped_at FROM runner_sessions'
+    ).first<{ stopped_at: number | null }>();
+    expect(row?.stopped_at).toBeGreaterThan(0);
   });
 
   it('re-runs a workflow at the same commit as a new run', async () => {

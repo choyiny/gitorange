@@ -6,6 +6,10 @@ await applyD1Migrations(env.DB, env.TEST_D1_MIGRATIONS);
 
 // Storage is shared within a file: empty tables before each test, children before parents.
 const TABLES = [
+  'usage_daily',
+  'usage_syncs',
+  'ai_usage',
+  'runner_sessions',
   'oauth_client_assertions',
   'oauth_access_tokens',
   'oauth_refresh_tokens',

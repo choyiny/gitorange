@@ -434,6 +434,75 @@ export type RepoInsights = {
   };
 };
 
+export type UsageLineStatus = 'measured' | 'unavailable' | 'not-configured';
+export type UsageLine = {
+  metric: string;
+  product: string;
+  productLabel: string;
+  label: string;
+  unit: string;
+  quantity: number;
+  includedLabel: string;
+  listCost: number;
+  dedicatedCost: number;
+  projectedQuantity: number;
+  projectedListCost: number;
+  projectedDedicatedCost: number;
+  status: UsageLineStatus;
+  reason?: string;
+  source: 'cloudflare' | 'gitorange' | 'estimate';
+  note?: string;
+  billedFrom?: string;
+  resources: { resource: string; quantity: number }[];
+};
+export type UsageAiBreakdown = {
+  key: string;
+  requests: number;
+  tokensIn: number;
+  tokensOut: number;
+  cost: number;
+};
+export type UsageReport = {
+  month: string;
+  from: string;
+  to: string;
+  daysInMonth: number;
+  generatedAt: string;
+  analyticsConfigured: boolean;
+  lastSync: { day: string; completedAt: string | null; status: string } | null;
+  prices: { checkedOn: string; sources: string[]; planFee: number };
+  lines: UsageLine[];
+  totals: {
+    listCost: number;
+    dedicatedCost: number;
+    projectedListCost: number;
+    projectedDedicatedCost: number;
+  };
+  daily: { date: string; costs: Record<string, number> }[];
+  actions: {
+    minutes: number;
+    cost: number;
+    running: number;
+    byRepository: { repository: string; minutes: number; cost: number }[];
+    byInstance: { instanceType: string; minutes: number; cost: number }[];
+  };
+  ai: {
+    requests: number;
+    cost: number;
+    unreportedRequests: number;
+    byFeature: UsageAiBreakdown[];
+    byRepository: UsageAiBreakdown[];
+  };
+  gateway: {
+    id: string;
+    requests: number | null;
+    estimatedCost: number | null;
+    status: UsageLineStatus;
+    reason?: string;
+  } | null;
+  notMeasured: string[];
+};
+
 const r = (owner: string, repo: string) =>
   `/api/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}`;
 const q = (params: Record<string, string | number>) =>
@@ -648,6 +717,13 @@ export const api = {
       method: 'POST',
     }),
   approvals: () => apiFetch<ApprovalItem[]>('/api/approvals'),
+  usage: (month: string) =>
+    apiFetch<UsageReport>(`/api/admin/usage?${q({ month })}`),
+  syncUsage: () =>
+    apiFetch<{
+      days: string[];
+      errors: Record<string, Record<string, string>>;
+    }>('/api/admin/usage/sync', { method: 'POST' }),
   insights: (o: string, n: string, days: number) =>
     apiFetch<RepoInsights>(`${r(o, n)}/insights?${q({ days })}`),
   adminSettings: () => apiFetch<AdminSettingsView>('/api/admin/settings'),
@@ -694,6 +770,7 @@ export const qk = {
   mcp: ['mcp'] as const,
   approvals: ['approvals'] as const,
   adminSettings: ['admin', 'settings'] as const,
+  usage: (month: string) => ['usage', month] as const,
   mcpConnections: ['mcp', 'connections'] as const,
   namespace: (u: string) => ['namespace', u] as const,
   team: ['team'] as const,

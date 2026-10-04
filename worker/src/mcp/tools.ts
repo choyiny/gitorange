@@ -10,6 +10,7 @@ import { users } from '../db/auth.schema';
 import type { DrizzleDB } from '../db/middleware';
 import { createRepository } from '../lib/repo-create';
 import { INSIGHT_PERIODS, repoInsights } from '../lib/insights';
+import { isMonth, usageReport } from '../usage/report';
 import {
   findRepo,
   gitFor,
@@ -335,6 +336,70 @@ const getRepositoryInsights: ToolModule = {
   },
 };
 
+const getUsage: ToolModule = {
+  definition: {
+    name: 'gitorange_get_usage',
+    title: 'Get usage and cost',
+    description:
+      "Site admins only. This GitOrange deployment's Cloudflare usage and estimated cost for a calendar month " +
+      '(UTC, default the current one): per product and metric, the cost at list price, the cost if GitOrange had ' +
+      "the account's included allowances to itself, and a projection to month end; Actions runner minutes and " +
+      'cost by repository; Workers AI cost by feature. Figures are estimates from Cloudflare analytics and ' +
+      "GitOrange's own records, not an invoice. Lines that could not be measured say why.",
+    annotations: { readOnlyHint: true, title: 'Get usage and cost' },
+    inputSchema: {
+      type: 'object',
+      properties: {
+        month: {
+          type: 'string',
+          description: 'YYYY-MM. Defaults to the current month.',
+        },
+      },
+    },
+  },
+  handler: async (args, ctx) => {
+    if (ctx.user.role !== 'admin')
+      throw new McpToolError('Only site admins can see usage and cost.');
+    const month =
+      optionalString(args, 'month') ?? new Date().toISOString().slice(0, 7);
+    if (!isMonth(month)) throw new McpToolError('month must be YYYY-MM.');
+    const r = await usageReport(ctx.db, ctx.env, month);
+    return {
+      content: [
+        json({
+          month: r.month,
+          estimate_note:
+            'Estimates, not an invoice. Included allowances and the plan fee are per Cloudflare account, shared with anything else on it.',
+          cloudflare_analytics_configured: r.analyticsConfigured,
+          last_sync: r.lastSync,
+          totals_usd: snakeKeys(r.totals),
+          plan_fee_usd_account_wide: r.prices.planFee,
+          prices_checked_on: r.prices.checkedOn,
+          lines: r.lines.map((l) => ({
+            product: l.productLabel,
+            metric: l.label,
+            unit: l.unit,
+            quantity: l.quantity,
+            included_account_wide: l.includedLabel,
+            list_cost_usd: l.listCost,
+            dedicated_cost_usd: l.dedicatedCost,
+            projected_list_cost_usd: l.projectedListCost,
+            status: l.status,
+            source: l.source,
+            ...(l.reason ? { reason: l.reason } : {}),
+            ...(l.note ? { note: l.note } : {}),
+          })),
+          actions: snakeKeys(r.actions),
+          workers_ai: snakeKeys(r.ai),
+          ai_gateway_whole_gateway: r.gateway && snakeKeys(r.gateway),
+          not_measured: r.notMeasured,
+          web_url: `${ctx.baseURL}/admin/usage?month=${r.month}`,
+        }),
+      ],
+    };
+  },
+};
+
 function cloneHelp(baseURL: string, fullName: string) {
   return (
     `To work on it locally: git clone ${baseURL}/${fullName}.git\n` +
@@ -430,6 +495,7 @@ export const TOOL_MODULES: ToolModule[] = [
   getRepository,
   getRepositoryInsights,
   createRepositoryTool,
+  getUsage,
   ...PULL_TOOLS,
 ];
 export const TOOL_DEFINITIONS = TOOL_MODULES.map((m) => m.definition);

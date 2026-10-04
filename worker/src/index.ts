@@ -29,6 +29,8 @@ import { approvalsRouter } from './routers/approvals-router';
 import { insightsRouter } from './routers/insights-router';
 import { adminSetupRouter } from './routers/admin-setup-router';
 import { adminRouter } from './routers/admin-router';
+import { usageRouter } from './routers/usage-router';
+import { runScheduled } from './cron';
 
 const app = new OpenAPIHono<AppEnv>();
 
@@ -94,6 +96,9 @@ app.route('/api/mcp', mcpApiRouter);
 app.use('/api/tokens/*', requireAuth);
 app.use('/api/tokens', requireAuth);
 app.route('/api/tokens', tokensRouter);
+app.use('/api/admin/usage/*', requireAdmin);
+app.use('/api/admin/usage', requireAdmin);
+app.route('/api/admin/usage', usageRouter);
 app.use('/api/emails/*', requireAuth);
 app.use('/api/emails', requireAuth);
 app.route('/api/emails', emailsRouter);
@@ -126,13 +131,17 @@ export { MergeResolutionWorkflow } from './merge/workflow';
 export { LiveHub } from './live/hub';
 
 export default {
-  /** Daily housekeeping (Cron Trigger): deletes Actions runs past their retention. */
-  scheduled(_controller, env, ctx) {
+  /**
+   * Daily housekeeping (Cron Trigger): deletes Actions runs past their
+   * retention and syncs usage analytics from Cloudflare.
+   */
+  scheduled(controller, env, ctx) {
     ctx.waitUntil(
       runActionsRetention(env, drizzle(env.DB, { schema })).catch((e) =>
         console.error('[actions] retention failed', e)
       )
     );
+    ctx.waitUntil(runScheduled(controller, env));
   },
   fetch(request, env, ctx) {
     const url = new URL(request.url);
