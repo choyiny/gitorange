@@ -150,17 +150,20 @@ actionsRouter.openapi(listRoute, async (c) => {
       .limit(PAGE_SIZE)
       .offset((page - 1) * PAGE_SIZE)
       .all(),
-    // The latest name each workflow file ran under.
+    // The latest name each workflow file ran under. With MAX() in a grouped query, SQLite takes
+    // the other columns from the row holding the maximum, i.e. each file's newest run.
     db
       .select({
         path: workflowRuns.workflowPath,
-        name: sql<string>`(SELECT name FROM workflow_runs w2 WHERE w2.repository_id = ${repo.id} AND w2.workflow_path = ${workflowRuns.workflowPath} ORDER BY run_number DESC LIMIT 1)`,
+        name: workflowRuns.name,
+        latest: sql<number>`MAX(${workflowRuns.runNumber})`,
       })
       .from(workflowRuns)
       .where(eq(workflowRuns.repositoryId, repo.id))
       .groupBy(workflowRuns.workflowPath)
       .orderBy(asc(workflowRuns.workflowPath))
-      .all(),
+      .all()
+      .then((list) => list.map(({ path, name }) => ({ path, name }))),
   ]);
   const people = await usersById(
     db,

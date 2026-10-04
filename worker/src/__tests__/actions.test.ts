@@ -196,6 +196,37 @@ function harness(
 const script = (r: StepRequest) => r.argv[r.argv.length - 1];
 
 describe('Actions triggers', () => {
+  it("names each workflow after its own latest run, not the repository's latest run", async () => {
+    const s = await setup();
+    const format = (name: string) => `name: ${name}
+on: push
+jobs:
+  prettier:
+    runs-on: ubuntu-latest
+    steps:
+      - run: echo format
+`;
+    await pushFiles(s, 'main', {
+      '.github/workflows/ci.yml': CI,
+      '.github/workflows/format.yml': format('Format'),
+    });
+    // Rename the format workflow: its newest run is now the repository's newest run too.
+    await pushFiles(
+      s,
+      'main',
+      {
+        '.github/workflows/ci.yml': CI,
+        '.github/workflows/format.yml': format('Prettier'),
+      },
+      'Rename format'
+    );
+    const list = await runs(s.t, s.admin);
+    expect(list.workflows).toEqual([
+      { path: '.github/workflows/ci.yml', name: 'CI' },
+      { path: '.github/workflows/format.yml', name: 'Prettier' },
+    ]);
+  });
+
   it('queues a run when a push adds a workflow, and starts its Workflow', async () => {
     const s = await setup();
     const sha = await pushFiles(s, 'main', {
