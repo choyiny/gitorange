@@ -38,9 +38,12 @@ function Item({ item }: { item: ApprovalItem }) {
 
   return (
     <div className="Box mb-3">
-      <div className="Box-header d-flex flex-items-center" style={{ gap: 8 }}>
+      <div
+        className="Box-header d-flex flex-items-center flex-wrap"
+        style={{ gap: 8 }}
+      >
         <GitPullRequestIcon className="color-fg-open" />
-        <div className="flex-1" style={{ minWidth: 0 }}>
+        <div className="flex-1" style={{ minWidth: 200 }}>
           <div className="f6 color-fg-muted">{item.repo.fullName}</div>
           <Link to={prUrl} className="text-bold color-fg-default f4">
             {item.pull.title}

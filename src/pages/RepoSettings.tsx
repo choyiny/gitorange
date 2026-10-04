@@ -247,7 +247,7 @@ export default function RepoSettings() {
               Once you delete a repository, there is no going back. Type{' '}
               <strong>{repo.fullName}</strong> to confirm.
             </p>
-            <div className="d-flex" style={{ gap: 8 }}>
+            <div className="d-flex flex-column flex-sm-row" style={{ gap: 8 }}>
               <input
                 className="form-control flex-1"
                 value={confirmName}

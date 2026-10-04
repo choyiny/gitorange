@@ -184,7 +184,7 @@ export function Flag({
 }) {
   const value = flagValue(f);
   return (
-    <div className="border rounded-2 p-3 mb-2">
+    <div className="border rounded-2 p-2 p-sm-3 mb-2">
       <div className="d-flex flex-items-start" style={{ gap: 8 }}>
         {approver ? (
           <CheckCircleFillIcon className="color-fg-success mt-1 flex-shrink-0" />
@@ -200,9 +200,9 @@ export function Flag({
             {value && <span className="Label Label--attention">{value}</span>}
           </div>
           {f.paths.length > 0 && (
-            <div className="f6 mt-1">
+            <div className="f6 mt-1 d-flex flex-wrap" style={{ gap: 4 }}>
               {f.paths.map((p) => (
-                <code key={p} className="mr-1">
+                <code key={p} style={{ overflowWrap: 'anywhere' }}>
                   {p}
                 </code>
               ))}
@@ -446,7 +446,7 @@ export function ReviewComment({
           <span className="flex-1" />
           <span className="Label">bot</span>
         </div>
-        <div className="p-3">
+        <div className="p-2 p-sm-3">
           {error && <div className="flash flash-error mb-2">{error}</div>}
           {summary}
           {review.flags.map((f) => {

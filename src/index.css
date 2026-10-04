@@ -481,3 +481,64 @@ body {
 .markdown-body code.language-diff .diff-line-del {
   background: var(--diffBlob-deletionLine-bgColor, rgba(248, 81, 73, 0.15));
 }
+
+/* ── Phones ─────────────────────────────────────────────────────────────── */
+.file-table col.col-name {
+  width: 35%;
+}
+.file-table col.col-age {
+  width: 150px;
+}
+/* The latest-commit message takes whatever room is left and truncates to one line. */
+.latest-commit-message {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+/* A long repository name in the header truncates instead of wrapping; the owner stays whole. */
+.AppHeader-context a {
+  flex-shrink: 0;
+  white-space: nowrap;
+}
+.AppHeader-context a:last-child {
+  flex-shrink: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+:root {
+  --dashboard-aside-min-height: auto;
+}
+@media (min-width: 768px) {
+  :root {
+    --dashboard-aside-min-height: calc(100vh - 65px);
+  }
+}
+@media (max-width: 767.98px) {
+  /* Avatars beside comments are hidden at this width, so their speech-bubble arrows go too. */
+  .comment-arrow::before,
+  .comment-arrow::after {
+    display: none;
+  }
+}
+@media (max-width: 543.98px) {
+  /* GitHub drops the last-commit message column on phones; the name and age need the room. */
+  .file-table col.col-msg,
+  .file-table td.col-msg {
+    display: none;
+  }
+  .file-table td {
+    padding: 8px 12px;
+  }
+  .file-table col.col-name {
+    width: auto;
+  }
+  .file-table col.col-age {
+    width: 110px;
+  }
+  .latest-commit {
+    padding: 8px 12px;
+  }
+}

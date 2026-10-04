@@ -26,7 +26,8 @@ export default function Dashboard() {
       <div className="d-flex flex-column flex-md-row">
         <aside
           className="col-md-4 col-lg-3 p-4 border-right color-bg-subtle"
-          style={{ minHeight: 'calc(100vh - 65px)' }}
+          // Full height beside the feed on desktop; on phones it sits above it.
+          style={{ minHeight: 'var(--dashboard-aside-min-height)' }}
         >
           <div className="d-flex flex-items-center mb-2" style={{ gap: 8 }}>
             <Avatar user={{ username: user.username ?? user.name }} size={20} />

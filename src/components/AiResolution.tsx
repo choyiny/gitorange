@@ -106,7 +106,10 @@ export function AiResolution({
     return (
       <>
         <div className="Box-row">
-          <div className="d-flex flex-items-center mb-2" style={{ gap: 8 }}>
+          <div
+            className="d-flex flex-items-center flex-wrap mb-2"
+            style={{ columnGap: 8, rowGap: 2 }}
+          >
             <SparkleFillIcon className="color-fg-done" />
             <span className="text-bold">Conflicts resolved by AI</span>
             <span className="f6 color-fg-muted">

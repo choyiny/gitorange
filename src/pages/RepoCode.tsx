@@ -212,27 +212,31 @@ function LatestCommitBar({ repo, data }: { repo: RepoDetail; data: Contents }) {
   return (
     <div className="latest-commit">
       <Avatar user={{ username: c.author.name }} size={20} />
-      <span className="text-bold">{c.author.name}</span>
+      <span className="text-bold flex-shrink-0">{c.author.name}</span>
       <Link
         to={`${base}/commit/${c.hash}`}
-        className="color-fg-muted text-truncate flex-1"
+        className="color-fg-muted latest-commit-message"
       >
         {firstLine(c.message)}
       </Link>
       <CommitStatus repo={repo} sha={c.hash} />
+      {/* On phones: no SHA and just the History icon, so the message keeps its room. */}
       <Link
         to={`${base}/commit/${c.hash}`}
-        className="color-fg-muted text-mono-sm"
+        className="color-fg-muted text-mono-sm d-none d-sm-inline flex-shrink-0"
       >
         {shortSha(c.hash)}
       </Link>
-      <span className="color-fg-muted f6">· {timeAgo(c.committedAt)}</span>
+      <span className="color-fg-muted f6 flex-shrink-0 no-wrap">
+        · {timeAgo(c.committedAt)}
+      </span>
       <Link
         to={`${base}/commits/${data.ref}`}
-        className="btn-invisible btn btn-sm d-inline-flex flex-items-center ml-2"
+        className="btn-invisible btn btn-sm d-inline-flex flex-items-center flex-shrink-0"
         style={{ gap: 4 }}
+        aria-label="History"
       >
-        <HistoryIcon /> History
+        <HistoryIcon /> <span className="d-none d-sm-inline">History</span>
       </Link>
     </div>
   );
@@ -263,9 +267,9 @@ function TreeView({ repo, data }: { repo: RepoDetail; data: Contents }) {
         <LatestCommitBar repo={repo} data={data} />
         <table className="file-table">
           <colgroup>
-            <col style={{ width: '35%' }} />
-            <col />
-            <col style={{ width: 150 }} />
+            <col className="col-name" />
+            <col className="col-msg" />
+            <col className="col-age" />
           </colgroup>
           <tbody>
             {data.path && (

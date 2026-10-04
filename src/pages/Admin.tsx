@@ -295,7 +295,7 @@ export default function Admin() {
                 style={{ gap: 12 }}
               >
                 <Avatar user={m} size={32} />
-                <div className="flex-1">
+                <div className="flex-1" style={{ minWidth: 0 }}>
                   <Link
                     to={`/${m.username}`}
                     className="text-bold color-fg-default"
@@ -303,14 +303,25 @@ export default function Admin() {
                     {m.username}
                   </Link>
                   <span className="color-fg-muted ml-2">{m.name}</span>
-                  <div className="f6 color-fg-muted">{m.email}</div>
+                  <div
+                    className="f6 color-fg-muted"
+                    style={{ overflowWrap: 'anywhere' }}
+                  >
+                    {m.email}
+                  </div>
                 </div>
-                {m.role === 'admin' && (
-                  <span className="Label Label--accent">Site admin</span>
-                )}
-                <span className="f6 color-fg-muted">
-                  Joined {timeAgo(m.createdAt)}
-                </span>
+                {/* Stacked on the right so the name and email keep the width on phones. */}
+                <div
+                  className="d-flex flex-column flex-items-end flex-shrink-0"
+                  style={{ gap: 4 }}
+                >
+                  {m.role === 'admin' && (
+                    <span className="Label Label--accent">Site admin</span>
+                  )}
+                  <span className="f6 color-fg-muted no-wrap">
+                    Joined {timeAgo(m.createdAt)}
+                  </span>
+                </div>
               </div>
             ))}
           </div>

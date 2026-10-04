@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { Fragment, useState } from 'react';
 import {
   ChevronDownIcon,
   ChevronRightIcon,
@@ -27,7 +27,7 @@ function DiffStat({
     <span className="d-inline-flex flex-items-center" style={{ gap: 4 }}>
       <span className="color-fg-success text-bold">+{additions}</span>
       <span className="color-fg-danger text-bold">−{deletions}</span>
-      <span>
+      <span className="d-none d-sm-inline">
         {Array.from({ length: 5 }, (_, i) => (
           <span
             key={i}
@@ -107,8 +107,21 @@ function FileBlock({ file }: { file: FileDiff }) {
           {open ? <ChevronDownIcon /> : <ChevronRightIcon />}
         </button>
         <DiffStat additions={file.additions} deletions={file.deletions} />
-        <span className="text-bold" style={{ wordBreak: 'break-all' }}>
-          {file.path}
+        <span
+          className="text-bold"
+          style={{ overflowWrap: 'anywhere', minWidth: 0 }}
+        >
+          {/* Break long paths after a slash first, like GitHub. */}
+          {file.path.split('/').map((part, i, all) => (
+            <Fragment key={i}>
+              {part}
+              {i < all.length - 1 && (
+                <>
+                  /<wbr />
+                </>
+              )}
+            </Fragment>
+          ))}
         </span>
         {file.status !== 'modified' && (
           <span

@@ -44,14 +44,14 @@ function CommitRow({ c, base }: { c: Commit; base: string }) {
           </pre>
         )}
         <div
-          className="f6 color-fg-muted mt-1 d-flex flex-items-center"
-          style={{ gap: 6 }}
+          className="f6 color-fg-muted mt-1 d-flex flex-items-center flex-wrap"
+          style={{ columnGap: 6, rowGap: 2 }}
         >
           <Avatar user={{ username: c.author.name }} size={16} />
-          <span className="text-bold color-fg-default">
+          <span className="text-bold color-fg-default no-wrap">
             {c.author.name}
-          </span>{' '}
-          committed {timeAgo(c.committedAt)}
+          </span>
+          <span className="no-wrap">committed {timeAgo(c.committedAt)}</span>
         </div>
       </div>
       <div className="BtnGroup d-flex">
