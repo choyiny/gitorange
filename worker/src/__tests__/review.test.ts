@@ -731,6 +731,7 @@ describe('code excerpts for flags', () => {
     );
     expect(parsed).toEqual({
       detail: 'Risky.',
+      changes: [],
       diagram: 'flowchart LR\n  A-->B',
       snippets: [{ path: 'a.py', start: 11, end: 12, why: 'here' }],
       paths: ['a.py'],
@@ -832,5 +833,70 @@ describe('investigations read only the relevant files', () => {
     );
     const flag = (await review(t, admin)).review!.flags[0];
     expect(flag.detail).not.toContain('```mermaid');
+  });
+});
+
+describe('flags show before and after, and their diagram', () => {
+  it('renders the changes as a before/after table and keeps one-line or escaped diagrams', async () => {
+    const { parseInvestigation, mermaidSource } =
+      await import('../review/models');
+    const parsed = parseInvestigation(
+      JSON.stringify({
+        detail: 'Adds the instance_settings table.',
+        changes: [
+          {
+            what: 'instance_settings',
+            before: 'none',
+            after: 'key, value | json',
+          },
+          { what: '', before: 'x', after: 'y' },
+        ],
+        diagram: 'erDiagram\\n  SETTINGS {\\n    text key PK "NEW"\\n  }',
+        snippets: [],
+        files: [],
+      }),
+      []
+    );
+    expect(parsed.changes).toEqual([
+      { what: 'instance_settings', before: 'none', after: 'key, value | json' },
+    ]);
+    // A literal "\n" from the model becomes a real line break.
+    expect(parsed.diagram).toBe(
+      'erDiagram\n  SETTINGS {\n    text key PK "NEW"\n  }'
+    );
+    expect(mermaidSource('flowchart LR\nA-->B')).toBe('flowchart LR\nA-->B');
+    // Crammed onto one line (what models do with a single string): not drawable.
+    expect(mermaidSource('erDiagram SETTINGS { text key PK }')).toBeNull();
+    // As a list of lines, comments dropped.
+    expect(
+      parseInvestigation(
+        JSON.stringify({
+          detail: 'd',
+          changes: [],
+          diagram: ['erDiagram', '%% note', 'X {', 'text id PK', '}'],
+          snippets: [],
+          files: [],
+        }),
+        []
+      ).diagram
+    ).toBe('erDiagram\nX {\ntext id PK\n}');
+    expect(mermaidSource('erDiagram')).toBeNull();
+    expect(mermaidSource('')).toBeNull();
+
+    const { t, admin } = await pullWith({
+      'migrations/1.sql': 'CREATE TABLE x (id TEXT);\n',
+    });
+    const { models } = fakeModels(DATA_CHANGE);
+    const investigate = models.investigate;
+    models.investigate = async (req) => ({
+      ...(await investigate(req)),
+      detail: 'Adds table x.',
+      changes: [{ what: 'x', before: 'none', after: 'id | text' }],
+    });
+    await runReviews(t, models);
+    const flag = (await review(t, admin)).review!.flags[0];
+    expect(flag.detail).toContain('| | Before | After |');
+    expect(flag.detail).toContain('| **x** | none | id \\| text |');
+    expect(flag.detail).toContain('```mermaid\nerDiagram');
   });
 });

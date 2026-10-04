@@ -18,6 +18,7 @@ import type { StepRunner } from '../merge/resolution';
 import { resolutionConfigured } from '../merge/resolution';
 import {
   classifierModel,
+  mermaidSource,
   reviewModel,
   summaryModel,
   type ClefQuestion,
@@ -267,21 +268,31 @@ const escapeHtml = (t: string) =>
  * The flag's comment body: the explanation, its diagram as a Mermaid block, and each code
  * excerpt as an expandable block taken from the real diff (never from model output).
  */
+/** Text for one Markdown table cell. */
+const cell = (s: string) => s.replace(/\|/g, '\\|').replace(/\s*\n\s*/g, ' ');
+
 async function composeDetail(
   git: GitService,
   changes: FileChange[],
   out: Investigation
 ): Promise<string> {
   const parts = [out.detail];
-  // A diagram needs more than its type line ("erDiagram") to be worth drawing.
-  if (
-    out.diagram &&
-    out.diagram.split('\n').filter((l) => l.trim()).length >= 2
-  )
-    parts.push('```mermaid\n' + out.diagram + '\n```');
+  if (out.changes?.length)
+    parts.push(
+      [
+        '| | Before | After |',
+        '|---|---|---|',
+        ...out.changes.map(
+          (c) =>
+            `| **${cell(c.what)}** | ${cell(c.before) || '—'} | ${cell(c.after) || '—'} |`
+        ),
+      ].join('\n')
+    );
+  const diagram = out.diagram && mermaidSource(out.diagram);
+  if (diagram) parts.push('```mermaid\n' + diagram + '\n```');
   for (const s of out.snippets) {
     const ch = changes.find((c) => c.path === s.path);
-    if (!ch) continue;
+    if (!ch || GENERATED.test(ch.path) || LOCKFILE.test(ch.path)) continue;
     const [d] = await git.fileDiffs([ch]);
     if (d.binary || d.tooLarge) continue;
     const lines = snippetLines(d, s.start, s.end);

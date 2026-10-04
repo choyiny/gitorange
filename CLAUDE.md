@@ -42,7 +42,7 @@ and better-auth. Git storage is **Cloudflare Artifacts**: one Artifacts repo per
   Tests drive `executeResolution`/`executeSweep` with fake steps and a fake resolver.
 - Auto-merge (`worker/src/review/`): opt-in via `.gitorange/review.yml` on the target branch. Per head commit: GLM
   one-liner per file → Clef classifies the one-liners against the policy's questions → flags (questions, limits; no
-  path rules) investigated by GLM-5.3 (Markdown + Mermaid diagram + excerpts cut from the real diff) and approved by
+  path rules) investigated by GLM-5.3 (one sentence + before/after table + Mermaid diagram + excerpts cut from the real diff) and approved by
   people (`pr_classifications`, `pr_review_flags`). `maybeAutoMerge` lands via `landPull` (shared with the merge
   button) when `autoMergeStatus` is ready. `GET /api/approvals` (`review/inbox.ts`) feeds the global Approvals page.
   Tests drive `executeClassification` with fake models.
