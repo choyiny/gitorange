@@ -1,6 +1,12 @@
-import { useEffect, useMemo, useRef } from 'react';
+import { useEffect, useMemo, useRef, type MouseEvent } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { marked } from 'marked';
 import DOMPurify from 'dompurify';
+import {
+  repoImageSrc,
+  repoLinkHref,
+  type RepoMarkdownContext,
+} from '@/lib/repoUrls';
 
 marked.setOptions({ gfm: true, breaks: false });
 
@@ -80,27 +86,66 @@ function colorDiffs(root: HTMLElement) {
   }
 }
 
+/**
+ * Resolves relative image sources and links in a repository Markdown file (see `repoUrls`).
+ * Runs on sanitized HTML inside an inert <template>, so nothing loads before it's rewritten.
+ */
+function rewriteRepoUrls(html: string, repo: RepoMarkdownContext): string {
+  const tpl = document.createElement('template');
+  tpl.innerHTML = html;
+  for (const img of tpl.content.querySelectorAll('img[src]')) {
+    const src = repoImageSrc(repo, img.getAttribute('src')!);
+    if (src) img.setAttribute('src', src);
+  }
+  for (const a of tpl.content.querySelectorAll('a[href]')) {
+    const href = repoLinkHref(repo, a.getAttribute('href')!);
+    if (!href) continue;
+    a.setAttribute('href', href);
+    a.setAttribute('data-repo-link', '');
+  }
+  return tpl.innerHTML;
+}
+
 export function Markdown({
   source,
   className = '',
+  repo,
 }: {
   source: string;
   className?: string;
+  /** Set for a Markdown file in a repository: resolves its relative links and images. */
+  repo?: RepoMarkdownContext;
 }) {
   const ref = useRef<HTMLDivElement>(null);
-  const html = useMemo(
-    () => DOMPurify.sanitize(marked.parse(source, { async: false }) as string),
-    [source]
-  );
+  const navigate = useNavigate();
+  const { owner, repo: name, ref: gitRef, dir } = repo ?? {};
+  const html = useMemo(() => {
+    const clean = DOMPurify.sanitize(
+      marked.parse(source, { async: false }) as string
+    );
+    return owner !== undefined
+      ? rewriteRepoUrls(clean, { owner, repo: name!, ref: gitRef!, dir: dir! })
+      : clean;
+  }, [source, owner, name, gitRef, dir]);
   useEffect(() => {
     if (!ref.current) return;
     colorDiffs(ref.current);
     void renderDiagrams(ref.current);
   }, [html]);
+  // Links into the repository navigate inside the app instead of reloading the page.
+  const onClick = (e: MouseEvent<HTMLDivElement>) => {
+    if (e.button !== 0 || e.metaKey || e.ctrlKey || e.shiftKey || e.altKey)
+      return;
+    const a = (e.target as HTMLElement).closest('a[data-repo-link]');
+    if (!a || a.getAttribute('target')) return;
+    e.preventDefault();
+    navigate(a.getAttribute('href')!);
+  };
   return (
     <div
       ref={ref}
       className={`markdown-body ${className}`}
+      onClick={onClick}
       dangerouslySetInnerHTML={{ __html: html }}
     />
   );

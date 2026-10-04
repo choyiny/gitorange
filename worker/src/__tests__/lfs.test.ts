@@ -266,6 +266,14 @@ describe('Git LFS in the web UI', () => {
       size: f.size,
       stored: false,
     });
+    // Not uploaded yet: the raw endpoint serves the pointer itself.
+    const rawPointer = await call(
+      t,
+      '/api/repos/octocat/app/raw?ref=main&path=logo.png',
+      { cookie: admin }
+    );
+    expect(rawPointer.status).toBe(200);
+    expect(await rawPointer.text()).toBe(pointer);
 
     await t.env.LFS.put(`lfs/${repoId}/${f.oid}`, f.content, { sha256: f.oid });
     await lfs(t, '/objects/verify', {
@@ -292,6 +300,21 @@ describe('Git LFS in the web UI', () => {
     expect(location.searchParams.get('response-content-disposition')).toBe(
       'attachment; filename="logo.png"'
     );
+
+    // The raw endpoint (used by images in rendered Markdown) follows the pointer to R2, inline.
+    const raw = await call(
+      t,
+      '/api/repos/octocat/app/raw?ref=main&path=logo.png',
+      { cookie: admin }
+    );
+    expect(raw.status).toBe(302);
+    const rawLocation = new URL(raw.headers.get('Location')!);
+    expect(rawLocation.pathname).toBe(
+      `/gitorange-lfs-test/lfs/${repoId}/${f.oid}`
+    );
+    expect(
+      rawLocation.searchParams.get('response-content-disposition')
+    ).toBeNull();
 
     expect(
       (

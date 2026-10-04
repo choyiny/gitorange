@@ -574,12 +574,38 @@ const rawRoute = createRoute({
     params: ownerRepoParams,
     query: z.object({ ref: z.string(), path: z.string() }),
   },
-  responses: { 200: { description: 'Raw file bytes' }, ...json404Response },
+  responses: {
+    200: { description: 'Raw file bytes' },
+    302: {
+      description: 'Redirect to the Git LFS object behind a pointer file',
+    },
+    ...json404Response,
+  },
 });
 reposRouter.openapi(rawRoute, async (c) => {
   const { ref, path } = c.req.valid('query');
   const blob = await (await c.get('git').client.repo()).readFile({ ref, path });
   if (!blob) return c.json({ error: 'Not Found' }, 404);
+  // An LFS pointer stands in for the real file: send the client to its bytes in R2 (so images
+  // in rendered Markdown work). A pointer whose object isn't uploaded is served as text.
+  const pointer =
+    blob.size <= 1024 && lfsConfigured(c.env)
+      ? parseLfsPointer(await blob.text())
+      : null;
+  if (pointer) {
+    const row = await c
+      .get('db')
+      .select({ r2Key: lfsObjects.r2Key })
+      .from(lfsObjects)
+      .where(
+        and(
+          eq(lfsObjects.repositoryId, c.get('repo').id),
+          eq(lfsObjects.oid, pointer.oid)
+        )
+      )
+      .get();
+    if (row) return c.redirect(await presign(c.env, row.r2Key, 'GET'), 302);
+  }
   // Never render repo content as HTML on our origin.
   const type = /^(text\/html|image\/svg|application\/xhtml)/.test(blob.type)
     ? 'text/plain'

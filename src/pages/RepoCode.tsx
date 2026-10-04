@@ -19,6 +19,7 @@ import { api, qk, type Contents, type RepoDetail } from '@/lib/uiApi';
 import { firstLine, formatBytes, shortSha, timeAgo } from '@/lib/format';
 import { languageFor } from '@/lib/languages';
 import { useHighlighter } from '@/lib/useHighlight';
+import { dirOf } from '@/lib/repoUrls';
 import { ApiError } from '@/lib/api';
 import { Avatar } from '@/components/Avatar';
 import { BranchSelect } from '@/components/BranchSelect';
@@ -339,7 +340,10 @@ function TreeView({ repo, data }: { repo: RepoDetail; data: Contents }) {
           </div>
           <div className="Box-body p-4">
             {/\.(md|markdown)$/i.test(data.readme.path) ? (
-              <Markdown source={data.readme.text} />
+              <Markdown
+                source={data.readme.text}
+                repo={markdownContext(repo, data.ref, data.readme.path)}
+              />
             ) : (
               <pre style={{ whiteSpace: 'pre-wrap' }}>{data.readme.text}</pre>
             )}
@@ -349,6 +353,14 @@ function TreeView({ repo, data }: { repo: RepoDetail; data: Contents }) {
     </>
   );
 }
+
+/** Lets a repository Markdown file resolve its relative links and images. */
+const markdownContext = (repo: RepoDetail, ref: string, path: string) => ({
+  owner: repo.owner.username,
+  repo: repo.name,
+  ref,
+  dir: dirOf(path),
+});
 
 const IMAGE_RE = /\.(png|jpe?g|gif|webp|avif|bmp|ico)$/i;
 
@@ -427,7 +439,10 @@ function BlobView({ repo, data }: { repo: RepoDetail; data: Contents }) {
       </div>
       {isMarkdown ? (
         <div className="p-4">
-          <Markdown source={f.text!} />
+          <Markdown
+            source={f.text!}
+            repo={markdownContext(repo, data.ref, f.path)}
+          />
         </div>
       ) : f.text === null ? (
         <div className="p-6 text-center color-fg-muted">

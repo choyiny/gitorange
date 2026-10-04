@@ -95,6 +95,17 @@ export class FakeRepo {
         const o = repo.objects.get(sha);
         return o?.type === 'blob' ? new Blob([o.data]) : null;
       },
+      readFile: async ({ ref, path }: { ref: string; path: string }) => {
+        const commit = repo.resolve(ref);
+        let sha = commit ? (repo.parseCommit(commit)?.treeHash ?? null) : null;
+        for (const name of path.split('/').filter(Boolean)) {
+          sha = sha
+            ? (repo.parseTree(sha)?.find((e) => e.name === name)?.hash ?? null)
+            : null;
+        }
+        const o = sha ? repo.objects.get(sha) : undefined;
+        return o?.type === 'blob' ? new Blob([o.data]) : null;
+      },
       log: async ({
         ref = 'HEAD',
         limit = 50,
