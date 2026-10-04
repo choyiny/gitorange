@@ -316,6 +316,7 @@ describe('MCP server', () => {
       ['gitorange_get_usage', true],
       ['gitorange_list_pull_requests', true],
       ['gitorange_get_pull_request', true],
+      ['gitorange_get_pull_tree', true],
       ['gitorange_create_pull_request', false],
       ['gitorange_comment_pull_request', false],
       ['gitorange_merge_pull_request', false],
@@ -467,7 +468,7 @@ describe('MCP server', () => {
     const res = await call(t, '/api/mcp', { cookie: admin });
     const body = (await res.json()) as { serverUrl: string; tools: unknown[] };
     expect(body.serverUrl).toBe(`${ORIGIN}/mcp`);
-    expect(body.tools).toHaveLength(13);
+    expect(body.tools).toHaveLength(14);
     expect((await call(t, '/api/mcp')).status).toBe(401);
   });
 });
@@ -919,5 +920,60 @@ describe('MCP run logs', () => {
       run_number: 99,
     });
     expect(missing.isError).toBe(true);
+  });
+});
+
+describe('stacking tools', () => {
+  it('reports the tree and a PR’s stack, and hides private repos', async () => {
+    const t = makeEnv({ actions: true });
+    const admin = await bootstrapAdmin(t);
+    await call(t, '/api/repos', {
+      cookie: admin,
+      json: { name: 'app', visibility: 'private' },
+    });
+    const repo = [...t.fake.repos.values()][0];
+    const policy = 'stacking:\n  enabled: true\n';
+    const main = await commitPaths(
+      repo,
+      'main',
+      { 'a.txt': 'a\n', '.gitorange/review.yml': policy },
+      'base'
+    );
+    repo.refs.set('refs/heads/one', main);
+    await commitPaths(
+      repo,
+      'one',
+      { 'a.txt': 'A\n', '.gitorange/review.yml': policy },
+      'One'
+    );
+    await call(t, '/api/repos/octocat/app/pulls', {
+      cookie: admin,
+      json: { title: 'One', body: '', base: 'main', head: 'one' },
+    });
+    await settle(t);
+    const { access_token } = await connect(t, admin);
+    const tree = await tool(t, access_token, 'gitorange_get_pull_tree', {
+      repository: 'octocat/app',
+    });
+    expect(JSON.parse(tree.content[0].text)).toMatchObject({
+      stacking: true,
+      targets: [{ branch: 'main', pulls: [{ number: 1, parent: null }] }],
+    });
+    const pr = await tool(t, access_token, 'gitorange_get_pull_request', {
+      repository: 'octocat/app',
+      number: 1,
+    });
+    expect(JSON.parse(pr.content[0].text).stack).toMatchObject({
+      parent: null,
+      waits_on: [],
+      pending: [],
+      checking: false,
+    });
+    const bob = await addMember(t, admin, 'bob');
+    const bobs = await connect(t, bob);
+    const hidden = await tool(t, bobs.access_token, 'gitorange_get_pull_tree', {
+      repository: 'octocat/app',
+    });
+    expect(hidden.isError).toBe(true);
   });
 });

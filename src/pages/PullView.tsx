@@ -32,6 +32,7 @@ import { ChecksBox } from '@/components/Checks';
 import { AiResolution } from '@/components/AiResolution';
 import { AutoMergeStatus, ReviewComment } from '@/components/AutoMergeReview';
 import { Spinner } from '@/components/Spinner';
+import { StackSidebar } from '@/components/StackSidebar';
 import { NotFound } from './NotFound';
 import { PrStateBadge } from './PrIcons';
 
@@ -462,6 +463,9 @@ function Conversation({
         </div>
       </div>
       <aside className="col-md-3 f6">
+        {d.stack && (
+          <StackSidebar repo={repo} number={pr.number} stack={d.stack} />
+        )}
         <div className="border-bottom pb-3 mb-3">
           <div className="text-bold color-fg-muted mb-2">Participants</div>
           <div className="d-flex flex-wrap" style={{ gap: 4 }}>

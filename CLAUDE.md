@@ -58,6 +58,12 @@ and better-auth. Git storage is **Cloudflare Artifacts**: one Artifacts repo per
   wrangler var it replaced or a built-in value. Read with `getSetting`/`getSettings` only where used, never per request;
   deploy-time facts (BASE_URL, bucket names) stay in wrangler. A daily Cron Trigger (`scheduled()` in `index.ts`) runs
   `runActionsRetention` (`worker/src/actions/retention.ts`).
+- Stacking (`worker/src/stack/`): opt-in via `stacking.enabled` in `.gitorange/review.yml`. A `stack` run on
+  `MERGE_RESOLUTION` (after a review finishes, and from the sweep) pairs a PR with open PRs into the same target and
+  recently landed ones: textual check (`planMerge(headA, headB)`), Clef decides over the review's one-liners
+  (`STACK_QUESTIONS`, `routeDecision`), the reasoning model explains related pairs from diffs (and decides when Clef
+  is unsure) → one `pr_edges` row per pair. `buildTree` (pure) derives parents, waits-on, must-account-for, cycles.
+  Tests drive `executeStacking` with fake `StackModels`.
 - Artifacts has no local emulator: `yarn dev` runs `env.dev`, which uses the remote service in the
   `gitorange-dev` namespace. Tests use `wrangler.test.jsonc` (no remote bindings) plus an in-memory
   Artifacts fake.

@@ -74,6 +74,22 @@ const schema = z
       })
       .strict()
       .default({ questions: {} }),
+    stacking: z
+      .object({
+        enabled: z.boolean().default(false),
+        max_open: z.number().int().min(2).max(100).default(20),
+        // Clef's "could these depend on each other?" probability above which a pair is related.
+        related_above: z.number().min(0).max(1).default(0.3),
+        // Clef's kind/direction confidence from which its answer stands without a reasoning model.
+        confident_above: z.number().min(0).max(1).default(0.6),
+      })
+      .strict()
+      .default({
+        enabled: false,
+        max_open: 20,
+        related_above: 0.3,
+        confident_above: 0.6,
+      }),
   })
   .strict();
 

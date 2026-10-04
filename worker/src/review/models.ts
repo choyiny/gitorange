@@ -179,7 +179,7 @@ function chatText(out: unknown): string {
   return (r.choices?.[0]?.message?.content ?? r.response ?? '').trim();
 }
 
-type ClefAnswer =
+export type ClefAnswer =
   | { type: 'noul'; noul: number }
   | {
       type: 'choice';

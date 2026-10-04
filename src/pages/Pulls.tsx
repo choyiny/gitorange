@@ -1,16 +1,30 @@
 import { Link, useOutletContext, useSearchParams } from 'react-router-dom';
+import { useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import {
   CheckIcon,
   CommentIcon,
   GitPullRequestIcon,
+  ListOrderedIcon,
+  ListUnorderedIcon,
 } from '@primer/octicons-react';
 import { api, qk, type RepoDetail } from '@/lib/uiApi';
 import { timeAgo } from '@/lib/format';
 import { Spinner } from '@/components/Spinner';
 import { ChecksBadge, useCommitStatuses } from '@/components/Checks';
 import { AiResolutionBadge, ReviewLabel } from '@/components/PullBadges';
+import { StackTree } from '@/components/StackTree';
 import { PrStateIcon } from './PrIcons';
+
+function storedView(): 'list' | 'tree' {
+  try {
+    return localStorage.getItem('gitorange.pulls.view') === 'tree'
+      ? 'tree'
+      : 'list';
+  } catch {
+    return 'list';
+  }
+}
 
 export default function Pulls() {
   const repo = useOutletContext<RepoDetail>();
@@ -25,6 +39,15 @@ export default function Pulls() {
     repo,
     (q.data?.pulls ?? []).map((p) => p.headSha)
   );
+  const [view, setView] = useState(storedView);
+  const chooseView = (v: 'list' | 'tree') => {
+    setView(v);
+    try {
+      localStorage.setItem('gitorange.pulls.view', v);
+    } catch {
+      // Remembering the view is a convenience only.
+    }
+  };
   const base = `/${repo.fullName}`;
   return (
     <div className="container-xl px-3 px-md-4 px-lg-5 pb-6">
@@ -43,7 +66,7 @@ export default function Pulls() {
       </div>
       <div className="Box">
         <div
-          className="Box-header d-flex flex-items-center"
+          className="Box-header d-flex flex-wrap flex-items-center"
           style={{ gap: 16 }}
         >
           <button
@@ -60,8 +83,28 @@ export default function Pulls() {
           >
             <CheckIcon /> {q.data?.closedCount ?? ''} Closed
           </button>
+          {state === 'open' && (
+            <div className="BtnGroup ml-auto">
+              <button
+                className={`btn btn-sm BtnGroup-item ${view === 'list' ? 'selected' : ''}`}
+                aria-pressed={view === 'list'}
+                onClick={() => chooseView('list')}
+              >
+                <ListUnorderedIcon /> List
+              </button>
+              <button
+                className={`btn btn-sm BtnGroup-item ${view === 'tree' ? 'selected' : ''}`}
+                aria-pressed={view === 'tree'}
+                onClick={() => chooseView('tree')}
+              >
+                <ListOrderedIcon /> Tree
+              </button>
+            </div>
+          )}
         </div>
-        {!q.data ? (
+        {state === 'open' && view === 'tree' ? (
+          <StackTree repo={repo} />
+        ) : !q.data ? (
           <Spinner />
         ) : q.data.pulls.length === 0 ? (
           <div className="blankslate">

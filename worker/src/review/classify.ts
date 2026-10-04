@@ -34,6 +34,7 @@ import {
 } from './policy';
 import { maybeAutoMerge } from './auto-merge';
 import { IGNORE_PATH, ignoreMatcher, isLockfile, readIgnore } from './ignore';
+import { ensureStacking } from '../stack/discover';
 
 /** Shared with AI conflict resolution. */
 export const reviewConfigured = resolutionConfigured;
@@ -47,7 +48,7 @@ const MAX_INVESTIGATE_FILE = 24 * 1024;
 /** Files summarized at once. */
 const SUMMARY_BATCH = 8;
 
-const MODEL_RETRIES: WorkflowStepConfig = {
+export const MODEL_RETRIES: WorkflowStepConfig = {
   retries: { limit: 3, delay: '5 seconds', backoff: 'exponential' },
   timeout: '5 minutes',
 };
@@ -574,6 +575,22 @@ export async function executeClassification(deps: ReviewDeps, id: string) {
   step = pingingSteps(env, step, job.pr.repositoryId, { approvals: true });
   const git = gitFor(env, job.repo);
   const { policy, pr, changes } = job;
+  // Discovery reads this review's one-liners (or paths, if it has none), so it starts once the review ends.
+  const startStacking = () =>
+    step.do('stacking', async () => {
+      // Never fails the review: stacking is a side job.
+      try {
+        const [base, head] = await Promise.all([
+          git.resolve(pr.baseRef),
+          git.resolve(pr.headRef),
+        ]);
+        if (base && head && head === job.row.headSha)
+          await ensureStacking(env, db, git, pr, { base, head });
+      } catch (e) {
+        console.error('[review] could not start stacking', pr.id, e);
+      }
+      return true;
+    });
   const ignored = ignoreMatcher(job.ignoreText);
   const tooMany =
     changes.length > policy.limits.max_files ? changes.length : null;
@@ -641,6 +658,7 @@ export async function executeClassification(deps: ReviewDeps, id: string) {
         );
         return true;
       });
+      await startStacking();
       return;
     }
 
@@ -753,4 +771,5 @@ export async function executeClassification(deps: ReviewDeps, id: string) {
     await maybeAutoMerge(env, db, pr.id);
     return true;
   });
+  await startStacking();
 }

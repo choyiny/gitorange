@@ -367,6 +367,57 @@ export const prReviewFlags = sqliteTable(
   ]
 );
 
+// ── Stacking ─────────────────────────────────────────────────────────────────
+
+export type EdgeKind =
+  'builds_on' | 'must_account_for' | 'conflicts' | 'independent';
+export type EdgeStage = 'triage' | 'deep' | 'done' | 'failed';
+
+/**
+ * Stacking: how two pull requests into the same target relate. One row per unordered pair: `a` is
+ * the lower number, or the landed one. Reset and re-evaluated when either head moves.
+ */
+export const prEdges = sqliteTable(
+  'pr_edges',
+  {
+    id: text('id').primaryKey(),
+    repositoryId: text('repository_id')
+      .notNull()
+      .references(() => repositories.id, { onDelete: 'cascade' }),
+    landTarget: text('land_target').notNull(),
+    prAId: text('pr_a_id')
+      .notNull()
+      .references(() => pullRequests.id, { onDelete: 'cascade' }),
+    prBId: text('pr_b_id')
+      .notNull()
+      .references(() => pullRequests.id, { onDelete: 'cascade' }),
+    aHead: text('a_head').notNull(),
+    bHead: text('b_head').notNull(),
+    stage: text('stage', {
+      enum: ['triage', 'deep', 'done', 'failed'],
+    }).notNull(),
+    kind: text('kind', {
+      enum: ['builds_on', 'must_account_for', 'conflicts', 'independent'],
+    }),
+    // Which side the other depends on; null when independent.
+    prerequisite: text('prerequisite', { enum: ['a', 'b'] }),
+    files: text('files', { mode: 'json' }).$type<string[]>(),
+    conflictFiles: text('conflict_files', { mode: 'json' }).$type<string[]>(),
+    reason: text('reason'),
+    // must_account_for: what the dependent PR must change, addressed to its author.
+    instructions: text('instructions'),
+    errorMessage: text('error_message'),
+    createdAt: integer('created_at', { mode: 'timestamp' }).notNull(),
+    updatedAt: integer('updated_at', { mode: 'timestamp' }).notNull(),
+  },
+  (t) => [
+    uniqueIndex('pr_edges_pair_uq').on(t.prAId, t.prBId),
+    index('pr_edges_repo_idx').on(t.repositoryId, t.landTarget),
+    index('pr_edges_b_idx').on(t.prBId),
+  ]
+);
+export type PrEdge = typeof prEdges.$inferSelect;
+
 // ── Actions ──────────────────────────────────────────────────────────────────
 // A workflow run: one `.github/workflows/*.yml` file triggered by one event.
 

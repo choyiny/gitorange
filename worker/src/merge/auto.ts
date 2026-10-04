@@ -11,6 +11,7 @@ import type { DrizzleDB } from '../db/middleware';
 import type { RefUpdate } from '../actions/trigger';
 import { findRepoById, gitFor } from '../lib/repos';
 import { ensureClassification } from '../review/classify';
+import { ensureStacking } from '../stack/discover';
 import {
   carryForward,
   resolutionConfigured,
@@ -92,10 +93,19 @@ export async function executeSweep(
           base,
           head,
         });
-        return await ensureResolution(env, db, git, pr as PullRequest, {
-          base,
-          head,
-        });
+        const started = await ensureResolution(
+          env,
+          db,
+          git,
+          pr as PullRequest,
+          {
+            base,
+            head,
+          }
+        );
+        // The target moved (a PR landed) or the head moved: discovery runs again for new pairs.
+        await ensureStacking(env, db, git, pr as PullRequest, { base, head });
+        return started;
       } catch (e) {
         console.error('[merge] auto-resolve failed', pr.id, e);
         return false;

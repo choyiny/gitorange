@@ -10,17 +10,36 @@ import { executeResolution, type StepRunner } from './resolution';
 import { executeClassification } from '../review/classify';
 import { workersAiModels } from '../review/models';
 import { getSettings } from '../lib/settings';
+import { executeStacking, type StackParams } from '../stack/discover';
+import { workersAiStackModels } from '../stack/models';
 
 export type MergeResolutionParams =
-  | { resolutionId: string; sweep?: undefined; classificationId?: undefined }
+  | {
+      resolutionId: string;
+      sweep?: undefined;
+      classificationId?: undefined;
+      stack?: undefined;
+    }
   | {
       sweep: SweepParams;
       resolutionId?: undefined;
       classificationId?: undefined;
+      stack?: undefined;
     }
-  | { classificationId: string; resolutionId?: undefined; sweep?: undefined };
+  | {
+      classificationId: string;
+      resolutionId?: undefined;
+      sweep?: undefined;
+      stack?: undefined;
+    }
+  | {
+      stack: StackParams;
+      resolutionId?: undefined;
+      sweep?: undefined;
+      classificationId?: undefined;
+    };
 
-/** MERGE_RESOLUTION: runs an AI resolution attempt, an auto-merge review, or a conflict sweep. */
+/** MERGE_RESOLUTION: runs an AI resolution attempt, an auto-merge review, a conflict sweep, or stacking discovery. */
 export class MergeResolutionWorkflow extends WorkflowEntrypoint<
   CloudflareBindings,
   MergeResolutionParams
@@ -42,6 +61,29 @@ export class MergeResolutionWorkflow extends WorkflowEntrypoint<
       await executeClassification(
         { env: this.env, db, step: runner, models },
         event.payload.classificationId
+      );
+      return;
+    }
+    if (event.payload.stack) {
+      const ids = await getSettings(db, this.env, ['ai.review_model']);
+      const pr = event.payload.stack.pullRequestId;
+      const row = await db.query.pullRequests.findFirst({
+        where: (p, { eq }) => eq(p.id, pr),
+        columns: { repositoryId: true },
+      });
+      if (!row) return;
+      await executeStacking(
+        {
+          env: this.env,
+          db,
+          step: runner,
+          models: workersAiStackModels(
+            this.env,
+            { review: ids['ai.review_model'] },
+            { repositoryId: row.repositoryId, pullRequestId: pr }
+          ),
+        },
+        event.payload.stack
       );
       return;
     }

@@ -23,6 +23,7 @@ import {
   json403Response,
   json404Response,
   json409Response,
+  errorSchema,
   validationHook,
 } from './openapi-helpers';
 import {
@@ -41,6 +42,8 @@ import { maybeAutoMerge, type ReviewProgress } from '../review/auto-merge';
 import { reviewProgressFor } from '../review/list';
 import { CHANGES_NOTE_MAX, decideFlag } from '../review/flags';
 import { reviewView } from '../review/view';
+import { stackTreeView, stackViewFor } from '../stack/view';
+import { retryFailedPairs } from '../stack/discover';
 
 export const pullsRouter = new OpenAPIHono<RepoEnv>({
   defaultHook: validationHook,
@@ -287,6 +290,66 @@ pullsRouter.openapi(listRoute, async (c) => {
   );
 });
 
+const dependencySchema = z.object({
+  number: z.number(),
+  kind: z.enum(['builds_on', 'must_account_for', 'conflicts', 'independent']),
+  reason: z.string(),
+  instructions: z.string().nullable(),
+  landed: z.boolean(),
+  files: z.array(z.string()),
+});
+const stackNodeSchema = z.object({
+  number: z.number(),
+  parent: dependencySchema.nullable(),
+  children: z.array(z.number()),
+  waitsOn: z.array(dependencySchema),
+  mustAccountFor: z.array(dependencySchema),
+  cycleWith: z.array(z.number()),
+  unchecked: z.array(z.number()),
+  /** Other PRs a check against is still running. */
+  pending: z.array(z.number()),
+  /** No stack run has started for this PR's current head yet. */
+  checking: z.boolean(),
+});
+
+const treeRoute = createRoute({
+  method: 'get',
+  path: '/{owner}/{repo}/pulls/tree',
+  tags: ['Pull requests'],
+  request: { params: ownerRepoParams },
+  responses: {
+    ...json200Response(
+      z.object({
+        stacking: z.boolean(),
+        targets: z.array(
+          z.object({
+            branch: z.string(),
+            nodes: z.array(
+              stackNodeSchema.extend({
+                title: z.string(),
+                headRef: z.string(),
+                author: publicUserSchema,
+              })
+            ),
+            landed: z.array(
+              z.object({ number: z.number(), title: z.string() })
+            ),
+          })
+        ),
+      }),
+      'How open pull requests stack, per target branch (empty when stacking is off)'
+    ),
+    ...json404Response,
+  },
+});
+pullsRouter.openapi(treeRoute, async (c) => {
+  const repo = c.get('repo');
+  const view = await stackTreeView(c.get('db'), c.get('git'), repo.id, {
+    defaultBranch: repo.defaultBranch,
+  });
+  return c.json(view, 200);
+});
+
 const createPullRoute = createRoute({
   method: 'post',
   path: '/{owner}/{repo}/pulls',
@@ -503,6 +566,8 @@ const getPullRoute = createRoute({
         /** Head commit's review; null without review.yml. Closed PRs keep the last review. */
         review: reviewSchema.nullable(),
         canMerge: z.boolean(),
+        /** Place in the target's stack tree; null when stacking is off or the PR isn't open. */
+        stack: stackNodeSchema.nullable(),
       }),
       'Pull request'
     ),
@@ -570,6 +635,7 @@ pullsRouter.openapi(getPullRoute, async (c) => {
         console.error('[review] start failed', e)
       )
     );
+  const stack = await stackViewFor(db, git, pr);
   return c.json(
     {
       pull: serializePull(pr, people, comments.length),
@@ -592,6 +658,7 @@ pullsRouter.openapi(getPullRoute, async (c) => {
       resolution: resolution ? serializeResolution(resolution, shas) : null,
       review,
       canMerge: c.get('perms').write,
+      stack,
     },
     200
   );
@@ -897,6 +964,52 @@ pullsRouter.openapi(retryReviewRoute, async (c) => {
       400
     );
   return c.json({ ok: true as const }, 200);
+});
+
+const retryStackRoute = createRoute({
+  method: 'post',
+  path: '/{owner}/{repo}/pulls/{number}/stack/retry',
+  tags: ['Pull requests'],
+  request: { params: numberParams },
+  responses: {
+    202: {
+      description:
+        'Failed checks against other pull requests are being retried',
+      content: {
+        'application/json': { schema: z.object({ ok: z.boolean() }) },
+      },
+    },
+    ...json403Response,
+    ...json404Response,
+    ...json409Response,
+    503: {
+      description: 'The retry could not be started',
+      content: { 'application/json': { schema: errorSchema } },
+    },
+  },
+});
+pullsRouter.openapi(retryStackRoute, async (c) => {
+  if (!c.get('perms').write)
+    return c.json({ error: 'You do not have permission to do that' }, 403);
+  const pr = await getPull(c, c.req.valid('param').number);
+  if (!pr || pr.state !== 'open') return c.json({ error: 'Not Found' }, 404);
+  const shas = await pullShas(c.get('git'), pr);
+  if (!shas) return c.json({ error: 'Not Found' }, 404);
+  const result = await retryFailedPairs(
+    c.env,
+    c.get('db'),
+    c.get('git'),
+    pr,
+    shas
+  );
+  if (result === 'off')
+    return c.json({ error: 'Stacking is off for the target branch' }, 409);
+  if (result === 'unavailable')
+    return c.json(
+      { error: 'The retry could not be started; try again later' },
+      503
+    );
+  return c.json({ ok: true }, 202);
 });
 
 const autoMergeRoute = createRoute({

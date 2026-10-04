@@ -89,6 +89,14 @@ A repository opts in with `.gitorange/review.yml` on the target branch ([format]
 - **Merging** goes through the same `landPull` as the button, with no merging user (`merged_automatically`). It's attempted whenever something the gate waits on finishes: a review, an approval, a successful Actions run (from the `ActionsRun` Workflow), a proposed AI resolution, or turning auto-merge back on. Compare-and-swap on the base branch makes concurrent attempts safe; a lost race waits for the next trigger.
 - **Insights** (the repository's Insights tab, `GET /api/repos/:owner/:repo/insights?days=`, and the `gitorange_get_repository_insights` MCP tool; [`lib/insights.ts`](../worker/src/lib/insights.ts)) measure how well this works: pull requests opened and merged, the share `merged_automatically`, merges no person touched (auto-merged, no flag ever raised), how often reviews needed a person, flags by kind and the median time to approve them, AI conflict resolution outcomes, and CI on pull requests. Everything is a handful of aggregate queries in D1 (medians with window functions); events count in the period they happened in.
 
+### Stacking
+
+Opt-in through `stacking:` in `.gitorange/review.yml` ([format](auto-merge.md#stacking)). Code: [`worker/src/stack/`](../worker/src/stack/).
+
+- **Discovery** is a `stack` run on the `MERGE_RESOLUTION` Workflow, started after a review finishes (or fails) and by the conflict sweep. For each pair it runs a textual check (`planMerge`), one Clef call, and, for related pairs, the reasoning model. Results go to `pr_edges`, one row per pair, written only for the heads the run claimed (compare-and-swap).
+- **`buildTree`** (pure) turns the edges into parents, waits-on, must-account-for, and cycles. `view.ts` ignores closed-unmerged pull requests; PR detail computes only its own branch.
+- **Surfaces:** `GET /api/repos/:owner/:repo/pulls/tree`, `stack` on PR detail, `POST .../pulls/:n/stack/retry`, and the MCP tools `gitorange_get_pull_tree` and `gitorange_get_pull_request` (with `stack`).
+
 ## Usage & cost
 
 Site admin → Usage & cost (`GET /api/admin/usage?month=`, the `gitorange_get_usage` MCP tool; [`worker/src/usage/`](../worker/src/usage/)) estimates what this deployment costs on Cloudflare. It has two sources:

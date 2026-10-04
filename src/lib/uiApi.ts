@@ -133,6 +133,41 @@ export type Comment = {
   createdAt: string;
   updatedAt: string;
 };
+export type StackDependency = {
+  number: number;
+  kind: 'builds_on' | 'must_account_for' | 'conflicts' | 'independent';
+  reason: string;
+  instructions: string | null;
+  landed: boolean;
+  files: string[];
+};
+export type StackNode = {
+  number: number;
+  parent: StackDependency | null;
+  children: number[];
+  waitsOn: StackDependency[];
+  mustAccountFor: StackDependency[];
+  cycleWith: number[];
+  unchecked: number[];
+  /** Other PRs a check against is still running. */
+  pending: number[];
+  /** No stack run has started for this PR's current head yet. */
+  checking: boolean;
+};
+export type StackTree = {
+  /** Stacking is on (for the default branch, or a branch with open PRs). */
+  stacking: boolean;
+  targets: {
+    branch: string;
+    nodes: (StackNode & {
+      title: string;
+      headRef: string;
+      author: Pull['author'];
+    })[];
+    landed: { number: number; title: string }[];
+  }[];
+};
+
 export type PullDetail = {
   pull: Pull;
   comments: Comment[];
@@ -151,6 +186,8 @@ export type PullDetail = {
   /** Auto-merge review; null when the target branch has no .gitorange/review.yml. */
   review: PullReview | null;
   canMerge: boolean;
+  /** How this pull request stacks with other open ones; null when stacking is off. */
+  stack: StackNode | null;
 };
 export type ClassifierAnswer =
   | { type: 'noul'; value: number }
@@ -648,6 +685,10 @@ export const api = {
     n: string,
     body: { title: string; body: string; base: string; head: string }
   ) => apiFetch<Pull>(`${r(o, n)}/pulls`, { method: 'POST', json: body }),
+  pullTree: (o: string, n: string) =>
+    apiFetch<StackTree>(`${r(o, n)}/pulls/tree`),
+  retryStack: (o: string, n: string, num: number) =>
+    apiFetch(`${r(o, n)}/pulls/${num}/stack/retry`, { method: 'POST' }),
   pull: (o: string, n: string, num: number) =>
     apiFetch<PullDetail>(`${r(o, n)}/pulls/${num}`),
   updatePull: (
@@ -789,6 +830,7 @@ export const qk = {
     ['repo', o, n, 'collaborators'] as const,
   pulls: (o: string, n: string, state: string) =>
     ['repo', o, n, 'pulls', state] as const,
+  pullTree: (o: string, n: string) => ['repo', o, n, 'pull-tree'] as const,
   pull: (o: string, n: string, num: number) =>
     ['repo', o, n, 'pull', num] as const,
   pullCommits: (o: string, n: string, num: number) =>
