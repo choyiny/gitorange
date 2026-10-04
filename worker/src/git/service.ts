@@ -523,6 +523,7 @@ export class GitService {
     method: 'merge' | 'squash';
     message: string;
     author: Signature;
+    committer?: Signature;
     extraRefs?: { ref: string; sha: string }[];
   }): Promise<{ sha: string; headSha: string }> {
     const baseSha = await this.resolve(opts.base);
@@ -535,6 +536,7 @@ export class GitService {
       tree: plan.tree,
       parents: opts.method === 'merge' ? [baseSha, headSha] : [baseSha],
       author: opts.author,
+      committer: opts.committer,
       message: opts.message,
     });
     const refs = await this.refs();

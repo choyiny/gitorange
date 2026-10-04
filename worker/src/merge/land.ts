@@ -17,6 +17,44 @@ import { latestResolution } from './resolution';
 
 export const pullRef = (n: number) => `refs/pull/${n}/head`;
 
+type Person = { name: string; email: string };
+
+const TRAILER = /^co-authored-by:\s*(.+?)\s*<([^>]+)>\s*$/gim;
+
+/**
+ * Who a squash credits: the author of most of the PR's commits (earliest on a tie), and as
+ * co-authors every other commit author plus every Co-authored-by trailer, deduplicated by email.
+ */
+export function squashCredits(
+  commits: { author: Person; message: string }[],
+  fallback: Person
+): { author: Person; coAuthors: Person[] } {
+  const key = (p: Person) => p.email.trim().toLowerCase();
+  const counts = new Map<string, { person: Person; n: number }>();
+  for (const c of commits) {
+    const k = key(c.author);
+    if (!k) continue;
+    const seen = counts.get(k);
+    if (seen) seen.n++;
+    else counts.set(k, { person: c.author, n: 1 });
+  }
+  let author = fallback;
+  let best = 0;
+  for (const { person, n } of counts.values())
+    if (n > best) [author, best] = [person, n];
+  const coAuthors = new Map<string, Person>();
+  const add = (p: Person) => {
+    const k = key(p);
+    if (k && k !== key(author) && !coAuthors.has(k)) coAuthors.set(k, p);
+  };
+  for (const c of commits) {
+    add(c.author);
+    for (const m of c.message.matchAll(TRAILER))
+      add({ name: m[1], email: m[2].trim() });
+  }
+  return { author, coAuthors: [...coAuthors.values()] };
+}
+
 export type LandResult =
   { ok: true; sha: string } | { ok: false; status: 400 | 409; error: string };
 
@@ -32,6 +70,7 @@ export async function landPull(opts: {
   git: GitService;
   pr: PullRequest;
   by: { id: string; name: string; email: string } | null;
+  /** The committer; also the author when the PR's commits can't be read. */
   author: { name: string; email: string };
   title?: string;
   message?: string;
@@ -51,10 +90,21 @@ export async function landPull(opts: {
     };
   const title = opts.title?.trim() || `${pr.title} (#${pr.number})`;
   const message = opts.message ?? '';
-  const author = { ...opts.author, timestamp: Math.floor(Date.now() / 1000) };
-  const fullMessage = message ? `${title}\n\n${message}` : title;
+  const timestamp = Math.floor(Date.now() / 1000);
+  const committer = { ...opts.author, timestamp };
   const refsBefore = await git.refs();
   const baseBefore = refsBefore.get(`refs/heads/${pr.baseRef}`);
+  // Credit the PR's commit authors and co-authors, not the account that merged.
+  const prCommits = baseBefore
+    ? await git.commitsBetween(baseBefore, headSha).catch(() => [])
+    : [];
+  const credits = squashCredits(prCommits, opts.author);
+  const author = { ...credits.author, timestamp };
+  const trailers = credits.coAuthors
+    .map((p) => `Co-authored-by: ${p.name} <${p.email}>`)
+    .filter((t) => !message.toLowerCase().includes(t.toLowerCase()));
+  const body = [message, trailers.join('\n')].filter(Boolean).join('\n\n');
+  const fullMessage = body ? `${title}\n\n${body}` : title;
   let sha: string;
   let appliedResolution: string | null = null;
   try {
@@ -104,6 +154,7 @@ export async function landPull(opts: {
         tree: resolved.treeHash,
         parents: [row.baseSha],
         author,
+        committer,
         message: fullMessage,
       });
       await git.client.push(
@@ -130,6 +181,7 @@ export async function landPull(opts: {
         method: 'squash',
         message: fullMessage,
         author,
+        committer,
         extraRefs: [{ ref: pullRef(pr.number), sha: headSha }],
       }));
     }

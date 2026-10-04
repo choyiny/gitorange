@@ -288,10 +288,15 @@ describe('auto-merge review', () => {
       merged_by_id: null,
       merged_automatically: 1,
     });
-    // Linear: one squashed commit on main, authored as the PR's author.
+    // Linear: one squashed commit on main, credited to the PR's commit author; the PR
+    // author's account (auto-merge) is the committer.
     const merged = repo.parseCommit(row!.merge_commit_sha!)!;
     expect(merged.message).toBe('Change things (#1)');
-    expect(merged.author.name).toBe('Admin');
+    expect(merged.author).toMatchObject({
+      name: 'Dev',
+      email: 'dev@example.com',
+    });
+    expect(merged.committer.name).toBe('Admin');
   });
 
   it('flags crossed thresholds, investigates them visually, and merges once all are approved', async () => {
