@@ -10,7 +10,7 @@ import {
   type Repository,
 } from '../db/app.schema';
 import { decoder } from '../git/bytes';
-import { findRepoById, gitFor, permissionsFor } from '../lib/repos';
+import { findReposByIds, gitFor, permissionsForMany } from '../lib/repos';
 import { usersById } from '../lib/users';
 import type { SessionUser } from '../variables';
 import { parsePolicy, type ReviewPolicy } from './policy';
@@ -105,16 +105,21 @@ export async function approvalsFor(
     string,
     { repo: Repository; fullName: string; canMerge: boolean }
   >();
-  for (const repoId of new Set(items.map((i) => i.pr.repositoryId))) {
-    const found = await findRepoById(db, repoId);
-    if (!found) continue;
-    const perms = await permissionsFor(db, found.repo, user);
+  const found = await findReposByIds(
+    db,
+    items.map((i) => i.pr.repositoryId)
+  );
+  const perms = await permissionsForMany(
+    db,
+    [...found.values()].map((f) => f.repo),
+    user
+  );
+  for (const [repoId, f] of found)
     repos.set(repoId, {
-      repo: found.repo,
-      fullName: `${found.namespace.username}/${found.repo.name}`,
-      canMerge: perms.write,
+      repo: f.repo,
+      fullName: `${f.namespace.username}/${f.repo.name}`,
+      canMerge: perms.get(repoId)!.write,
     });
-  }
   const visible = items.filter((i) => repos.get(i.pr.repositoryId)?.canMerge);
 
   // Flag titles come from the review's own policy version.

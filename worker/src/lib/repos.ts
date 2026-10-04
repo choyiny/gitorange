@@ -1,4 +1,4 @@
-import { and, eq, isNotNull, or, sql, type SQL } from 'drizzle-orm';
+import { and, eq, inArray, isNotNull, or, sql, type SQL } from 'drizzle-orm';
 import type { MiddlewareHandler } from 'hono';
 import {
   repositories,
@@ -106,6 +106,31 @@ export async function findRepoById(db: DrizzleDB, id: string) {
   return { ...row, namespace: userNamespace(row.owner) };
 }
 
+/** findRepoById for many ids in one query, keyed by id; ids that don't exist are left out. */
+export async function findReposByIds(db: DrizzleDB, ids: string[]) {
+  const unique = [...new Set(ids)];
+  if (!unique.length) return new Map<string, FoundRepo>();
+  const rows = await db
+    .select({ repo: repositories, owner: users, team: teams })
+    .from(repositories)
+    .innerJoin(users, eq(users.id, repositories.ownerId))
+    .leftJoin(teams, eq(teams.id, repositories.teamId))
+    .where(inArray(repositories.id, unique))
+    .all();
+  return new Map<string, FoundRepo>(
+    rows.map(({ repo, owner, team }) => [
+      repo.id,
+      {
+        repo,
+        owner,
+        namespace: team ? teamNamespace(team) : userNamespace(owner),
+      },
+    ])
+  );
+}
+
+export type FoundRepo = NonNullable<Awaited<ReturnType<typeof findRepoById>>>;
+
 export interface RepoPermissions {
   read: boolean;
   write: boolean;
@@ -121,9 +146,8 @@ export async function permissionsFor(
   repo: Repository,
   user: SessionUser | undefined
 ): Promise<RepoPermissions> {
-  if (!user || user.banned) return { read: false, write: false, admin: false };
-  if (user.role === 'admin' || repo.ownerId === user.id)
-    return { read: true, write: true, admin: true };
+  if (!user || user.banned || !needsCollaboration(repo, user))
+    return permissionsOf(repo, user, false);
   const collab = await db
     .select()
     .from(repositoryCollaborators)
@@ -134,7 +158,62 @@ export async function permissionsFor(
       )
     )
     .get();
-  if (collab) return { read: true, write: true, admin: false };
+  return permissionsOf(repo, user, !!collab);
+}
+
+/**
+ * permissionsFor for many repositories at once: one query for the user's collaborations
+ * instead of one per repository. Keyed by repository id.
+ */
+export async function permissionsForMany(
+  db: DrizzleDB,
+  repos: Repository[],
+  user: SessionUser | undefined
+): Promise<Map<string, RepoPermissions>> {
+  const ask =
+    user && !user.banned
+      ? [
+          ...new Set(
+            repos.filter((r) => needsCollaboration(r, user)).map((r) => r.id)
+          ),
+        ]
+      : [];
+  const collaborating = new Set(
+    ask.length
+      ? (
+          await db
+            .select({ id: repositoryCollaborators.repositoryId })
+            .from(repositoryCollaborators)
+            .where(
+              and(
+                eq(repositoryCollaborators.userId, user!.id),
+                inArray(repositoryCollaborators.repositoryId, ask)
+              )
+            )
+            .all()
+        ).map((r) => r.id)
+      : []
+  );
+  return new Map(
+    repos.map((r) => [r.id, permissionsOf(r, user, collaborating.has(r.id))])
+  );
+}
+
+/** Whether `user`'s access to `repo` depends on being a collaborator. */
+function needsCollaboration(repo: Repository, user: SessionUser) {
+  return user.role !== 'admin' && repo.ownerId !== user.id;
+}
+
+/** The permission rule itself, given whether the user collaborates on the repository. */
+function permissionsOf(
+  repo: Repository,
+  user: SessionUser | undefined,
+  collaborator: boolean
+): RepoPermissions {
+  if (!user || user.banned) return { read: false, write: false, admin: false };
+  if (!needsCollaboration(repo, user))
+    return { read: true, write: true, admin: true };
+  if (collaborator) return { read: true, write: true, admin: false };
   const read = repo.teamId !== null || repo.visibility === 'internal';
   return { read, write: false, admin: false };
 }

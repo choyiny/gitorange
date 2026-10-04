@@ -14,6 +14,7 @@ import {
   findRepo,
   gitFor,
   permissionsFor,
+  permissionsForMany,
   teamNamespace,
   userNamespace,
   visibleTo,
@@ -126,23 +127,28 @@ const listRepositories: ToolModule = {
       .orderBy(desc(repositories.updatedAt))
       .limit(200)
       .all();
-    const out = [];
-    for (const r of rows) {
-      const ns = r.team ? teamNamespace(r.team) : userNamespace(r.owner);
-      const fullName = `${ns.username}/${r.repo.name}`;
-      if (query && !fullName.toLowerCase().includes(query)) continue;
-      const perms = await permissionsFor(ctx.db, r.repo, ctx.user);
-      out.push({
-        full_name: fullName,
-        description: r.repo.description,
-        visibility: r.repo.visibility,
-        owner_type: ns.kind,
-        can_push: perms.write,
-        default_branch: r.repo.defaultBranch,
-        updated_at: r.repo.updatedAt.toISOString(),
-        ...urls(ctx.baseURL, fullName),
-      });
-    }
+    const matching = rows
+      .map((r) => {
+        const ns = r.team ? teamNamespace(r.team) : userNamespace(r.owner);
+        return { ...r, ns, fullName: `${ns.username}/${r.repo.name}` };
+      })
+      .filter((r) => !query || r.fullName.toLowerCase().includes(query));
+    // One collaborator lookup for every listed repository, not one per row.
+    const perms = await permissionsForMany(
+      ctx.db,
+      matching.map((r) => r.repo),
+      ctx.user
+    );
+    const out = matching.map(({ repo, ns, fullName }) => ({
+      full_name: fullName,
+      description: repo.description,
+      visibility: repo.visibility,
+      owner_type: ns.kind,
+      can_push: perms.get(repo.id)!.write,
+      default_branch: repo.defaultBranch,
+      updated_at: repo.updatedAt.toISOString(),
+      ...urls(ctx.baseURL, fullName),
+    }));
     if (!out.length)
       return {
         content: [

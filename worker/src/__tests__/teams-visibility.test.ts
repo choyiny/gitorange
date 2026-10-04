@@ -1,5 +1,15 @@
 import { describe, expect, it } from 'vitest';
+import { drizzle } from 'drizzle-orm/d1';
+import { repositories } from '../db/app.schema';
+import { users } from '../db/auth.schema';
+import { schema } from '../db/schema';
 import { handleGitRequest } from '../git-http';
+import {
+  findRepoById,
+  findReposByIds,
+  permissionsFor,
+  permissionsForMany,
+} from '../lib/repos';
 import {
   addMember,
   bootstrapAdmin,
@@ -254,5 +264,72 @@ describe('the shared team', () => {
         })
       ).status
     ).toBe(409);
+  });
+});
+
+describe('batched access checks', () => {
+  it('permissionsForMany and findReposByIds agree with their one-at-a-time versions', async () => {
+    const { t, admin, ada, bob } = await setup();
+    await call(t, '/api/team', {
+      cookie: admin,
+      method: 'PUT',
+      json: { name: 'XY Space', slug: 'xyspace' },
+    });
+    await call(t, '/api/repos', { cookie: ada, json: { name: 'diary' } });
+    await call(t, '/api/repos', { cookie: ada, json: { name: 'secret' } });
+    await call(t, '/api/repos', { cookie: ada, json: { name: 'notes' } });
+    await call(t, '/api/repos/ada/notes', {
+      cookie: ada,
+      method: 'PATCH',
+      json: { visibility: 'internal' },
+    });
+    await call(t, '/api/repos', {
+      cookie: ada,
+      json: { name: 'site', owner: 'team' },
+    });
+    await call(t, '/api/repos', { cookie: bob, json: { name: 'own' } });
+    await call(t, '/api/repos/ada/diary/collaborators/bob', {
+      cookie: ada,
+      method: 'PUT',
+    });
+
+    const db = drizzle(t.env.DB, { schema });
+    const repos = await db.select().from(repositories).all();
+    expect(repos).toHaveLength(5);
+    const people = await db.select().from(users).all();
+    const byName = new Map(people.map((u) => [u.username, u]));
+    const viewers = [
+      byName.get('octocat'),
+      byName.get('ada'),
+      byName.get('bob'),
+      { ...byName.get('bob')!, banned: true },
+      undefined,
+    ];
+    for (const user of viewers) {
+      const many = await permissionsForMany(db, repos, user);
+      for (const repo of repos)
+        expect(many.get(repo.id)).toEqual(await permissionsFor(db, repo, user));
+    }
+    // The rule itself, for bob: collaborator, stranger, internal, team, owner.
+    const bobs = await permissionsForMany(db, repos, byName.get('bob'));
+    const on = (name: string) =>
+      bobs.get(repos.find((r) => r.name === name)!.id);
+    expect(on('diary')).toEqual({ read: true, write: true, admin: false });
+    expect(on('secret')).toEqual({ read: false, write: false, admin: false });
+    expect(on('notes')).toEqual({ read: true, write: false, admin: false });
+    expect(on('site')).toEqual({ read: true, write: false, admin: false });
+    expect(on('own')).toEqual({ read: true, write: true, admin: true });
+
+    const found = await findReposByIds(db, [
+      ...repos.map((r) => r.id),
+      repos[0].id,
+      'missing',
+    ]);
+    expect(found.size).toBe(5);
+    for (const repo of repos)
+      expect(found.get(repo.id)).toEqual(await findRepoById(db, repo.id));
+    expect(
+      found.get(repos.find((r) => r.name === 'site')!.id)?.namespace
+    ).toMatchObject({ kind: 'team', username: 'xyspace' });
   });
 });

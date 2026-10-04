@@ -169,6 +169,8 @@ export const pullRequests = sqliteTable(
   (t) => [
     uniqueIndex('pull_requests_repo_number_uq').on(t.repositoryId, t.number),
     index('pull_requests_repo_state_idx').on(t.repositoryId, t.state),
+    // The Approvals inbox: every open pull request across repositories, newest first.
+    index('pull_requests_state_updated_idx').on(t.state, t.updatedAt),
   ]
 );
 
@@ -377,7 +379,19 @@ export const workflowRuns = sqliteTable(
   },
   (t) => [
     uniqueIndex('workflow_runs_repo_number_uq').on(t.repositoryId, t.runNumber),
-    index('workflow_runs_repo_sha_idx').on(t.repositoryId, t.headSha),
+    // Checks for a commit, in run order (with only (repository_id, head_sha), SQLite picks the
+    // run-number index for that ORDER BY and walks every run of the repository).
+    index('workflow_runs_repo_sha_number_idx').on(
+      t.repositoryId,
+      t.headSha,
+      t.runNumber
+    ),
+    // The Actions page: runs of one workflow file (count, newest first) and the file list.
+    index('workflow_runs_repo_path_number_idx').on(
+      t.repositoryId,
+      t.workflowPath,
+      t.runNumber
+    ),
   ]
 );
 

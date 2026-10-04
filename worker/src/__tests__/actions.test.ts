@@ -1051,6 +1051,28 @@ describe('Commit checks for lists', () => {
     expect(body[none]).toEqual({ state: null, runs: [] });
     expect(body[first].runs.map((r) => r.name)).toEqual(['CI']);
 
+    // A re-run supersedes the failed run: only the newest run per workflow counts.
+    const failed = queued.find((r) => r.headSha === first)!;
+    await call(
+      s.t,
+      `/api/repos/octocat/app/actions/runs/${failed.runNumber}/rerun`,
+      { cookie: s.admin, method: 'POST' }
+    );
+    const retried = (await runs(s.t, s.admin)).runs.find(
+      (r) => r.headSha === first && r.runNumber > failed.runNumber
+    )!;
+    await harness(s.t).run(retried.id);
+    const after = (await (
+      await call(
+        s.t,
+        `/api/repos/octocat/app/commit-statuses?shas=${first},${second}`,
+        { cookie: s.admin }
+      )
+    ).json()) as typeof body;
+    expect(after[first].state).toBe('success');
+    expect(after[first].runs).toHaveLength(1);
+    expect(after[second].state).toBe('pending');
+
     const bad = await call(
       s.t,
       '/api/repos/octocat/app/commit-statuses?shas=not-a-sha',

@@ -2509,6 +2509,14 @@
             "state"
           ],
           "isUnique": false
+        },
+        "pull_requests_state_updated_idx": {
+          "name": "pull_requests_state_updated_idx",
+          "columns": [
+            "state",
+            "updated_at"
+          ],
+          "isUnique": false
         }
       },
       "foreignKeys": {
@@ -3171,11 +3179,21 @@
           ],
           "isUnique": true
         },
-        "workflow_runs_repo_sha_idx": {
-          "name": "workflow_runs_repo_sha_idx",
+        "workflow_runs_repo_sha_number_idx": {
+          "name": "workflow_runs_repo_sha_number_idx",
           "columns": [
             "repository_id",
-            "head_sha"
+            "head_sha",
+            "run_number"
+          ],
+          "isUnique": false
+        },
+        "workflow_runs_repo_path_number_idx": {
+          "name": "workflow_runs_repo_path_number_idx",
+          "columns": [
+            "repository_id",
+            "workflow_path",
+            "run_number"
           ],
           "isUnique": false
         }

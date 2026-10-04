@@ -517,18 +517,21 @@ async function commitChecks(
   repositoryId: string,
   shas: string[]
 ) {
+  // Sorted here rather than in SQL: with ORDER BY run_number and several SHAs, SQLite walks
+  // every run of the repository by run number instead of looking up just these commits'.
   const rows = shas.length
-    ? await db
-        .select()
-        .from(workflowRuns)
-        .where(
-          and(
-            eq(workflowRuns.repositoryId, repositoryId),
-            inArray(workflowRuns.headSha, shas)
+    ? (
+        await db
+          .select()
+          .from(workflowRuns)
+          .where(
+            and(
+              eq(workflowRuns.repositoryId, repositoryId),
+              inArray(workflowRuns.headSha, shas)
+            )
           )
-        )
-        .orderBy(desc(workflowRuns.runNumber))
-        .all()
+          .all()
+      ).sort((a, b) => b.runNumber - a.runNumber)
     : [];
   const people = await usersById(
     db,
