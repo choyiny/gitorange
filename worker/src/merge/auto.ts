@@ -1,4 +1,5 @@
 import { and, eq, or } from 'drizzle-orm';
+import { pingingSteps } from '../live/publish';
 import {
   mergeResolutions,
   pullRequests,
@@ -70,7 +71,10 @@ export async function executeSweep(
   deps: { env: CloudflareBindings; db: DrizzleDB; step: StepRunner },
   params: SweepParams
 ) {
-  const { env, db, step } = deps;
+  const { env, db } = deps;
+  const step = pingingSteps(env, deps.step, params.repositoryId, {
+    approvals: true,
+  });
   const repo = await step.do('repo', async () => {
     const found = await findRepoById(db, params.repositoryId);
     return found?.repo ?? null;

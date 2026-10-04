@@ -38,10 +38,15 @@ and better-auth. Git storage is **Cloudflare Artifacts**: one Artifacts repo per
   binding). A valid resolution (`merge_resolutions.status = 'proposed'` for the current shas) makes the PR mergeable.
   Tests drive `executeResolution`/`executeSweep` with fake steps and a fake resolver.
 - Auto-merge (`worker/src/review/`): opt-in via `.gitorange/review.yml` on the target branch. Per head commit: GLM
-  one-liner per file → Clef classifies the one-liners against the policy's questions → flags (questions, path rules,
-  limits) investigated by GLM-5.3 and approved by people (`pr_classifications`, `pr_review_flags`). `maybeAutoMerge`
-  lands via `landPull` (shared with the merge button) when `autoMergeStatus` is ready. Tests drive
-  `executeClassification` with fake models.
+  one-liner per file → Clef classifies the one-liners against the policy's questions → flags (questions, limits; no
+  path rules) investigated by GLM-5.3 (Markdown + Mermaid diagram + excerpts cut from the real diff) and approved by
+  people (`pr_classifications`, `pr_review_flags`). `maybeAutoMerge` lands via `landPull` (shared with the merge
+  button) when `autoMergeStatus` is ready. `GET /api/approvals` (`review/inbox.ts`) feeds the global Approvals page.
+  Tests drive `executeClassification` with fake models.
+- Live updates (`worker/src/live/`): one hibernating `LiveHub` DO (binding `LIVE`) relays "changed" pings over
+  WebSockets (`GET /api/live[?repo=o/n]`, channels `repo:<id>` and `approvals`); pages refetch through the API. Pings
+  come from a middleware after successful repo mutations, `pingingSteps` around Workflow step runners, pushes, and
+  `landPull`. The client (`src/lib/live.tsx`) invalidates `['repo', o, n]` / `['approvals']`.
 - Artifacts has no local emulator: `yarn dev` runs `env.dev`, which uses the remote service in the
   `gitorange-dev` namespace. Tests use `wrangler.test.jsonc` (no remote bindings) plus an in-memory
   Artifacts fake.

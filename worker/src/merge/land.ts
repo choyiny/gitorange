@@ -1,4 +1,5 @@
 import { and, eq } from 'drizzle-orm';
+import { publishChange } from '../live/publish';
 import type { DrizzleDB } from '../db/middleware';
 import {
   mergeResolutions,
@@ -175,6 +176,8 @@ export async function landPull(opts: {
     .update(repositories)
     .set({ updatedAt: now })
     .where(eq(repositories.id, pr.repositoryId));
+  // Auto-merges happen in the background: tell open pages and inboxes.
+  opts.after(publishChange(env, pr.repositoryId, { approvals: true }));
   if (baseBefore) {
     const updates = [
       { ref: `refs/heads/${pr.baseRef}`, old: baseBefore, new: sha },

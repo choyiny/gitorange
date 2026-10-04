@@ -17,6 +17,11 @@ import { namespacesRouter, teamRouter } from './routers/teams-router';
 import { mcpApiRouter, mcpRouter } from './mcp';
 import { wellKnownRouter } from './mcp/well-known';
 import type { AppEnv } from './variables';
+import type { Context, MiddlewareHandler } from 'hono';
+import type { RepoEnv } from './lib/repos';
+import { publishChange } from './live/publish';
+import { liveSocket } from './live/route';
+import { approvalsRouter } from './routers/approvals-router';
 
 const app = new OpenAPIHono<AppEnv>();
 
@@ -46,6 +51,25 @@ app.route('/api/invites', invitesRouter);
 // Members only
 app.use('/api/repos/*', requireAuth);
 app.use('/api/repos', requireAuth);
+// Every successful change to a repository pings its open pages (and approval inboxes, for pull
+// request changes), so they update without a reload.
+const pingAfterChange: MiddlewareHandler<AppEnv> = async (c, next) => {
+  await next();
+  if (c.req.method === 'GET' || c.res.status >= 400) return;
+  const repo = (c as unknown as Context<RepoEnv>).get('repo');
+  if (repo)
+    c.executionCtx.waitUntil(
+      publishChange(c.env, repo.id, {
+        approvals: c.req.path.includes('/pulls'),
+      })
+    );
+};
+app.use('/api/repos/:owner/:repo', pingAfterChange);
+app.use('/api/repos/:owner/:repo/*', pingAfterChange);
+app.use('/api/approvals', requireAuth);
+app.route('/api/approvals', approvalsRouter);
+app.use('/api/live', requireAuth);
+app.get('/api/live', liveSocket);
 app.route('/api/repos', reposRouter);
 app.route('/api/repos', pullsRouter);
 app.route('/api/repos', actionsRouter);
@@ -84,6 +108,7 @@ export { ActionsRun } from './actions/run-workflow';
 export { JobRunner } from './actions/job-runner';
 export { MergeResolver } from './merge/resolver';
 export { MergeResolutionWorkflow } from './merge/workflow';
+export { LiveHub } from './live/hub';
 
 export default {
   fetch(request, env, ctx) {

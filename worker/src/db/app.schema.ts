@@ -294,14 +294,15 @@ export const prReviewFlags = sqliteTable(
     classificationId: text('classification_id')
       .notNull()
       .references(() => prClassifications.id, { onDelete: 'cascade' }),
-    // question: a review.yml question crossed its threshold; path: a path rule matched;
-    // limit: the pull request is too large, or a file couldn't be summarized.
-    source: text('source', { enum: ['question', 'path', 'limit'] }).notNull(),
-    // The question id, the matching path pattern, or the limit's name.
+    // question: a review.yml question crossed its threshold; limit: the pull request is too
+    // large, or a file couldn't be summarized.
+    source: text('source', { enum: ['question', 'limit'] }).notNull(),
+    // The question id, or the limit's name.
     key: text('key').notNull(),
     value: text('value', { mode: 'json' }).$type<unknown>(),
     paths: text('paths', { mode: 'json' }).$type<string[]>().notNull(),
-    // What the investigating model found, as Markdown; null while it runs or if it failed.
+    // What the investigating model found, as Markdown (with a Mermaid diagram and expandable
+    // code excerpts from the diff, when it gave them); null while it runs or if it failed.
     detail: text('detail'),
     detailModel: text('detail_model'),
     approvedById: text('approved_by_id').references(() => users.id, {

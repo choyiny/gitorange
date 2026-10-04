@@ -165,7 +165,7 @@ export function AutoMergeStatus({
 
 // ── timeline comment ─────────────────────────────────────────────────────────
 
-function Flag({
+export function Flag({
   f,
   approver,
   canApprove,
@@ -198,7 +198,6 @@ function Flag({
           >
             <span className="text-bold">{f.title}</span>
             {value && <span className="Label Label--attention">{value}</span>}
-            {f.source === 'path' && <span className="Label">path rule</span>}
           </div>
           {f.paths.length > 0 && (
             <div className="f6 mt-1">

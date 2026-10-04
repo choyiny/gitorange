@@ -6,6 +6,7 @@ export const USERNAME_RE =
 export const RESERVED_USERNAMES = new Set([
   'admin',
   'api',
+  'approvals',
   'invite',
   'login',
   'logout',

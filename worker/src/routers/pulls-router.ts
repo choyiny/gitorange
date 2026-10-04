@@ -452,7 +452,7 @@ const reviewSchema = z
     flags: z.array(
       z.object({
         id: z.string(),
-        source: z.enum(['question', 'path', 'limit']),
+        source: z.enum(['question', 'limit']),
         key: z.string(),
         title: z.string(),
         value: z.unknown(),

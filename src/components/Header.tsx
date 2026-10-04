@@ -9,12 +9,32 @@ import {
   KeyIcon,
   PlugIcon,
   ShieldLockIcon,
+  ShieldCheckIcon,
 } from '@primer/octicons-react';
 import type { ReactNode } from 'react';
 import { signOut, useCurrentUser } from '@/lib/auth';
 import { Avatar } from './Avatar';
 import { Dropdown } from './Dropdown';
 import { Logo } from './Logo';
+import { approvalCount, useApprovals } from '@/lib/approvals';
+
+/** The global Approvals tab, with how many items wait on the user. Updates live. */
+function ApprovalsLink() {
+  const count = approvalCount(useApprovals().data);
+  return (
+    <Link
+      to="/approvals"
+      className="btn btn-sm d-inline-flex flex-items-center"
+      style={{ gap: 6, height: 32 }}
+      aria-label={`Approvals${count ? `: ${count} waiting on you` : ''}`}
+      title="Approvals waiting on you"
+    >
+      <ShieldCheckIcon />
+      <span className="d-none d-md-inline">Approvals</span>
+      {count > 0 && <span className="Counter Counter--primary">{count}</span>}
+    </Link>
+  );
+}
 
 export function Header({
   context,
@@ -41,6 +61,7 @@ export function Header({
         </div>
         {user && (
           <div className="d-flex flex-items-center" style={{ gap: 8 }}>
+            <ApprovalsLink />
             <Dropdown
               align="right"
               width={220}

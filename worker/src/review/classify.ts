@@ -1,5 +1,6 @@
 import type { WorkflowStepConfig } from 'cloudflare:workers';
 import { and, eq } from 'drizzle-orm';
+import { pingingSteps } from '../live/publish';
 import type { DrizzleDB } from '../db/middleware';
 import {
   prClassifications,
@@ -20,12 +21,12 @@ import {
   reviewModel,
   summaryModel,
   type ClefQuestion,
+  type Investigation,
   type ReviewModels,
 } from './models';
 import {
   parsePolicy,
   PolicyError,
-  pathFlags,
   questionType,
   readPolicy,
   type PolicyQuestion,
@@ -178,6 +179,111 @@ export function renderDiff(d: FileDiff): string {
     .join('\n');
 }
 
+/** One diff line with the line number it has in the file (new side; old side for removals). */
+type NumberedLine = { kind: ' ' | '+' | '-'; n: number; text: string };
+
+function numberedLines(d: FileDiff): NumberedLine[][] {
+  return d.hunks.map((h) => {
+    let oldN = h.oldStart;
+    let newN = h.newStart;
+    const out: NumberedLine[] = [];
+    for (const l of h.lines) {
+      const kind = l[0] as NumberedLine['kind'];
+      if (kind === '-') out.push({ kind, n: oldN++, text: l.slice(1) });
+      else if (kind === '+') out.push({ kind, n: newN++, text: l.slice(1) });
+      else if (kind === ' ') {
+        // Context lines exist on both sides.
+        oldN++;
+        out.push({ kind, n: newN++, text: l.slice(1) });
+      }
+    }
+    return out;
+  });
+}
+
+/**
+ * A diff for the investigating model, each line numbered: added and context lines with their
+ * line in the new file, removed lines with their line in the old file (marked "old").
+ */
+export function renderNumberedDiff(d: FileDiff): string {
+  return numberedLines(d)
+    .map((hunk) =>
+      hunk
+        .map((l) =>
+          l.kind === '-'
+            ? `-${String(l.n).padStart(5)} old | ${l.text}`
+            : `${l.kind}${String(l.n).padStart(5)}     | ${l.text}`
+        )
+        .join('\n')
+    )
+    .join('\n...\n');
+}
+
+const MAX_SNIPPET_LINES = 30;
+
+/** The diff lines a snippet points at: new-side lines in range, and removals between them. */
+export function snippetLines(
+  d: FileDiff,
+  start: number,
+  end: number
+): string | null {
+  if (end < start) [start, end] = [end, start];
+  end = Math.min(end, start + MAX_SNIPPET_LINES - 1);
+  const removedFile = d.status === 'removed';
+  const picked: string[] = [];
+  for (const hunk of numberedLines(d)) {
+    // Removals have no new-side number: keep them when they border the range, so an excerpt
+    // shows what a change replaced.
+    let prevIn = false;
+    let held: string[] = [];
+    for (const l of hunk) {
+      const numbered = removedFile ? l.kind === '-' : l.kind !== '-';
+      if (!numbered) {
+        held.push(`${l.kind}${l.text}`);
+        continue;
+      }
+      const inRange = l.n >= start && l.n <= end;
+      if (inRange || prevIn) picked.push(...held);
+      held = [];
+      if (inRange) picked.push(`${l.kind}${l.text}`);
+      prevIn = inRange;
+    }
+    if (prevIn) picked.push(...held);
+  }
+  return picked.length ? picked.join('\n') : null;
+}
+
+const escapeHtml = (t: string) =>
+  t.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+
+/**
+ * The flag's comment body: the explanation, its diagram as a Mermaid block, and each code
+ * excerpt as an expandable block taken from the real diff (never from model output).
+ */
+async function composeDetail(
+  git: GitService,
+  changes: FileChange[],
+  out: Investigation
+): Promise<string> {
+  const parts = [out.detail];
+  if (out.diagram) parts.push('```mermaid\n' + out.diagram + '\n```');
+  for (const s of out.snippets) {
+    const ch = changes.find((c) => c.path === s.path);
+    if (!ch) continue;
+    const [d] = await git.fileDiffs([ch]);
+    if (d.binary || d.tooLarge) continue;
+    const lines = snippetLines(d, s.start, s.end);
+    if (!lines) continue;
+    const fence = lines.includes('```') ? '~~~~' : '```';
+    parts.push(
+      `<details><summary><code>${escapeHtml(s.path)}</code> lines ${s.start}–${s.end}${
+        s.why ? `: ${escapeHtml(s.why)}` : ''
+      }</summary>\n\n${fence}diff\n${lines}\n${fence}\n\n</details>`
+    );
+  }
+  return parts.join('\n\n');
+}
+
 type Summarized = FileSummary & { unsummarized?: boolean };
 
 /** One file's one-liner: fixed text where a model can't say more, otherwise the summary model. */
@@ -255,7 +361,7 @@ export function crosses(q: PolicyQuestion, a: ClassifierAnswer): boolean {
 }
 
 export type NewFlag = {
-  source: 'question' | 'path' | 'limit';
+  source: 'question' | 'limit';
   key: string;
   value: unknown;
   paths: string[];
@@ -289,11 +395,6 @@ export function computeFlags(
       detail:
         'These files are too large, or failed, to summarize, so the classifier never saw what changed in them.',
     });
-  for (const f of pathFlags(
-    policy,
-    files.map((f) => f.path)
-  ))
-    flags.push({ source: 'path', key: f.pattern, value: null, paths: f.paths });
   for (const [id, q] of Object.entries(policy.human_review.questions)) {
     const a = answers[id];
     if (a && crosses(q, a))
@@ -306,8 +407,6 @@ const pct = (n: number) => n.toFixed(2);
 
 /** A flag in words, for the investigating model. */
 function describeFlag(policy: ReviewPolicy, f: NewFlag): string {
-  if (f.source === 'path')
-    return `The review rules require a person for changes to "${f.key}", which matched: ${f.paths.join(', ')}.`;
   const q = policy.human_review.questions[f.key];
   const a = f.value as ClassifierAnswer;
   const kind = questionType(q);
@@ -337,7 +436,7 @@ async function diffsFor(
     const body =
       d.binary || d.tooLarge
         ? '(binary or too large to show)'
-        : renderDiff(d) || '(no textual change)';
+        : renderNumberedDiff(d) || '(no textual change)';
     const block = `--- ${ch.path} (${ch.status})\n${body}\n\n`;
     if (out.length + block.length > MAX_INVESTIGATE_DIFF) {
       left = order.length - i;
@@ -357,7 +456,8 @@ export interface ReviewDeps {
 
 /** Runs one review to completion. Called from the MERGE_RESOLUTION Workflow. */
 export async function executeClassification(deps: ReviewDeps, id: string) {
-  const { env, db, step, models } = deps;
+  const { env, db, models } = deps;
+  let step = deps.step;
   const job = await step.do('load', async () => {
     const row = await db
       .select()
@@ -413,6 +513,8 @@ export async function executeClassification(deps: ReviewDeps, id: string) {
     });
     return;
   }
+  // From here on, each step shows on the pull request (and in approval inboxes) as it finishes.
+  step = pingingSteps(env, step, job.pr.repositoryId, { approvals: true });
   const git = gitFor(env, job.repo);
   const { policy, pr, changes } = job;
   const tooMany =
@@ -547,12 +649,9 @@ export async function executeClassification(deps: ReviewDeps, id: string) {
           await db
             .update(prReviewFlags)
             .set({
-              detail: out.detail,
+              detail: await composeDetail(git, changes, out),
               detailModel: reviewModel(env),
-              paths:
-                f.source === 'path'
-                  ? f.paths
-                  : out.paths.filter((p) => changed.has(p)),
+              paths: out.paths.filter((p) => changed.has(p)),
             })
             .where(eq(prReviewFlags.id, flagId));
           return true;

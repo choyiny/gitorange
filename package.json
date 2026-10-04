@@ -49,6 +49,7 @@
     "highlight.js": "^11.12.0",
     "hono": "^4.12",
     "marked": "^18.0.14",
+    "mermaid": "^11",
     "node-diff3": "3.2.1",
     "react": "18.3.1",
     "react-dom": "18.3.1",

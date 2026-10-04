@@ -1,5 +1,6 @@
 import type { WorkflowStepConfig } from 'cloudflare:workers';
 import { and, asc, desc, eq, inArray, sql } from 'drizzle-orm';
+import { pingingSteps } from '../live/publish';
 import type { DrizzleDB } from '../db/middleware';
 import { users } from '../db/auth.schema';
 import {
@@ -414,7 +415,8 @@ const ONCE = { retries: { limit: 0, delay: 0 } } as const;
  * lands that commit. Only a failure to get an answer from the model needs a person.
  */
 export async function executeResolution(deps: ResolutionDeps, id: string) {
-  const { env, db, step } = deps;
+  const { env, db } = deps;
+  let step = deps.step;
   let job: {
     row: MergeResolution;
     pr: PullRequest;
@@ -455,6 +457,8 @@ export async function executeResolution(deps: ResolutionDeps, id: string) {
     });
     if (!job) return;
     const { row, pr, repo, author } = job;
+    // From here on, each step shows on the pull request as it finishes.
+    step = pingingSteps(env, step, pr.repositoryId, { approvals: true });
     const labels = { a: pr.baseRef, o: 'base', b: pr.headRef };
 
     const prepared = await step.do('prepare', ONCE, () =>

@@ -36,11 +36,21 @@ Every new commit on a pull request is reviewed once (again if `review.yml` chang
 2. **Classify.** [Clef](https://developers.cloudflare.com/workers-ai/models/), a decision model on Workers
    AI, answers the questions in `review.yml` from the pull request's title, description, and those one-liners.
    It never sees raw diffs, so nothing has to be truncated however large the pull request is.
-3. **Flag.** Each answer past its threshold, and each path rule that matches a changed file, is a flag.
-4. **Investigate.** For each flag, GLM-5.3 (`REVIEW_MODEL`) reads the full diffs of the relevant files and
-   explains on the pull request what caused it, the concrete risk, and what to check, citing files.
-5. **Approve.** Anyone who can merge (including the pull request's author) approves each flag with its
-   **Approve** button. New commits start a fresh review; earlier approvals don't carry over.
+3. **Flag.** Each answer past its threshold is a flag. Every flag comes from the AI's answers; there are no
+   hand-written file rules.
+4. **Investigate.** For each flag, GLM-5.3 (`REVIEW_MODEL`) reads every diff and explains what caused it,
+   the concrete risk, and what to check. It draws the change when a picture helps, as a
+   [Mermaid](https://mermaid.js.org) diagram: an ER diagram of the affected tables for data-model changes, a
+   sequence or flow diagram for auth and request handling. It also points at the lines worth reading; GitOrange
+   shows those as expandable excerpts taken from the actual diff, never from the model's own text.
+5. **Approve.** The review appears in the pull request's conversation as a comment from **Auto-merge**, with
+   an **Approve** button per flag. Anyone who can merge (including the pull request's author) approves. New
+   commits start a fresh review; earlier approvals don't carry over. The comment stays after the pull request
+   merges, as a record of who approved what.
+
+Everything waiting on you, across every repository you can merge in, is on the **Approvals** page (the
+shield in the header shows how many): flags to approve, failed reviews to retry, and conflicts AI couldn't
+resolve. Pages update live as reviews progress, flags are approved, and pull requests merge.
 
 If a model can't be reached, the review fails and the pull request says so, with a button to try again; it
 doesn't merge on its own until a review succeeds. You can always merge it by hand.
@@ -59,13 +69,6 @@ limits:
   max_files: 100 # more changed files than this: flagged instead of reviewed
 
 human_review:
-  # Path rules: always flag, no model involved. Globs like GitHub's (`*`, `**`, `?`, `!negation`).
-  paths:
-    - migrations/**
-    - src/auth/**
-    - .github/workflows/**
-    - .gitorange/review.yml # changing the rules should always need a person
-
   questions:
     # Yes/no: flagged when the probability of "yes" is above `above`.
     data_model:
@@ -107,8 +110,10 @@ A question's kind follows from its fields: `above` (yes/no), `options` (choice),
 use letters, digits, `_`, `.`, and `-`; up to 64 questions. An invalid file fails every review in the
 repository with the error shown on each pull request, so nothing merges on its own until it's fixed.
 
-**Write path rules for what must never slip through.** Questions are answered from one-line summaries; a
-summary that leaves something out can't be flagged by a question. Path rules see every changed file.
+**Questions see one-line summaries, not diffs.** A summary that leaves something out can't be flagged, so
+ask about what must never slip through in plain terms ("does this change how data is stored?"): the
+summarizer is told to mention stored data, permissions, and public interfaces explicitly. Older files with
+`human_review.paths` fail with a message saying to remove it.
 
 ## Cost
 
