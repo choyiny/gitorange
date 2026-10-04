@@ -47,6 +47,14 @@ human_review:
       no: Additive or internal only; existing callers and deployments keep working unchanged.
       above: 0.3
 
+    deploy_steps:
+      ask: >
+        Does deploying this change need a manual step: a D1 migration (yarn db:migrate:prod), a new
+        wrangler binding, variable, secret, cron trigger, or bucket, or a change to local wrangler.jsonc?
+      yes: A deployer must do something before or after `yarn deploy`.
+      no: Merging and running `yarn deploy` is enough.
+      above: 0.3
+
     removes_functionality:
       ask: >
         Does this change remove or disable existing user-visible functionality: a page or UI action, an
