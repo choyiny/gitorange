@@ -98,9 +98,11 @@ describe('AI Gateway', () => {
               },
             },
     };
-    const models = workersAiModels({ ...e, AI } as never, {
-      classificationId: 'no-such-classification',
-    });
+    const models = workersAiModels(
+      { ...e, AI } as never,
+      { summary: '@cf/zai-org/glm-5.3-flash', review: '@cf/zai-org/glm-5.3' },
+      { classificationId: 'no-such-classification' }
+    );
     await models.summarize({
       path: 'a.ts',
       status: 'added',
