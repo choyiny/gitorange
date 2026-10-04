@@ -558,3 +558,12 @@ body {
     max-width: none;
   }
 }
+
+/* AI conflict resolution: the text beside the spinner may shrink, and long paths wrap, so the
+   box never runs off a phone screen. */
+.ai-resolution > div {
+  min-width: 0;
+}
+.ai-resolution code {
+  overflow-wrap: anywhere;
+}

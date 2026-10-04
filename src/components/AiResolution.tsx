@@ -71,7 +71,10 @@ export function AiResolution({
 
   if (current?.status === 'queued')
     return (
-      <div className="Box-row d-flex flex-items-center" style={{ gap: 12 }}>
+      <div
+        className="Box-row d-flex flex-items-center ai-resolution"
+        style={{ gap: 12 }}
+      >
         <Spinner size={16} />
         <div>
           <div className="text-bold">Waiting to resolve conflicts with AI…</div>
@@ -85,7 +88,10 @@ export function AiResolution({
 
   if (current?.status === 'running')
     return (
-      <div className="Box-row d-flex flex-items-center" style={{ gap: 12 }}>
+      <div
+        className="Box-row d-flex flex-items-center ai-resolution"
+        style={{ gap: 12 }}
+      >
         <Spinner size={16} />
         <div>
           <div className="text-bold">Resolving conflicts with AI…</div>
@@ -105,7 +111,7 @@ export function AiResolution({
   if (current?.status === 'proposed' && current.resultSha)
     return (
       <>
-        <div className="Box-row">
+        <div className="Box-row ai-resolution">
           <div
             className="d-flex flex-items-center flex-wrap mb-2"
             style={{ columnGap: 8, rowGap: 2 }}
@@ -156,7 +162,7 @@ export function AiResolution({
           </div>
         </div>
         {showFiles && (
-          <div className="Box-row">
+          <div className="Box-row ai-resolution">
             <ResolvedFiles
               repo={repo}
               base={current.baseSha}
@@ -172,7 +178,10 @@ export function AiResolution({
   // is opened), so there is nothing to click.
   if (!current)
     return (
-      <div className="Box-row d-flex flex-items-center" style={{ gap: 12 }}>
+      <div
+        className="Box-row d-flex flex-items-center ai-resolution"
+        style={{ gap: 12 }}
+      >
         <Spinner size={16} />
         <div className="f6 color-fg-muted">
           Starting AI conflict resolution…
@@ -182,7 +191,7 @@ export function AiResolution({
 
   // The attempt for these commits failed or was discarded: only now does a person decide.
   return (
-    <div className="Box-row">
+    <div className="Box-row ai-resolution">
       {current.status === 'failed' && (
         <div className="flash flash-error mb-2 f6">
           AI couldn&apos;t resolve these conflicts:{' '}
