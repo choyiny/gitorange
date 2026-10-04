@@ -5,6 +5,7 @@ import {
   ChevronDownIcon,
   ChevronRightIcon,
   ClockIcon,
+  FileDiffIcon,
   ShieldCheckIcon,
   SparkleFillIcon,
   StopIcon,
@@ -165,29 +166,72 @@ export function AutoMergeStatus({
 
 // ── timeline comment ─────────────────────────────────────────────────────────
 
+/** Longest note when requesting changes on a flag (the server's limit). */
+const CHANGES_NOTE_MAX = 1000;
+
+/** Who requested changes on a flag, and their note. */
+export type ChangesRequester = {
+  label: string;
+  user: ReviewFlag['changesRequestedBy'];
+  note: string | null;
+};
+
+/** The flag's current request for changes, from the server; null once approved. */
+export function serverChangesRequester(f: ReviewFlag): ChangesRequester | null {
+  return f.changesRequestedAt && !f.approvedAt
+    ? {
+        label: f.changesRequestedBy?.username ?? 'a former user',
+        user: f.changesRequestedBy,
+        note: f.changesRequestedNote,
+      }
+    : null;
+}
+
 export function Flag({
   f,
   approver,
+  changesRequester,
   canApprove,
   approving,
+  requestingChanges,
   investigating,
   onApprove,
+  onRequestChanges,
 }: {
   f: ReviewFlag;
   /** Who approved it: from the server, or "you" right after approving. */
   approver: { label: string; user: ReviewFlag['approvedBy'] } | null;
+  /** Who asked for changes instead (only while unapproved), with their note. */
+  changesRequester: ChangesRequester | null;
   canApprove: boolean;
   approving: boolean;
+  requestingChanges: boolean;
   /** The review model is still looking into flags. */
   investigating: boolean;
   onApprove: () => void;
+  /** Resolves to whether it worked, so the note box closes only then. */
+  onRequestChanges: (note: string) => Promise<boolean>;
 }) {
   const value = flagValue(f);
+  const [composing, setComposing] = useState(false);
+  const [note, setNote] = useState('');
+  const changes = approver ? null : changesRequester;
+  const busy = approving || requestingChanges;
+  const submit = async () => {
+    if (await onRequestChanges(note)) {
+      setComposing(false);
+      setNote('');
+    }
+  };
   return (
-    <div className="border rounded-2 p-2 p-sm-3 mb-2">
+    <div
+      className={`border rounded-2 p-2 p-sm-3 mb-2${changes ? ' color-border-danger' : ''}`}
+    >
       <div className="d-flex flex-items-start" style={{ gap: 8 }}>
         {approver ? (
           <CheckCircleFillIcon className="color-fg-success mt-1 flex-shrink-0" />
+        ) : changes ? (
+          <FileDiffIcon className="color-fg-danger mt-1 flex-shrink-0" />
         ) : (
           <AlertIcon className="color-fg-attention mt-1 flex-shrink-0" />
         )}
@@ -227,6 +271,61 @@ export function Flag({
               </div>
             ))
           )}
+          {changes && (
+            <div className="flash flash-error mt-2 f6">
+              <div
+                className="d-flex flex-items-center text-bold"
+                style={{ gap: 4 }}
+              >
+                {changes.user && <Avatar user={changes.user} size={16} />}
+                Changes requested by {changes.label}
+              </div>
+              {changes.note && (
+                <div
+                  className="mt-1 color-fg-default"
+                  style={{ whiteSpace: 'pre-wrap', overflowWrap: 'anywhere' }}
+                >
+                  {changes.note}
+                </div>
+              )}
+            </div>
+          )}
+          {composing && !approver && (
+            <div className="mt-2">
+              <textarea
+                className="form-control width-full"
+                style={{ minHeight: 64, resize: 'vertical' }}
+                placeholder="What needs to change? (optional)"
+                aria-label="Note for requesting changes"
+                maxLength={CHANGES_NOTE_MAX}
+                value={note}
+                autoFocus
+                onChange={(e) => setNote(e.target.value)}
+              />
+              <div className="d-flex flex-justify-end mt-2" style={{ gap: 8 }}>
+                <button
+                  className="btn btn-sm"
+                  disabled={requestingChanges}
+                  onClick={() => setComposing(false)}
+                >
+                  Cancel
+                </button>
+                <button
+                  className="btn btn-sm btn-danger"
+                  disabled={busy}
+                  onClick={submit}
+                >
+                  {requestingChanges ? (
+                    <>
+                      <Spinner size={12} /> Requesting…
+                    </>
+                  ) : (
+                    'Request changes'
+                  )}
+                </button>
+              </div>
+            </div>
+          )}
           <div
             className="d-flex flex-items-center flex-justify-end mt-2"
             style={{ gap: 8 }}
@@ -240,23 +339,36 @@ export function Flag({
                 Approved by {approver.label}
               </span>
             ) : canApprove ? (
-              <button
-                className="btn btn-sm"
-                disabled={approving}
-                onClick={onApprove}
-              >
-                {approving ? (
-                  <>
-                    <Spinner size={12} /> Approving…
-                  </>
-                ) : (
-                  <>
-                    <ShieldCheckIcon /> Approve
-                  </>
+              <>
+                {!composing && (
+                  <button
+                    className="btn btn-sm"
+                    disabled={busy}
+                    onClick={() => setComposing(true)}
+                  >
+                    <FileDiffIcon /> Request changes
+                  </button>
                 )}
-              </button>
+                <button
+                  className="btn btn-sm"
+                  disabled={busy}
+                  onClick={onApprove}
+                >
+                  {approving ? (
+                    <>
+                      <Spinner size={12} /> Approving…
+                    </>
+                  ) : (
+                    <>
+                      <ShieldCheckIcon /> Approve
+                    </>
+                  )}
+                </button>
+              </>
             ) : (
-              <span className="f6 color-fg-muted">Not approved</span>
+              !changes && (
+                <span className="f6 color-fg-muted">Not approved</span>
+              )
             )}
           </div>
         </div>
@@ -350,6 +462,9 @@ export function ReviewComment({
   // Approvals confirmed by the server but not yet in the reloaded page.
   const [approved, setApproved] = useState<Set<string>>(new Set());
   const [approving, setApproving] = useState<string | null>(null);
+  // Requests for changes confirmed by the server but not yet reloaded: flag id → note.
+  const [requested, setRequested] = useState<Map<string, string>>(new Map());
+  const [requesting, setRequesting] = useState<string | null>(null);
   const o = repo.owner.username;
   const n = d.pull.number;
 
@@ -358,13 +473,39 @@ export function ReviewComment({
     await run(async () => {
       await api.approveFlag(o, repo.name, n, id);
       setApproved((s) => new Set(s).add(id));
+      setRequested((m) => {
+        const next = new Map(m);
+        next.delete(id);
+        return next;
+      });
     });
     setApproving(null);
+  };
+  const requestChanges = async (id: string, note: string) => {
+    setRequesting(id);
+    const ok = await run(async () => {
+      await api.requestFlagChanges(o, repo.name, n, id, note);
+      setRequested((m) => new Map(m).set(id, note.trim()));
+    });
+    setRequesting(null);
+    return ok;
   };
 
   const pending = review.flags.filter(
     (f) => !f.approvedAt && !approved.has(f.id)
   ).length;
+  const changesRequested = review.flags.filter(
+    (f) =>
+      !f.approvedAt &&
+      !approved.has(f.id) &&
+      (requested.has(f.id) || f.changesRequestedAt)
+  ).length;
+  const notes = [
+    review.flags.length > pending
+      ? `${review.flags.length - pending} approved`
+      : '',
+    changesRequested ? `changes requested on ${changesRequested}` : '',
+  ].filter(Boolean);
   let summary: React.ReactNode;
   if (!c || (PROGRESS[c.status] && !review.flags.length))
     summary = (
@@ -405,9 +546,7 @@ export function ReviewComment({
       <p className="mb-2">
         {pending
           ? `${pending === 1 ? 'This needs' : `These ${pending} need`} a person before the pull request can merge on its own${
-              review.flags.length > pending
-                ? ` (${review.flags.length - pending} approved)`
-                : ''
+              notes.length ? ` (${notes.join(', ')})` : ''
             }:`
           : review.flags.length === 1
             ? 'The flagged item was approved.'
@@ -456,15 +595,23 @@ export function ReviewComment({
               !serverApprover && approved.has(f.id)
                 ? { label: 'you', user: null }
                 : null;
+            const localNote = requested.get(f.id);
             return (
               <Flag
                 key={f.id}
                 f={f}
                 approver={serverApprover ?? localApprover}
+                changesRequester={
+                  localNote !== undefined
+                    ? { label: 'you', user: null, note: localNote || null }
+                    : serverChangesRequester(f)
+                }
                 canApprove={open && d.canMerge && !!me}
                 approving={approving === f.id}
+                requestingChanges={requesting === f.id}
                 investigating={c?.status === 'investigating'}
                 onApprove={() => approve(f.id)}
+                onRequestChanges={(note) => requestChanges(f.id, note)}
               />
             );
           })}

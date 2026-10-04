@@ -171,6 +171,10 @@ export type ReviewFlag = {
   detailModel: string | null;
   approvedBy: User | null;
   approvedAt: string | null;
+  /** Someone asked for changes instead of approving; cleared when it's approved. */
+  changesRequestedBy: User | null;
+  changesRequestedAt: string | null;
+  changesRequestedNote: string | null;
 };
 /** An open pull request waiting on a person (GET /api/approvals). */
 export type ApprovalItem = {
@@ -625,6 +629,17 @@ export const api = {
   approveFlag: (o: string, n: string, num: number, id: string) =>
     apiFetch(`${r(o, n)}/pulls/${num}/review/flags/${id}/approve`, {
       method: 'POST',
+    }),
+  requestFlagChanges: (
+    o: string,
+    n: string,
+    num: number,
+    id: string,
+    note: string
+  ) =>
+    apiFetch(`${r(o, n)}/pulls/${num}/review/flags/${id}/request-changes`, {
+      method: 'POST',
+      json: { note: note.trim() || null },
     }),
   retryReview: (o: string, n: string, num: number) =>
     apiFetch(`${r(o, n)}/pulls/${num}/review/retry`, { method: 'POST' }),

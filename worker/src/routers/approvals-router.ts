@@ -18,7 +18,7 @@ const itemSchema = z.object({
   reviewFailed: z.string().nullable(),
   /** AI couldn't resolve the conflicts, or its resolution was discarded. */
   resolutionFailed: z.string().nullable(),
-  /** Flags of the latest review that nobody approved yet. */
+  /** Flags of the latest review that nobody approved yet (some may have changes requested). */
   flags: z.array(
     z.object({
       id: z.string(),
@@ -31,6 +31,9 @@ const itemSchema = z.object({
       detailModel: z.string().nullable(),
       approvedBy: z.null(),
       approvedAt: z.null(),
+      changesRequestedBy: publicUserSchema.nullable(),
+      changesRequestedAt: z.string().nullable(),
+      changesRequestedNote: z.string().nullable(),
     })
   ),
 });

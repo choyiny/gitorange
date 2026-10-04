@@ -318,6 +318,8 @@ describe('MCP server', () => {
       ['gitorange_create_pull_request', false],
       ['gitorange_comment_pull_request', false],
       ['gitorange_merge_pull_request', false],
+      ['gitorange_approve_review_flag', false],
+      ['gitorange_request_changes_on_review_flag', false],
       ['gitorange_get_run_logs', true],
     ]);
     const unknown = (await (
@@ -436,7 +438,7 @@ describe('MCP server', () => {
     const res = await call(t, '/api/mcp', { cookie: admin });
     const body = (await res.json()) as { serverUrl: string; tools: unknown[] };
     expect(body.serverUrl).toBe(`${ORIGIN}/mcp`);
-    expect(body.tools).toHaveLength(10);
+    expect(body.tools).toHaveLength(12);
     expect((await call(t, '/api/mcp')).status).toBe(401);
   });
 });
@@ -479,6 +481,11 @@ describe('instance name', () => {
       title: 'XY Space Git',
     });
     expect(init.result.instructions).toMatch(/^XY Space Git is/);
+    // Flag tools act as the user: only on their explicit request.
+    expect(init.result.instructions).toMatch(
+      /act as the signed-in user, so only use them when the user explicitly asks/
+    );
+    expect(init.result.instructions).not.toMatch(/web UI/);
   });
 });
 
@@ -599,8 +606,9 @@ describe('MCP pull request tools', () => {
     });
   });
 
-  it('refuses to merge past review flags a person has not approved', async () => {
-    const { t, token } = await repoWithBranch(
+  /** An open pull request whose review raised one flag (auto-merge off, so it stays open). */
+  async function flaggedPull() {
+    const { t, admin, token } = await repoWithBranch(
       'checks:\n  require: none\nhuman_review:\n  questions:\n    data_model:\n      ask: Does this change stored data?\n      above: 0.3\n'
     );
     await tool(t, token, 'gitorange_create_pull_request', {
@@ -638,6 +646,21 @@ describe('MCP pull request tools', () => {
       (started.params as { classificationId: string }).classificationId
     );
 
+    return { t, admin, token };
+  }
+
+  const getPull = async (t: TestEnv, token: string) =>
+    JSON.parse(
+      (
+        await tool(t, token, 'gitorange_get_pull_request', {
+          repository: 'octocat/app',
+          number: 1,
+        })
+      ).content[0].text
+    );
+
+  it('refuses to merge past review flags a person has not approved', async () => {
+    const { t, token } = await flaggedPull();
     const got = JSON.parse(
       (
         await tool(t, token, 'gitorange_get_pull_request', {
@@ -650,9 +673,13 @@ describe('MCP pull request tools', () => {
       state: 'disabled',
       flags: [
         {
+          id: expect.any(String),
           title: 'Does this change stored data?',
           finding: 'Stores a new field.',
+          state: 'pending',
           approved_by: null,
+          changes_requested_by: null,
+          changes_requested_note: null,
         },
       ],
     });
@@ -664,6 +691,91 @@ describe('MCP pull request tools', () => {
     expect(refused.content[0].text).toMatch(
       /1 review flag waiting for a person's approval/
     );
+  });
+
+  it('approves flags and requests changes on them as the signed-in user, with merge permission', async () => {
+    const { t, admin, token } = await flaggedPull();
+    const flagId = (await getPull(t, token)).auto_merge.flags[0].id as string;
+    const args = { repository: 'octocat/app', number: 1, flag_id: flagId };
+
+    // Same permission as the web UI: a member who can only read can't decide on flags.
+    const reader = await addMember(t, admin, 'grace');
+    const { access_token: readerToken } = await connect(t, reader);
+    for (const name of [
+      'gitorange_approve_review_flag',
+      'gitorange_request_changes_on_review_flag',
+    ]) {
+      const denied = await tool(t, readerToken, name, args);
+      expect(denied.isError).toBe(true);
+      expect(denied.content[0].text).toMatch(/permission/);
+    }
+    const unknown = await tool(t, token, 'gitorange_approve_review_flag', {
+      ...args,
+      flag_id: 'nope',
+    });
+    expect(unknown.isError).toBe(true);
+    expect(unknown.content[0].text).toMatch(/has no review flag nope/);
+
+    // Requesting changes pings open pages and approval inboxes.
+    const res = await app.fetch(
+      new Request(`${ORIGIN}/api/live`, {
+        headers: { Upgrade: 'websocket', Cookie: admin },
+      }),
+      t.env,
+      t.ctx
+    );
+    const ws = res.webSocket!;
+    ws.accept();
+    const pings: string[] = [];
+    ws.addEventListener('message', (e) => pings.push(String(e.data)));
+
+    const requested = await tool(
+      t,
+      token,
+      'gitorange_request_changes_on_review_flag',
+      { ...args, note: '  Add a down migration.  ' }
+    );
+    expect(requested.isError).toBeUndefined();
+    await settle(t);
+    await new Promise((r) => setTimeout(r, 50));
+    expect(pings).toContain('{"type":"approvals"}');
+    ws.close();
+    expect((await getPull(t, token)).auto_merge.flags[0]).toMatchObject({
+      id: flagId,
+      state: 'changes_requested',
+      approved_by: null,
+      changes_requested_by: 'octocat',
+      changes_requested_note: 'Add a down migration.',
+    });
+    // Still blocks merging.
+    const refused = await tool(t, token, 'gitorange_merge_pull_request', {
+      repository: 'octocat/app',
+      number: 1,
+    });
+    expect(refused.isError).toBe(true);
+
+    // Approving clears the request; then changes can't be requested on it any more.
+    const approved = await tool(
+      t,
+      token,
+      'gitorange_approve_review_flag',
+      args
+    );
+    expect(approved.isError).toBeUndefined();
+    expect((await getPull(t, token)).auto_merge.flags[0]).toMatchObject({
+      state: 'approved',
+      approved_by: 'octocat',
+      changes_requested_by: null,
+      changes_requested_note: null,
+    });
+    const late = await tool(
+      t,
+      token,
+      'gitorange_request_changes_on_review_flag',
+      args
+    );
+    expect(late.isError).toBe(true);
+    expect(late.content[0].text).toMatch(/already approved/);
   });
 
   it('needs push access to open or merge, and hides repositories you cannot read', async () => {

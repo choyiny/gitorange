@@ -2229,6 +2229,27 @@
           "notNull": false,
           "autoincrement": false
         },
+        "changes_requested_by_id": {
+          "name": "changes_requested_by_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "changes_requested_at": {
+          "name": "changes_requested_at",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "changes_requested_note": {
+          "name": "changes_requested_note",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
         "created_at": {
           "name": "created_at",
           "type": "integer",
@@ -2268,6 +2289,19 @@
           "tableTo": "users",
           "columnsFrom": [
             "approved_by_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "set null",
+          "onUpdate": "no action"
+        },
+        "pr_review_flags_changes_requested_by_id_users_id_fk": {
+          "name": "pr_review_flags_changes_requested_by_id_users_id_fk",
+          "tableFrom": "pr_review_flags",
+          "tableTo": "users",
+          "columnsFrom": [
+            "changes_requested_by_id"
           ],
           "columnsTo": [
             "id"

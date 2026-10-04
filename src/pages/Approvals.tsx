@@ -11,7 +11,7 @@ import { errorMessage } from '@/lib/api';
 import { timeAgo } from '@/lib/format';
 import { Header } from '@/components/Header';
 import { Spinner } from '@/components/Spinner';
-import { Flag } from '@/components/AutoMergeReview';
+import { Flag, serverChangesRequester } from '@/components/AutoMergeReview';
 import { approvalCount, useApprovals } from '@/lib/approvals';
 
 function Item({ item }: { item: ApprovalItem }) {
@@ -21,6 +21,8 @@ function Item({ item }: { item: ApprovalItem }) {
   const prUrl = `/${item.repo.fullName}/pull/${n}`;
   // Approved here, waiting for the list to reload.
   const [approved, setApproved] = useState<Set<string>>(new Set());
+  // Changes requested here (flag id → note), waiting for the list to reload.
+  const [requested, setRequested] = useState<Map<string, string>>(new Map());
   const [busy, setBusy] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const act = async (key: string, fn: () => Promise<unknown>) => {
@@ -29,8 +31,10 @@ function Item({ item }: { item: ApprovalItem }) {
     try {
       await fn();
       await qc.invalidateQueries({ queryKey: qk.approvals });
+      return true;
     } catch (e) {
       setError(errorMessage(e));
+      return false;
     } finally {
       setBusy(null);
     }
@@ -89,22 +93,39 @@ function Item({ item }: { item: ApprovalItem }) {
             </Link>
           </div>
         )}
-        {item.flags.map((f) => (
-          <Flag
-            key={f.id}
-            f={f}
-            approver={approved.has(f.id) ? { label: 'you', user: null } : null}
-            canApprove
-            approving={busy === f.id}
-            investigating={false}
-            onApprove={() =>
-              act(f.id, async () => {
-                await api.approveFlag(owner, name, n, f.id);
-                setApproved((s) => new Set(s).add(f.id));
-              })
-            }
-          />
-        ))}
+        {item.flags.map((f) => {
+          const localNote = requested.get(f.id);
+          return (
+            <Flag
+              key={f.id}
+              f={f}
+              approver={
+                approved.has(f.id) ? { label: 'you', user: null } : null
+              }
+              changesRequester={
+                localNote !== undefined
+                  ? { label: 'you', user: null, note: localNote || null }
+                  : serverChangesRequester(f)
+              }
+              canApprove
+              approving={busy === f.id}
+              requestingChanges={busy === `changes:${f.id}`}
+              investigating={false}
+              onApprove={() =>
+                act(f.id, async () => {
+                  await api.approveFlag(owner, name, n, f.id);
+                  setApproved((s) => new Set(s).add(f.id));
+                })
+              }
+              onRequestChanges={(note) =>
+                act(`changes:${f.id}`, async () => {
+                  await api.requestFlagChanges(owner, name, n, f.id, note);
+                  setRequested((m) => new Map(m).set(f.id, note.trim()));
+                })
+              }
+            />
+          );
+        })}
       </div>
     </div>
   );

@@ -334,6 +334,14 @@ export const prReviewFlags = sqliteTable(
       onDelete: 'set null',
     }),
     approvedAt: integer('approved_at', { mode: 'timestamp' }),
+    // A person asked for changes instead of approving: blocks auto-merge until someone approves
+    // (which clears these). Never set together with approved_at.
+    changesRequestedById: text('changes_requested_by_id').references(
+      () => users.id,
+      { onDelete: 'set null' }
+    ),
+    changesRequestedAt: integer('changes_requested_at', { mode: 'timestamp' }),
+    changesRequestedNote: text('changes_requested_note'),
     createdAt: integer('created_at', { mode: 'timestamp' }).notNull(),
   },
   (t) => [

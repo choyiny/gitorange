@@ -13,6 +13,12 @@ import { addComment, openPull, pullShas } from '../lib/pulls';
 import { landPull } from '../merge/land';
 import { latestResolution } from '../merge/resolution';
 import { reviewView } from '../review/view';
+import {
+  CHANGES_NOTE_MAX,
+  decideFlag,
+  type FlagDecision,
+} from '../review/flags';
+import { publishChange } from '../live/publish';
 import { McpToolError } from './errors';
 import type { ToolContext, ToolModule } from './tools';
 
@@ -178,8 +184,8 @@ const getPullRequest: ToolModule = {
     description:
       'Get one pull request: its description, branches and commits, whether it merges cleanly (or has ' +
       'conflicts, and what AI conflict resolution is doing about them), the Actions checks on its latest ' +
-      'commit, the auto-merge review (each flag, what the review model found, and whether a person approved ' +
-      'it), whether it will merge on its own and what it waits on, and recent comments. Call it again to ' +
+      'commit, the auto-merge review (each flag with its id, what the review model found, and whether a ' +
+      'person approved it or requested changes), whether it will merge on its own and what it waits on, and recent comments. Call it again to ' +
       'follow progress after pushing. For why a check failed, pass its run_number to gitorange_get_run_logs.',
     annotations: { readOnlyHint: true, title: 'Get pull request' },
     inputSchema: {
@@ -281,10 +287,22 @@ const getPullRequest: ToolModule = {
                     }
                   : null,
                 flags: review.flags.map((f) => ({
+                  id: f.id,
                   title: f.title,
                   files: f.paths,
                   finding: f.detail,
-                  approved_by: f.approvedBy?.username ?? null,
+                  state: f.approvedAt
+                    ? 'approved'
+                    : f.changesRequestedAt
+                      ? 'changes_requested'
+                      : 'pending',
+                  approved_by: f.approvedAt
+                    ? (f.approvedBy?.username ?? null)
+                    : null,
+                  changes_requested_by: f.changesRequestedAt
+                    ? (f.changesRequestedBy?.username ?? null)
+                    : null,
+                  changes_requested_note: f.changesRequestedNote,
                 })),
               }
             : null,
@@ -416,7 +434,7 @@ const mergePullRequest: ToolModule = {
     description:
       'Rebase and merge a pull request: its changes become one commit on top of the target branch, keeping ' +
       'history linear (AI-resolved conflicts are included). Refused while any auto-merge review flag is ' +
-      'unapproved: those need a person to approve them in the web UI first. Needs push access.',
+      'unapproved: those need a person to approve them first. Needs push access.',
     annotations: {
       readOnlyHint: false,
       destructiveHint: false,
@@ -455,7 +473,7 @@ const mergePullRequest: ToolModule = {
     if (pending.length)
       throw new McpToolError(
         `#${pr.number} has ${pending.length} review flag${pending.length === 1 ? '' : 's'} waiting for a person's approval ` +
-          `(${pending.map((f) => f.title).join('; ')}). Ask the user to review and approve ${pullUrl(ctx, fullName, pr.number)}, ` +
+          `(${pending.map((f) => f.title).join('; ')}). Ask the user to review them at ${pullUrl(ctx, fullName, pr.number)}, ` +
           'or their Approvals page; it then merges on its own.'
       );
     const result = await landPull({
@@ -641,11 +659,119 @@ const getRunLogs: ToolModule = {
   },
 };
 
+const flagIdProp = {
+  type: 'string',
+  description:
+    "The flag's id, from gitorange_get_pull_request's auto_merge.flags.",
+};
+
+/** Approves a review flag or requests changes on it, as the signed-in user. */
+async function decideFlagTool(
+  args: Record<string, unknown>,
+  ctx: ToolContext,
+  decision: FlagDecision
+) {
+  const { repo, fullName, perms } = await repoFor(ctx, args);
+  // The same check as the web UI: approving clears a pull request for auto-merge.
+  if (!perms.write)
+    throw new McpToolError(
+      `You don't have permission to review flags in ${fullName}.`
+    );
+  const pr = await pullFor(ctx, repo.id, fullName, prNumber(args));
+  const flagId = str(args, 'flag_id', true).trim();
+  const result = await decideFlag(
+    ctx.env,
+    ctx.db,
+    pr,
+    flagId,
+    ctx.user.id,
+    decision,
+    ctx.after
+  );
+  if (!result.ok)
+    throw new McpToolError(
+      result.status === 404
+        ? `#${pr.number} has no review flag ${flagId}. Call gitorange_get_pull_request to see its flags.`
+        : result.error
+    );
+  ctx.after(publishChange(ctx.env, repo.id, { approvals: true }));
+  return pullUrl(ctx, fullName, pr.number);
+}
+
+const approveReviewFlag: ToolModule = {
+  definition: {
+    name: 'gitorange_approve_review_flag',
+    title: 'Approve review flag',
+    description:
+      "Approve one of a pull request's auto-merge review flags, as the signed-in user, clearing any request " +
+      'for changes on it. Once every flag is approved the pull request can merge on its own. Only use this ' +
+      'when the user explicitly asks you to approve that flag; never to unblock your own pull request. ' +
+      'Needs push access.',
+    annotations: {
+      readOnlyHint: false,
+      destructiveHint: false,
+      title: 'Approve review flag',
+    },
+    inputSchema: {
+      type: 'object',
+      properties: {
+        repository: repositoryProp,
+        number: numberProp,
+        flag_id: flagIdProp,
+      },
+      required: ['repository', 'number', 'flag_id'],
+    },
+  },
+  handler: async (args, ctx) => {
+    const url = await decideFlagTool(args, ctx, { kind: 'approve' });
+    return { content: [text(`Approved the flag on ${url}`)] };
+  },
+};
+
+const requestChangesOnReviewFlag: ToolModule = {
+  definition: {
+    name: 'gitorange_request_changes_on_review_flag',
+    title: 'Request changes on review flag',
+    description:
+      "Request changes on one of a pull request's unapproved auto-merge review flags, as the signed-in user, " +
+      'with an optional short note. It blocks auto-merge until someone approves the flag. Only use this when ' +
+      'the user explicitly asks you to. Needs push access.',
+    annotations: {
+      readOnlyHint: false,
+      destructiveHint: false,
+      title: 'Request changes on review flag',
+    },
+    inputSchema: {
+      type: 'object',
+      properties: {
+        repository: repositoryProp,
+        number: numberProp,
+        flag_id: flagIdProp,
+        note: {
+          type: 'string',
+          maxLength: CHANGES_NOTE_MAX,
+          description: 'Optional: what needs to change.',
+        },
+      },
+      required: ['repository', 'number', 'flag_id'],
+    },
+  },
+  handler: async (args, ctx) => {
+    const url = await decideFlagTool(args, ctx, {
+      kind: 'request_changes',
+      note: str(args, 'note'),
+    });
+    return { content: [text(`Requested changes on the flag on ${url}`)] };
+  },
+};
+
 export const PULL_TOOLS: ToolModule[] = [
   listPullRequests,
   getPullRequest,
   createPullRequest,
   commentPullRequest,
   mergePullRequest,
+  approveReviewFlag,
+  requestChangesOnReviewFlag,
   getRunLogs,
 ];

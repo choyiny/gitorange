@@ -139,10 +139,12 @@ export async function approvalsFor(
     }
     return policies.get(sha)!;
   };
-  const people = await usersById(
-    db,
-    visible.map((i) => i.pr.authorId)
-  );
+  const people = await usersById(db, [
+    ...visible.map((i) => i.pr.authorId),
+    ...pendingFlags
+      .map((f) => f.changesRequestedById)
+      .filter((id): id is string => !!id),
+  ]);
   const out = [];
   for (const i of visible) {
     const r = repos.get(i.pr.repositoryId)!;
@@ -173,6 +175,13 @@ export async function approvalsFor(
               detailModel: f.detailModel,
               approvedBy: null,
               approvedAt: null,
+              changesRequestedBy: f.changesRequestedById
+                ? (people.get(f.changesRequestedById) ?? null)
+                : null,
+              changesRequestedAt: f.changesRequestedAt?.toISOString() ?? null,
+              changesRequestedNote: f.changesRequestedAt
+                ? f.changesRequestedNote
+                : null,
             }))
         : [],
     });

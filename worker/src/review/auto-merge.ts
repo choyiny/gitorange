@@ -147,30 +147,41 @@ export async function autoMergeStatus(
   }
 
   const review = await classificationFor(db, pr.id, head, policyFile.sha);
+  const openFlags =
+    review?.status === 'done' && review.verdict === 'human'
+      ? await db
+          .select({
+            id: prReviewFlags.id,
+            changesRequestedAt: prReviewFlags.changesRequestedAt,
+          })
+          .from(prReviewFlags)
+          .where(
+            and(
+              eq(prReviewFlags.classificationId, review.id),
+              isNull(prReviewFlags.approvedAt)
+            )
+          )
+          .all()
+      : [];
   const progress = reviewProgress(
     review,
     review?.status === 'done' && review.verdict === 'human'
-      ? (
-          await db
-            .select({ id: prReviewFlags.id })
-            .from(prReviewFlags)
-            .where(
-              and(
-                eq(prReviewFlags.classificationId, review.id),
-                isNull(prReviewFlags.approvedAt)
-              )
-            )
-            .all()
-        ).length
+      ? openFlags.length
       : 0
   );
   if (progress.state === 'reviewing') waiting.push('Reviewing the changes');
   else if (progress.state === 'failed') {
     if (policy) blocked.push(`Review failed: ${progress.error ?? ''}`.trim());
-  } else if (progress.state === 'review_required')
-    waiting.push(
-      `${plural(progress.flags, 'flag')} need${progress.flags === 1 ? 's' : ''} approval`
-    );
+  } else if (progress.state === 'review_required') {
+    const changes = openFlags.filter((f) => f.changesRequestedAt).length;
+    const open = openFlags.length - changes;
+    if (changes)
+      waiting.push(`Changes requested on ${plural(changes, 'flag')}`);
+    if (open)
+      waiting.push(
+        `${plural(open, 'flag')} need${open === 1 ? 's' : ''} approval`
+      );
+  }
 
   if (policy) {
     const checks = await checkProblem(

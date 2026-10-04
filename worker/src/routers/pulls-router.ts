@@ -1,10 +1,8 @@
 import { OpenAPIHono, createRoute, z } from '@hono/zod-openapi';
 import type { Context } from 'hono';
-import { and, asc, desc, eq, inArray, isNull, sql } from 'drizzle-orm';
+import { and, asc, desc, eq, inArray, sql } from 'drizzle-orm';
 import {
   mergeResolutions,
-  prClassifications,
-  prReviewFlags,
   pullRequestComments,
   pullRequests,
   type MergeResolution,
@@ -41,6 +39,7 @@ import { addComment, openPull, pullShas } from '../lib/pulls';
 import { ensureClassification, retryClassification } from '../review/classify';
 import { maybeAutoMerge, type ReviewProgress } from '../review/auto-merge';
 import { reviewProgressFor } from '../review/list';
+import { CHANGES_NOTE_MAX, decideFlag } from '../review/flags';
 import { reviewView } from '../review/view';
 
 export const pullsRouter = new OpenAPIHono<RepoEnv>({
@@ -456,6 +455,9 @@ const reviewSchema = z
         detailModel: z.string().nullable(),
         approvedBy: publicUserSchema.nullable(),
         approvedAt: z.string().nullable(),
+        changesRequestedBy: publicUserSchema.nullable(),
+        changesRequestedAt: z.string().nullable(),
+        changesRequestedNote: z.string().nullable(),
       })
     ),
     autoMerge: z.object({
@@ -800,36 +802,65 @@ pullsRouter.openapi(approveFlagRoute, async (c) => {
   // Approving clears a pull request for auto-merge, so it takes merge permission.
   if (!c.get('perms').write)
     return c.json({ error: 'You do not have permission to approve' }, 403);
-  const db = c.get('db');
   const { number, flagId } = c.req.valid('param');
   const pr = await getPull(c, number);
   if (!pr) return c.json({ error: 'Not Found' }, 404);
-  if (pr.state !== 'open')
-    return c.json({ error: 'This pull request is no longer open' }, 400);
-  const flag = await db
-    .select({ id: prReviewFlags.id })
-    .from(prReviewFlags)
-    .innerJoin(
-      prClassifications,
-      eq(prClassifications.id, prReviewFlags.classificationId)
-    )
-    .where(
-      and(
-        eq(prReviewFlags.id, flagId),
-        eq(prClassifications.pullRequestId, pr.id)
-      )
-    )
-    .get();
-  if (!flag) return c.json({ error: 'Not Found' }, 404);
-  await db
-    .update(prReviewFlags)
-    .set({ approvedById: c.get('user')!.id, approvedAt: new Date() })
-    .where(and(eq(prReviewFlags.id, flagId), isNull(prReviewFlags.approvedAt)));
-  c.executionCtx.waitUntil(
-    maybeAutoMerge(c.env, db, pr.id).catch((e) =>
-      console.error('[review] auto-merge failed', e)
-    )
+  const result = await decideFlag(
+    c.env,
+    c.get('db'),
+    pr,
+    flagId,
+    c.get('user')!.id,
+    { kind: 'approve' },
+    (work) => c.executionCtx.waitUntil(work)
   );
+  if (!result.ok) return c.json({ error: result.error }, result.status);
+  return c.json({ ok: true as const }, 200);
+});
+
+const requestChangesFlagRoute = createRoute({
+  method: 'post',
+  path: '/{owner}/{repo}/pulls/{number}/review/flags/{flagId}/request-changes',
+  tags: ['Pull requests'],
+  request: {
+    params: flagParams,
+    body: {
+      content: {
+        'application/json': {
+          schema: z.object({
+            note: z.string().max(CHANGES_NOTE_MAX).nullable().optional(),
+          }),
+        },
+      },
+    },
+  },
+  responses: {
+    ...json200Response(z.object({ ok: z.literal(true) }), 'Changes requested'),
+    ...json400Response,
+    ...json403Response,
+    ...json404Response,
+  },
+});
+pullsRouter.openapi(requestChangesFlagRoute, async (c) => {
+  // Whoever can approve a flag can request changes on it instead.
+  if (!c.get('perms').write)
+    return c.json(
+      { error: 'You do not have permission to request changes' },
+      403
+    );
+  const { number, flagId } = c.req.valid('param');
+  const pr = await getPull(c, number);
+  if (!pr) return c.json({ error: 'Not Found' }, 404);
+  const result = await decideFlag(
+    c.env,
+    c.get('db'),
+    pr,
+    flagId,
+    c.get('user')!.id,
+    { kind: 'request_changes', note: c.req.valid('json').note },
+    (work) => c.executionCtx.waitUntil(work)
+  );
+  if (!result.ok) return c.json({ error: result.error }, result.status);
   return c.json({ ok: true as const }, 200);
 });
 

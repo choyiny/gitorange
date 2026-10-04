@@ -56,6 +56,8 @@ type Review = {
     paths: string[];
     detail: string | null;
     approvedBy: { username: string } | null;
+    changesRequestedBy: { username: string } | null;
+    changesRequestedNote: string | null;
   }[];
   autoMerge: { state: string; reasons: string[] };
 };
@@ -379,6 +381,90 @@ describe('auto-merge review', () => {
     expect(res.status).toBe(403);
   });
 
+  it('blocks auto-merge on a flag with changes requested until someone approves it', async () => {
+    const { t, admin } = await pullWith({ 'migrations/1.sql': 'x\n' });
+    await runReviews(t, fakeModels(DATA_CHANGE).models);
+    const flag = (await review(t, admin)).review!.flags[0];
+    const url = `/api/repos/octocat/app/pulls/1/review/flags/${flag.id}`;
+    const requestChanges = (cookie: string, json: unknown) =>
+      call(t, `${url}/request-changes`, { cookie, method: 'POST', json });
+
+    // Whoever can approve can request changes; nobody else.
+    const reader = await addMember(t, admin, 'reader');
+    expect((await requestChanges(reader, {})).status).toBe(403);
+    expect(
+      (await requestChanges(admin, { note: 'x'.repeat(1001) })).status
+    ).toBe(400);
+    expect(
+      (
+        await call(
+          t,
+          '/api/repos/octocat/app/pulls/1/review/flags/nope/request-changes',
+          { cookie: admin, method: 'POST', json: {} }
+        )
+      ).status
+    ).toBe(404);
+
+    // The note is optional; the latest request wins.
+    expect((await requestChanges(admin, {})).status).toBe(200);
+    expect(
+      (await requestChanges(admin, { note: ' Add a down migration. ' })).status
+    ).toBe(200);
+    await settle(t);
+    let d = await review(t, admin);
+    expect(d.pull.state).toBe('open');
+    expect(d.review!.flags[0]).toMatchObject({
+      approvedBy: null,
+      changesRequestedBy: { username: 'octocat' },
+      changesRequestedNote: 'Add a down migration.',
+    });
+    expect(d.review!.autoMerge).toEqual({
+      state: 'waiting',
+      reasons: ['Changes requested on 1 flag'],
+      disabledAt: null,
+    });
+
+    // Keep it open past the approval, to see the request cleared.
+    await call(t, '/api/repos/octocat/app/pulls/1/auto-merge', {
+      cookie: admin,
+      method: 'PUT',
+      json: { enabled: false },
+    });
+    expect(
+      (await call(t, `${url}/approve`, { cookie: admin, method: 'POST' }))
+        .status
+    ).toBe(200);
+    d = await review(t, admin);
+    expect(d.review!.flags[0]).toMatchObject({
+      approvedBy: { username: 'octocat' },
+      changesRequestedBy: null,
+      changesRequestedNote: null,
+    });
+    // Approved and changes requested never hold at once.
+    const late = await requestChanges(admin, { note: 'Wait' });
+    expect(late.status).toBe(400);
+    expect(await late.json()).toEqual({
+      error: 'This flag is already approved',
+    });
+  });
+
+  it('merges on its own once a flag with changes requested is approved', async () => {
+    const { t, admin } = await pullWith({ 'migrations/1.sql': 'x\n' });
+    await runReviews(t, fakeModels(DATA_CHANGE).models);
+    const flag = (await review(t, admin)).review!.flags[0];
+    const url = `/api/repos/octocat/app/pulls/1/review/flags/${flag.id}`;
+    await call(t, `${url}/request-changes`, {
+      cookie: admin,
+      method: 'POST',
+      json: { note: 'No' },
+    });
+    await settle(t);
+    expect((await pullRow(t))!.state).toBe('open');
+    await call(t, `${url}/approve`, { cookie: admin, method: 'POST' });
+    await settle(t);
+    expect((await pullRow(t))!.state).toBe('merged');
+  });
+
   it('waits for passing checks, and merges when the last run succeeds', async () => {
     const { t, admin, repo } = await pullWith(
       { 'src/b.ts': 'b\n' },
@@ -651,7 +737,13 @@ describe('approvals inbox', () => {
     repo: { fullName: string };
     pull: { number: number };
     reviewFailed: string | null;
-    flags: { id: string; key: string; detail: string | null }[];
+    flags: {
+      id: string;
+      key: string;
+      detail: string | null;
+      changesRequestedBy: { username: string } | null;
+      changesRequestedNote: string | null;
+    }[];
   };
   const inbox = async (t: TestEnv, cookie: string) =>
     (await (await call(t, '/api/approvals', { cookie })).json()) as Item[];
@@ -677,6 +769,17 @@ describe('approvals inbox', () => {
     // A member who can read but not merge sees nothing to approve.
     const reader = await addMember(t, admin, 'reader');
     expect(await inbox(t, reader)).toEqual([]);
+
+    // Changes requested: still waiting on a person, with who asked and why.
+    await call(
+      t,
+      `/api/repos/octocat/app/pulls/1/review/flags/${items[0].flags[0].id}/request-changes`,
+      { cookie: admin, method: 'POST', json: { note: 'Not like this' } }
+    );
+    expect((await inbox(t, admin))[0].flags[0]).toMatchObject({
+      changesRequestedBy: { username: 'octocat' },
+      changesRequestedNote: 'Not like this',
+    });
 
     await call(
       t,

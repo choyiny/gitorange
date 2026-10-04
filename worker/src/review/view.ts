@@ -87,7 +87,9 @@ export async function reviewView(
     : [];
   const people = await usersById(
     db,
-    flags.map((f) => f.approvedById ?? '').filter(Boolean)
+    flags
+      .flatMap((f) => [f.approvedById, f.changesRequestedById])
+      .filter((id): id is string => !!id)
   );
   const status: AutoMergeStatus = open
     ? await autoMergeStatus(db, git, pr)
@@ -134,6 +136,13 @@ export async function reviewView(
         ? (people.get(f.approvedById) ?? null)
         : (null as PublicUser | null),
       approvedAt: f.approvedAt?.toISOString() ?? null,
+      changesRequestedBy: f.changesRequestedById
+        ? (people.get(f.changesRequestedById) ?? null)
+        : (null as PublicUser | null),
+      changesRequestedAt: f.changesRequestedAt?.toISOString() ?? null,
+      changesRequestedNote: f.changesRequestedAt
+        ? f.changesRequestedNote
+        : null,
     })),
     autoMerge: {
       state: status.state,

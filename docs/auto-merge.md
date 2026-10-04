@@ -44,12 +44,14 @@ Every new commit on a pull request is reviewed once (again if `review.yml` chang
    sequence or flow diagram for auth and request handling. It also points at the lines worth reading; GitOrange
    shows those as expandable excerpts taken from the actual diff, never from the model's own text.
 5. **Approve.** The review appears in the pull request's conversation as a comment from **Auto-merge**, with
-   an **Approve** button per flag. Anyone who can merge (including the pull request's author) approves. New
-   commits start a fresh review; earlier approvals don't carry over. The comment stays after the pull request
-   merges, as a record of who approved what.
+   **Approve** and **Request changes** buttons per flag. Anyone who can merge (including the pull request's
+   author) approves or requests changes, with an optional short note. A flag with changes requested keeps
+   blocking auto-merge until someone approves it, which clears the request; an approved flag can't have
+   changes requested. New commits start a fresh review; earlier approvals and requests don't carry over. The
+   comment stays after the pull request merges, as a record of who approved what.
 
 Everything waiting on you, across every repository you can merge in, is on the **Approvals** page (the
-shield in the header shows how many): flags to approve, failed reviews to retry, and conflicts AI couldn't
+shield in the header shows how many): flags to approve (or that have changes requested), failed reviews to retry, and conflicts AI couldn't
 resolve. Pages update live as reviews progress, flags are approved, and pull requests merge.
 
 If a model can't be reached, the review fails and the pull request says so, with a button to try again; it
