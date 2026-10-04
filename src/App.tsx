@@ -13,11 +13,13 @@ import {
 import { useSession } from '@/lib/auth';
 import { api, qk } from '@/lib/uiApi';
 import { Spinner } from '@/components/Spinner';
+import { LiveUpdates } from '@/lib/live';
 import { RepoLayout } from '@/components/RepoLayout';
 import Setup from './pages/Setup';
 import Login from './pages/Login';
 import AcceptInvite from './pages/AcceptInvite';
 import Dashboard from './pages/Dashboard';
+import Approvals from './pages/Approvals';
 import NewRepo from './pages/NewRepo';
 import Profile from './pages/Profile';
 import RepoCode from './pages/RepoCode';
@@ -60,7 +62,7 @@ function Gate({ children }: { children: React.ReactNode }) {
         replace
       />
     );
-  return <>{children}</>;
+  return <LiveUpdates>{children}</LiveUpdates>;
 }
 
 function AdminOnly({ children }: { children: React.ReactNode }) {
@@ -90,6 +92,7 @@ const App = () => (
               <Routes>
                 <Route path="/" element={<Dashboard />} />
                 <Route path="/new" element={<NewRepo />} />
+                <Route path="/approvals" element={<Approvals />} />
                 <Route path="/settings/tokens" element={<SettingsTokens />} />
                 <Route path="/settings/mcp" element={<SettingsMcp />} />
                 <Route path="/oauth/consent" element={<OAuthConsent />} />

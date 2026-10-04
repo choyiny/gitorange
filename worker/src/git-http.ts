@@ -1,5 +1,6 @@
 import { drizzle } from 'drizzle-orm/d1';
 import { eq } from 'drizzle-orm';
+import { publishChange } from './live/publish';
 import { schema } from './db/schema';
 import {
   personalAccessTokens,
@@ -246,4 +247,5 @@ async function afterPush(
     await onRefsUpdated(env, db, repo, fullName, updates, actorId);
     await autoResolveConflicts(env, repo, updates);
   }
+  await publishChange(env, repoId, { approvals: true });
 }

@@ -151,7 +151,7 @@ export type ClassifierAnswer =
     };
 export type ReviewFlag = {
   id: string;
-  source: 'question' | 'path' | 'limit';
+  source: 'question' | 'limit';
   key: string;
   title: string;
   value: unknown;
@@ -160,6 +160,19 @@ export type ReviewFlag = {
   detailModel: string | null;
   approvedBy: User | null;
   approvedAt: string | null;
+};
+/** An open pull request waiting on a person (GET /api/approvals). */
+export type ApprovalItem = {
+  repo: { fullName: string; name: string };
+  pull: {
+    number: number;
+    title: string;
+    author: User | null;
+    updatedAt: string;
+  };
+  reviewFailed: string | null;
+  resolutionFailed: string | null;
+  flags: ReviewFlag[];
 };
 export type PullReview = {
   classification: {
@@ -491,6 +504,7 @@ export const api = {
     apiFetch(`${r(o, n)}/pulls/${num}/resolutions/${id}/reject`, {
       method: 'POST',
     }),
+  approvals: () => apiFetch<ApprovalItem[]>('/api/approvals'),
   approveFlag: (o: string, n: string, num: number, id: string) =>
     apiFetch(`${r(o, n)}/pulls/${num}/review/flags/${id}/approve`, {
       method: 'POST',
@@ -516,6 +530,7 @@ export const qk = {
   invitations: ['invitations'] as const,
   tokens: ['tokens'] as const,
   mcp: ['mcp'] as const,
+  approvals: ['approvals'] as const,
   mcpConnections: ['mcp', 'connections'] as const,
   namespace: (u: string) => ['namespace', u] as const,
   team: ['team'] as const,

@@ -1,5 +1,6 @@
 import type { WorkflowStepConfig } from 'cloudflare:workers';
 import { and, eq, inArray } from 'drizzle-orm';
+import { pingingSteps } from '../live/publish';
 import { autoMergeForCommit } from '../review/auto-merge';
 import type { DrizzleD1Database } from 'drizzle-orm/d1';
 import type { schema } from '../db/schema';
@@ -155,9 +156,13 @@ export async function executeRun(
   deps: ExecutorDeps,
   runId: string
 ): Promise<Conclusion | null> {
-  const { env, db, step } = deps;
+  const { env, db } = deps;
+  let { step } = deps;
   const ctx = await step.do('load', () => loadRun(env, db, runId));
   if (!ctx || ctx.status === 'completed') return null;
+  // Each step (run, job, and step status, logs) shows on open pages as it finishes.
+  step = pingingSteps(env, step, ctx.repoId);
+  deps = { ...deps, step };
 
   let wf: WorkflowDef;
   try {

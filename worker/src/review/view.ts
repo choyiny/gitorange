@@ -20,8 +20,10 @@ import {
 } from './policy';
 
 /** A flag's heading on the pull request. */
-function flagTitle(policy: ReviewPolicy | null, f: PrReviewFlag): string {
-  if (f.source === 'path') return `Changes files matching ${f.key}`;
+export function flagTitle(
+  policy: ReviewPolicy | null,
+  f: PrReviewFlag
+): string {
   if (f.source === 'limit')
     return f.key === 'max_files'
       ? 'Too many files to review automatically'

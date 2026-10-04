@@ -447,3 +447,37 @@ body {
   margin-top: 12px;
   margin-bottom: 4px;
 }
+
+/* Mermaid diagrams in Markdown (```mermaid blocks), like GitHub. */
+.markdown-body .mermaid-diagram {
+  margin-bottom: 16px;
+  padding: 12px;
+  overflow-x: auto;
+  text-align: center;
+  background: var(--bgColor-muted, #f6f8fa);
+  border-radius: 6px;
+}
+.markdown-body .mermaid-diagram svg {
+  max-width: 100%;
+  height: auto;
+}
+.markdown-body details > summary {
+  cursor: pointer;
+}
+.markdown-body details {
+  margin-bottom: 8px;
+}
+.markdown-body details > pre {
+  margin-top: 8px;
+}
+.markdown-body code.language-diff .diff-line {
+  display: block;
+  margin: 0 -16px;
+  padding: 0 16px;
+}
+.markdown-body code.language-diff .diff-line-add {
+  background: var(--diffBlob-additionLine-bgColor, rgba(46, 160, 67, 0.15));
+}
+.markdown-body code.language-diff .diff-line-del {
+  background: var(--diffBlob-deletionLine-bgColor, rgba(248, 81, 73, 0.15));
+}

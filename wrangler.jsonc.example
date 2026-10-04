@@ -48,12 +48,14 @@
   "durable_objects": {
     "bindings": [
       { "name": "JOB_RUNNER", "class_name": "JobRunner" },
-      { "name": "MERGE_RESOLVER", "class_name": "MergeResolver" }
+      { "name": "MERGE_RESOLVER", "class_name": "MergeResolver" },
+      { "name": "LIVE", "class_name": "LiveHub" }
     ]
   },
   "exports": {
     "JobRunner": { "type": "durable-object", "storage": "sqlite" },
-    "MergeResolver": { "type": "durable-object", "storage": "sqlite" }
+    "MergeResolver": { "type": "durable-object", "storage": "sqlite" },
+    "LiveHub": { "type": "durable-object", "storage": "sqlite" }
   },
   "workflows": [
     { "name": "gitorange-actions-run", "binding": "ACTIONS_RUN", "class_name": "ActionsRun" },
@@ -114,7 +116,8 @@
       "durable_objects": {
         "bindings": [
           { "name": "JOB_RUNNER", "class_name": "JobRunner" },
-          { "name": "MERGE_RESOLVER", "class_name": "MergeResolver" }
+          { "name": "MERGE_RESOLVER", "class_name": "MergeResolver" },
+          { "name": "LIVE", "class_name": "LiveHub" }
         ]
       },
       "workflows": [

@@ -21,6 +21,11 @@
     { "binding": "LFS", "bucket_name": "gitorange-lfs-test" },
     { "binding": "ACTIONS_LOGS", "bucket_name": "gitorange-actions-logs-test" },
   ],
+  // Live updates: the real hub, so tests can open a WebSocket and hear pings.
+  "durable_objects": {
+    "bindings": [{ "name": "LIVE", "class_name": "LiveHub" }],
+  },
+  "migrations": [{ "tag": "v1", "new_sqlite_classes": ["LiveHub"] }],
   // No Actions containers or Workflow here: tests inject a fake ACTIONS_RUN and drive the
   // executor directly with a fake runner.
   "assets": {

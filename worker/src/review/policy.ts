@@ -2,7 +2,6 @@ import { parse as parseYaml } from 'yaml';
 import { z } from 'zod';
 import type { GitService } from '../git/service';
 import { decoder } from '../git/bytes';
-import { matchesPatterns } from '../actions/plan';
 
 /**
  * `.gitorange/review.yml`: which pull requests merge on their own. It is read from the target
@@ -72,14 +71,13 @@ const schema = z
       .default({ max_files: 100 }),
     human_review: z
       .object({
-        paths: z.array(text).default([]),
         questions: z
           .record(id, z.union([noul, choice, score]))
           .refine((q) => Object.keys(q).length <= 64, 'At most 64 questions')
           .default({}),
       })
       .strict()
-      .default({ paths: [], questions: {} }),
+      .default({ questions: {} }),
   })
   .strict();
 
@@ -103,6 +101,12 @@ export function parsePolicy(source: string): ReviewPolicy {
       `${POLICY_PATH} is not valid YAML: ${e instanceof Error ? e.message : e}`
     );
   }
+  const legacy = (raw as { human_review?: { paths?: unknown } } | null)
+    ?.human_review?.paths;
+  if (legacy !== undefined)
+    throw new PolicyError(
+      `${POLICY_PATH}: human_review.paths is no longer supported; every flag now comes from the questions. Remove it, and add a question for what it covered.`
+    );
   const parsed = schema.safeParse(raw);
   if (!parsed.success) {
     const issue = parsed.error.issues[0];
@@ -123,17 +127,4 @@ export async function readPolicy(
   if (entry?.type !== 'blob') return null;
   const bytes = await git.blob(entry.entry.hash);
   return bytes ? { sha: entry.entry.hash, text: decoder.decode(bytes) } : null;
-}
-
-/** Changed paths each path rule matches; rules that match nothing are left out. */
-export function pathFlags(
-  policy: ReviewPolicy,
-  paths: string[]
-): { pattern: string; paths: string[] }[] {
-  return policy.human_review.paths
-    .map((pattern) => ({
-      pattern,
-      paths: paths.filter((p) => matchesPatterns(p, [pattern])),
-    }))
-    .filter((f) => f.paths.length > 0);
 }

@@ -15,6 +15,7 @@ import {
 } from '@primer/octicons-react';
 import { api, qk, type RepoDetail } from '@/lib/uiApi';
 import { ApiError } from '@/lib/api';
+import { useLiveRepo } from '@/lib/live';
 import { Header } from './Header';
 import { Spinner } from './Spinner';
 import { VisibilityLabel } from './VisibilityLabel';
@@ -84,6 +85,8 @@ function Tab({
 export function RepoLayout() {
   const { owner, repo } = useRepoParams();
   const q = useRepo();
+  // Pages under this repository update live, once we know the user can see it.
+  useLiveRepo(q.data ? owner : '', q.data ? repo : '');
   const { pathname } = useLocation();
   if (q.error instanceof ApiError && q.error.status === 404)
     return <NotFound />;

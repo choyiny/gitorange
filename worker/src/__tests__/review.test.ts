@@ -27,8 +27,6 @@ model: clef
 checks:
   require: none
 human_review:
-  paths:
-    - migrations/**
   questions:
     data_model:
       ask: Does this change alter how data is stored?
@@ -115,6 +113,12 @@ type Calls = {
   investigated: InvestigateRequest[];
 };
 
+/** Answers that flag only data_model. */
+const DATA_CHANGE: Record<string, ClassifierAnswer> = {
+  data_model: { type: 'noul', value: 0.9 },
+  risk: { type: 'score', value: 1, confidence: 0.7, probabilities: { '1': 1 } },
+};
+
 /** Fake models: a fixed one-liner per file, scripted answers, a fixed investigation. */
 function fakeModels(
   answers: Record<string, ClassifierAnswer> = {
@@ -146,7 +150,18 @@ function fakeModels(
         calls.investigated.push(req);
         return {
           detail: 'Adds a column; check the migration.',
-          paths: req.paths,
+          diagram: 'erDiagram\n  X {\n    text y "NEW"\n  }',
+          snippets: [
+            {
+              path: 'migrations/0001.sql',
+              start: 1,
+              end: 1,
+              why: 'the new column',
+            },
+            // Not a changed file: dropped rather than shown.
+            { path: 'src/nope.ts', start: 1, end: 3, why: 'made up' },
+          ],
+          paths: ['migrations/0001.sql', 'not/changed.ts'],
         };
       },
     },
@@ -203,6 +218,9 @@ describe('review.yml', () => {
     ).toThrow(/at_least/);
     expect(() => parsePolicy('modle: clef\n')).toThrow(PolicyError);
     expect(() => parsePolicy('a: [\n')).toThrow(/not valid YAML/);
+    expect(() =>
+      parsePolicy('human_review:\n  paths: [migrations/**]\n')
+    ).toThrow(/human_review.paths is no longer supported/);
   });
 });
 
@@ -254,7 +272,7 @@ describe('auto-merge review', () => {
     expect(merged.author.name).toBe('Admin');
   });
 
-  it('flags path rules and crossed thresholds, investigates them, and merges once all are approved', async () => {
+  it('flags crossed thresholds, investigates them visually, and merges once all are approved', async () => {
     const { t, admin } = await pullWith({
       'migrations/0001.sql': 'ALTER TABLE x ADD y;\n',
       'src/b.ts': 'b\n',
@@ -263,9 +281,9 @@ describe('auto-merge review', () => {
       data_model: { type: 'noul', value: 0.9 },
       risk: {
         type: 'score',
-        value: 1,
+        value: 2.4,
         confidence: 0.7,
-        probabilities: { '1': 1 },
+        probabilities: { '2': 0.6, '3': 0.4 },
       },
     });
     await runReviews(t, models);
@@ -278,22 +296,29 @@ describe('auto-merge review', () => {
       verdict: 'human',
     });
     expect(d.review!.flags.map((f) => [f.source, f.key])).toEqual([
-      ['path', 'migrations/**'],
       ['question', 'data_model'],
+      ['question', 'risk'],
     ]);
-    expect(d.review!.flags[0]).toMatchObject({
-      paths: ['migrations/0001.sql'],
-      detail: 'Adds a column; check the migration.',
-    });
-    expect(d.review!.questions.find((q) => q.id === 'risk')!.flagged).toBe(
-      false
+    const flag = d.review!.flags[0];
+    // Only changed files count.
+    expect(flag.paths).toEqual(['migrations/0001.sql']);
+    // The explanation, its diagram as a Mermaid block, and the code excerpt taken from the
+    // real diff (the made-up path is dropped).
+    expect(flag.detail).toContain('Adds a column; check the migration.');
+    expect(flag.detail).toContain('```mermaid\nerDiagram');
+    expect(flag.detail).toContain(
+      '<details><summary><code>migrations/0001.sql</code> lines 1–1: the new column</summary>'
     );
+    expect(flag.detail).toContain('```diff\n+ALTER TABLE x ADD y;\n```');
+    expect(flag.detail).not.toContain('src/nope.ts');
     expect(d.review!.autoMerge).toMatchObject({
       state: 'waiting',
       reasons: ['2 flags need approval'],
     });
-    // The investigator gets the full diff of the flagged files.
-    expect(calls.investigated[0].diffs).toContain('+ALTER TABLE x ADD y;');
+    // The investigator gets every diff, each line numbered as in the file.
+    expect(calls.investigated[0].diffs).toContain(
+      '+    1     | ALTER TABLE x ADD y;'
+    );
 
     // The PR's author may approve (for now).
     for (const f of d.review!.flags) {
@@ -324,7 +349,7 @@ describe('auto-merge review', () => {
 
   it('needs merge permission to approve a flag', async () => {
     const { t, admin } = await pullWith({ 'migrations/1.sql': 'x\n' });
-    await runReviews(t, fakeModels().models);
+    await runReviews(t, fakeModels(DATA_CHANGE).models);
     const flag = (await review(t, admin)).review!.flags[0];
     const reader = await addMember(t, admin, 'reader');
     const res = await call(
@@ -497,12 +522,13 @@ describe('auto-merge review', () => {
 
   it('reviews new commits from scratch: earlier approvals no longer count', async () => {
     const { t, admin, repo } = await pullWith({ 'migrations/1.sql': 'x\n' });
+    const { models } = fakeModels(DATA_CHANGE);
     await call(t, '/api/repos/octocat/app/pulls/1/auto-merge', {
       cookie: admin,
       method: 'PUT',
       json: { enabled: false },
     });
-    await runReviews(t, fakeModels().models);
+    await runReviews(t, models);
     const flag = (await review(t, admin)).review!.flags[0];
     await call(
       t,
@@ -529,7 +555,7 @@ describe('auto-merge review', () => {
     // The PR page notices the new head and starts a fresh review.
     expect((await review(t, admin)).review!.classification).toBeNull();
     await settle(t);
-    await runReviews(t, fakeModels().models);
+    await runReviews(t, models);
     const d = await review(t, admin);
     expect(d.review!.flags).toHaveLength(1);
     expect(d.review!.flags[0].approvedBy).toBeNull();
@@ -598,5 +624,112 @@ describe('auto-merge review', () => {
     expect(row).toMatchObject({ state: 'merged', merged_automatically: 1 });
     const merged = repo.parseCommit(row!.merge_commit_sha!)!;
     expect(merged.parents).toEqual([mainTip]); // onto main's tip: linear
+  });
+});
+
+describe('approvals inbox', () => {
+  type Item = {
+    repo: { fullName: string };
+    pull: { number: number };
+    reviewFailed: string | null;
+    flags: { id: string; key: string; detail: string | null }[];
+  };
+  const inbox = async (t: TestEnv, cookie: string) =>
+    (await (await call(t, '/api/approvals', { cookie })).json()) as Item[];
+
+  it('lists unapproved flags across repositories, for people who can merge, until approved', async () => {
+    const { t, admin } = await pullWith({ 'migrations/1.sql': 'x\n' });
+    await call(t, '/api/repos/octocat/app/pulls/1/auto-merge', {
+      cookie: admin,
+      method: 'PUT',
+      json: { enabled: false },
+    });
+    await runReviews(t, fakeModels(DATA_CHANGE).models);
+    const items = await inbox(t, admin);
+    expect(items).toHaveLength(1);
+    expect(items[0]).toMatchObject({
+      repo: { fullName: 'octocat/app' },
+      pull: { number: 1 },
+      reviewFailed: null,
+    });
+    expect(items[0].flags.map((f) => f.key)).toEqual(['data_model']);
+    expect(items[0].flags[0].detail).toContain('```mermaid');
+
+    // A member who can read but not merge sees nothing to approve.
+    const reader = await addMember(t, admin, 'reader');
+    expect(await inbox(t, reader)).toEqual([]);
+
+    await call(
+      t,
+      `/api/repos/octocat/app/pulls/1/review/flags/${items[0].flags[0].id}/approve`,
+      { cookie: admin, method: 'POST' }
+    );
+    expect(await inbox(t, admin)).toEqual([]);
+  });
+
+  it('lists failed reviews to retry', async () => {
+    const { t, admin } = await pullWith({ 'src/b.ts': 'b\n' });
+    await runReviews(t, fakeModels(undefined, { failClassify: true }).models);
+    const items = await inbox(t, admin);
+    expect(items).toHaveLength(1);
+    expect(items[0].reviewFailed).toMatch(/classifier/);
+    expect(items[0].flags).toEqual([]);
+  });
+});
+
+describe('code excerpts for flags', () => {
+  it('takes the lines a model points at from the real diff, numbered as in the file', async () => {
+    const { renderNumberedDiff, snippetLines } =
+      await import('../review/classify');
+    const { parseInvestigation } = await import('../review/models');
+    const d = {
+      path: 'a.py',
+      status: 'modified' as const,
+      oldHash: null,
+      newHash: null,
+      mode: '100644',
+      additions: 2,
+      deletions: 1,
+      binary: false,
+      tooLarge: false,
+      hunks: [
+        {
+          oldStart: 10,
+          oldLines: 3,
+          newStart: 10,
+          newLines: 4,
+          lines: [' keep', '-old', '+new', '+newer', ' tail'],
+        },
+      ],
+    };
+    expect(renderNumberedDiff(d)).toBe(
+      [
+        '    10     | keep',
+        '-   11 old | old',
+        '+   11     | new',
+        '+   12     | newer',
+        '    13     | tail',
+      ].join('\n')
+    );
+    expect(snippetLines(d, 11, 12)).toBe('-old\n+new\n+newer');
+    expect(snippetLines(d, 50, 60)).toBeNull();
+
+    // Fenced JSON, a stray fence around the diagram, bad snippets dropped.
+    const parsed = parseInvestigation(
+      '```json\n{"detail":"Risky.","diagram":"```mermaid\\nflowchart LR\\n  A-->B\\n```","snippets":[{"path":"a.py","start":11,"end":12,"why":"here"},{"path":"b"}],"files":["a.py"]}\n```',
+      []
+    );
+    expect(parsed).toEqual({
+      detail: 'Risky.',
+      diagram: 'flowchart LR\n  A-->B',
+      snippets: [{ path: 'a.py', start: 11, end: 12, why: 'here' }],
+      paths: ['a.py'],
+    });
+    expect(parseInvestigation('Plain text answer.', ['x'])).toEqual({
+      detail: 'Plain text answer.',
+      diagram: null,
+      snippets: [],
+      paths: ['x'],
+    });
   });
 });
