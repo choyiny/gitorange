@@ -22,7 +22,7 @@ import {
 /** A flag's heading on the pull request. */
 export function flagTitle(
   policy: ReviewPolicy | null,
-  f: PrReviewFlag
+  f: Pick<PrReviewFlag, 'source' | 'key'>
 ): string {
   if (f.source === 'limit')
     return f.key === 'max_files'

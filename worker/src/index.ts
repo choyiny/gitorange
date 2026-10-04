@@ -22,6 +22,7 @@ import type { RepoEnv } from './lib/repos';
 import { publishChange } from './live/publish';
 import { liveSocket } from './live/route';
 import { approvalsRouter } from './routers/approvals-router';
+import { insightsRouter } from './routers/insights-router';
 
 const app = new OpenAPIHono<AppEnv>();
 
@@ -71,6 +72,7 @@ app.get('/api/live', liveSocket);
 app.route('/api/repos', reposRouter);
 app.route('/api/repos', pullsRouter);
 app.route('/api/repos', actionsRouter);
+app.route('/api/repos', insightsRouter);
 app.use('/api/users/*', requireAuth);
 app.use('/api/users', requireAuth);
 app.route('/api/users', usersRouter);

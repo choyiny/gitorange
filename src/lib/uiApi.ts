@@ -320,6 +320,67 @@ export type McpConnection = {
   connectedAt: string | null;
 };
 
+export const INSIGHT_PERIODS = [7, 30, 90, 365] as const;
+/** Seconds, or null when nothing in the period had one. */
+type Median = number | null;
+export type RepoInsights = {
+  days: number;
+  since: string;
+  until: string;
+  pulls: {
+    opened: number;
+    merged: number;
+    autoMerged: number;
+    mergedByPerson: number;
+    autoMergeShare: number | null;
+    mergedAfterHumanReview: number;
+    mergedHandsOff: number;
+    closedUnmerged: number;
+    openNow: number;
+  };
+  timeToMerge: { all: Median; auto: Median; person: Median };
+  reviews: {
+    runs: number;
+    completed: number;
+    failed: number;
+    autoVerdicts: number;
+    humanVerdicts: number;
+    pullsReviewed: number;
+    pullsNeedingHuman: number;
+  };
+  flags: {
+    raised: number;
+    approved: number;
+    medianTimeToApproval: Median;
+    pendingNow: number;
+    pendingPullsNow: number;
+    byKind: {
+      source: 'question' | 'limit';
+      key: string;
+      title: string;
+      raised: number;
+      approved: number;
+    }[];
+  };
+  resolutions: {
+    attempts: number;
+    succeeded: number;
+    applied: number;
+    failed: number;
+    rejected: number;
+    inProgress: number;
+    pulls: number;
+  };
+  ci: {
+    runs: number;
+    succeeded: number;
+    failed: number;
+    cancelled: number;
+    passRate: number | null;
+    medianTimeToGreen: Median;
+  };
+};
+
 const r = (owner: string, repo: string) =>
   `/api/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}`;
 const q = (params: Record<string, string | number>) =>
@@ -511,6 +572,8 @@ export const api = {
       method: 'POST',
     }),
   approvals: () => apiFetch<ApprovalItem[]>('/api/approvals'),
+  insights: (o: string, n: string, days: number) =>
+    apiFetch<RepoInsights>(`${r(o, n)}/insights?${q({ days })}`),
   approveFlag: (o: string, n: string, num: number, id: string) =>
     apiFetch(`${r(o, n)}/pulls/${num}/review/flags/${id}/approve`, {
       method: 'POST',
@@ -571,4 +634,6 @@ export const qk = {
     ['repo', o, n, 'commit-runs', sha] as const,
   commitStatuses: (o: string, n: string, shas: string) =>
     ['repo', o, n, 'commit-statuses', shas] as const,
+  insights: (o: string, n: string, days: number) =>
+    ['repo', o, n, 'insights', days] as const,
 };

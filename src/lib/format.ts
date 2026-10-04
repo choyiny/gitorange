@@ -52,6 +52,18 @@ export function formatBytes(n: number) {
   return `${(n / 1024 / 1024).toFixed(2)} MB`;
 }
 
+/** A span of seconds in its two largest units: `45s`, `12m`, `3h 4m`, `2d 5h`. */
+export function spanOf(seconds: number): string {
+  const s = Math.max(0, Math.round(seconds));
+  if (s < 60) return `${s}s`;
+  const m = Math.floor(s / 60);
+  if (m < 60) return `${m}m`;
+  const h = Math.floor(m / 60);
+  if (h < 24) return m % 60 ? `${h}h ${m % 60}m` : `${h}h`;
+  const d = Math.floor(h / 24);
+  return h % 24 ? `${d}d ${h % 24}h` : `${d}d`;
+}
+
 /** GitHub-style elapsed time between two instants: `45s`, `3m 12s`, `1h 4m`. */
 export function duration(
   start: string | null,

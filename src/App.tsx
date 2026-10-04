@@ -30,6 +30,7 @@ import PullNew from './pages/PullNew';
 import PullView from './pages/PullView';
 import RepoSettings from './pages/RepoSettings';
 import RepoActions from './pages/RepoActions';
+import RepoInsights from './pages/RepoInsights';
 import { useDocumentTitle } from './lib/appName';
 import SettingsMcp from './pages/SettingsMcp';
 import OAuthConsent from './pages/OAuthConsent';
@@ -122,6 +123,7 @@ const App = () => (
                     path="actions/runs/:number/job/:jobId"
                     element={<RunView />}
                   />
+                  <Route path="insights" element={<RepoInsights />} />
                   <Route path="settings" element={<RepoSettings />} />
                   <Route path="*" element={<NotFound inline />} />
                 </Route>

@@ -8,6 +8,7 @@ import {
 import { users } from '../db/auth.schema';
 import type { DrizzleDB } from '../db/middleware';
 import { createRepository } from '../lib/repo-create';
+import { INSIGHT_PERIODS, repoInsights } from '../lib/insights';
 import {
   findRepo,
   gitFor,
@@ -249,6 +250,82 @@ const getRepository: ToolModule = {
   },
 };
 
+/** camelCase keys → snake_case, like the rest of the MCP tools' output. */
+function snakeKeys(v: unknown): unknown {
+  if (Array.isArray(v)) return v.map(snakeKeys);
+  if (v && typeof v === 'object')
+    return Object.fromEntries(
+      Object.entries(v).map(([k, x]) => [
+        k.replace(/[A-Z]/g, (c) => `_${c.toLowerCase()}`),
+        snakeKeys(x),
+      ])
+    );
+  return v;
+}
+
+const getRepositoryInsights: ToolModule = {
+  definition: {
+    name: 'gitorange_get_repository_insights',
+    title: 'Get repository insights',
+    description:
+      "KPIs for one repository's pull requests over the last N days (default 30): opened, merged, how many " +
+      'GitOrange auto-merged versus a person merged, how many merged with no person involved, how often the ' +
+      'auto-merge review needed a person (flags raised by kind, approved, still pending, median time to ' +
+      'approval), AI conflict resolution attempts and outcomes, the CI pass rate on pull requests, and median ' +
+      'times to merge and to the first green run (in seconds). Use it to see how well agents land changes.',
+    annotations: { readOnlyHint: true, title: 'Get repository insights' },
+    inputSchema: {
+      type: 'object',
+      properties: {
+        repository: {
+          type: 'string',
+          description: 'Full name, e.g. "ada/analytical-engine".',
+        },
+        days: {
+          type: 'integer',
+          enum: [...INSIGHT_PERIODS],
+          description: 'The period, in days, ending now. Defaults to 30.',
+        },
+      },
+      required: ['repository'],
+    },
+  },
+  handler: async (args, ctx) => {
+    const fullName = requireString(args, 'repository').replace(/\.git$/, '');
+    const days = args.days ?? 30;
+    if (!(INSIGHT_PERIODS as readonly unknown[]).includes(days))
+      throw new McpToolError(
+        `days must be one of: ${INSIGHT_PERIODS.join(', ')}.`
+      );
+    const [owner, name, ...rest] = fullName.split('/');
+    // One answer for "doesn't exist" and "not visible to you", so ids can't be probed.
+    const notFound = new McpToolError(
+      `No repository named ${fullName}. Call gitorange_list_repositories to see the ones you can access.`
+    );
+    if (!owner || !name || rest.length) throw notFound;
+    const found = await findRepo(ctx.db, owner, name);
+    if (!found) throw notFound;
+    const perms = await permissionsFor(ctx.db, found.repo, ctx.user);
+    if (!perms.read) throw notFound;
+    const canonical = `${found.namespace.username}/${found.repo.name}`;
+    const insights = await repoInsights(
+      ctx.db,
+      gitFor(ctx.env, found.repo),
+      found.repo,
+      days as number
+    );
+    return {
+      content: [
+        json({
+          full_name: canonical,
+          ...(snakeKeys(insights) as object),
+          web_url: `${ctx.baseURL}/${canonical}/insights?days=${days}`,
+        }),
+      ],
+    };
+  },
+};
+
 function cloneHelp(baseURL: string, fullName: string) {
   return (
     `To work on it locally: git clone ${baseURL}/${fullName}.git\n` +
@@ -342,6 +419,7 @@ const createRepositoryTool: ToolModule = {
 export const TOOL_MODULES: ToolModule[] = [
   listRepositories,
   getRepository,
+  getRepositoryInsights,
   createRepositoryTool,
   ...PULL_TOOLS,
 ];
