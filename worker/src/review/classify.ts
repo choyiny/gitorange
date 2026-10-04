@@ -34,12 +34,11 @@ import {
   type ReviewPolicy,
 } from './policy';
 import { maybeAutoMerge } from './auto-merge';
+import { IGNORE_PATH, ignoreMatcher, isLockfile, readIgnore } from './ignore';
 
 /** Review runs on the same Workflow binding as AI conflict resolution. */
 export const reviewConfigured = resolutionConfigured;
 
-const LOCKFILE =
-  /(^|\/)(yarn\.lock|package-lock\.json|npm-shrinkwrap\.json|pnpm-lock\.yaml|bun\.lockb?|Cargo\.lock|go\.sum|poetry\.lock|Pipfile\.lock|uv\.lock|Gemfile\.lock|composer\.lock)$/;
 /** Diff text sent to summarize one file; a larger file is flagged instead. */
 const MAX_SUMMARY_DIFF = 200 * 1024;
 /** Diff text sent to investigate one flag; the rest is listed but left out. */
@@ -274,7 +273,8 @@ const cell = (s: string) => s.replace(/\|/g, '\\|').replace(/\s*\n\s*/g, ' ');
 async function composeDetail(
   git: GitService,
   changes: FileChange[],
-  out: Investigation
+  out: Investigation,
+  ignored: (path: string) => boolean
 ): Promise<string> {
   const parts = [out.detail];
   if (out.changes?.length)
@@ -292,7 +292,7 @@ async function composeDetail(
   if (diagram) parts.push('```mermaid\n' + diagram + '\n```');
   for (const s of out.snippets) {
     const ch = changes.find((c) => c.path === s.path);
-    if (!ch || GENERATED.test(ch.path) || LOCKFILE.test(ch.path)) continue;
+    if (!ch || ignored(ch.path)) continue;
     const [d] = await git.fileDiffs([ch]);
     if (d.binary || d.tooLarge) continue;
     const lines = snippetLines(d, s.start, s.end);
@@ -313,7 +313,8 @@ type Summarized = FileSummary & { unsummarized?: boolean };
 async function summarizeFile(
   git: GitService,
   models: ReviewModels,
-  ch: FileChange
+  ch: FileChange,
+  ignored: (path: string) => boolean
 ): Promise<Summarized> {
   const base = {
     path: ch.path,
@@ -325,8 +326,14 @@ async function summarizeFile(
     return { ...base, summary: 'Submodule pointer updated.' };
   const [d] = await git.fileDiffs([ch]);
   const counts = { additions: d.additions, deletions: d.deletions };
-  if (LOCKFILE.test(ch.path))
+  if (isLockfile(ch.path))
     return { ...base, ...counts, summary: 'Dependency lockfile updated.' };
+  if (ignored(ch.path))
+    return {
+      ...base,
+      ...counts,
+      summary: `Changed; ignored by ${IGNORE_PATH}.`,
+    };
   if (d.binary) return { ...base, summary: `Binary file ${ch.status}.` };
   const diff = renderDiff(d);
   if (d.tooLarge || diff.length > MAX_SUMMARY_DIFF)
@@ -442,10 +449,6 @@ function describeFlag(policy: ReviewPolicy, f: NewFlag): string {
   return `Review question "${f.key}": ${q.ask}`;
 }
 
-/** Generated files: their diffs are noise to a reviewer; their one-line summaries say enough. */
-const GENERATED =
-  /(^|\/)(migrations\/meta\/[^/]+\.json|worker-configuration\.d\.ts|[^/]+\.snap)$/;
-
 /** Source before tests, docs, and config: what a reviewer would read first. */
 function readingOrder(path: string): number {
   if (/(^|\/)(__tests__|test|tests)\/|\.test\.[jt]sx?$/.test(path)) return 2;
@@ -455,7 +458,7 @@ function readingOrder(path: string): number {
 
 /**
  * Diffs for the investigating model, within a budget it can read quickly: the flag's own files
- * first, then source, tests, and docs. Generated files and lockfiles are left out, and each file
+ * first, then source, tests, and docs. Ignored files (lockfiles, .orangeignore) are left out, and each file
  * is capped; whatever doesn't fit is named so the model knows it exists (its one-line summary is
  * in the prompt too).
  */
@@ -463,6 +466,8 @@ export async function diffsFor(
   git: GitService,
   changes: FileChange[],
   first: string[],
+  /** Lockfiles and files matched by `.orangeignore`: named, never shown. */
+  ignored: (path: string) => boolean,
   /** Read only `first` (the files picked as relevant); list the rest by name. */
   only = false
 ): Promise<string> {
@@ -470,7 +475,7 @@ export async function diffsFor(
   const unpicked: string[] = [];
   const order = changes
     .filter((c) => {
-      const noise = GENERATED.test(c.path) || LOCKFILE.test(c.path);
+      const noise = ignored(c.path);
       if (noise) skipped.push(c.path);
       else if (only && !first.includes(c.path)) unpicked.push(c.path);
       return !noise && !(only && !first.includes(c.path));
@@ -502,7 +507,7 @@ export async function diffsFor(
     unpicked.length &&
       `Not shown (judged unrelated to this flag from their summaries): ${unpicked.join(', ')}`,
     skipped.length &&
-      `Generated files and lockfiles, not shown: ${skipped.join(', ')}`,
+      `Ignored (lockfiles and ${IGNORE_PATH}), not shown: ${skipped.join(', ')}`,
     left.length && `Not shown (over the size budget): ${left.join(', ')}`,
   ].filter(Boolean);
   return notes.length ? `${out}${notes.join('\n')}` : out;
@@ -556,8 +561,11 @@ export async function executeClassification(deps: ReviewDeps, id: string) {
       };
     }
     const changes = await git.diffTrees(from.treeHash, to.treeHash);
+    // From the target branch, like review.yml: a pull request can't hide its own files.
+    const ignoreText = baseTip ? await readIgnore(git, baseTip) : null;
     return {
       ok: true as const,
+      ignoreText,
       row,
       pr,
       repo: found.repo,
@@ -578,6 +586,7 @@ export async function executeClassification(deps: ReviewDeps, id: string) {
   step = pingingSteps(env, step, job.pr.repositoryId, { approvals: true });
   const git = gitFor(env, job.repo);
   const { policy, pr, changes } = job;
+  const ignored = ignoreMatcher(job.ignoreText);
   const tooMany =
     changes.length > policy.limits.max_files ? changes.length : null;
 
@@ -591,7 +600,7 @@ export async function executeClassification(deps: ReviewDeps, id: string) {
           changes.slice(i, i + SUMMARY_BATCH).map((ch, j) =>
             step
               .do(`summary:${i + j}`, MODEL_RETRIES, () =>
-                summarizeFile(git, models, ch)
+                summarizeFile(git, models, ch, ignored)
               )
               .catch(
                 (e): Summarized => (
@@ -706,7 +715,7 @@ export async function executeClassification(deps: ReviewDeps, id: string) {
                 .selectFiles({
                   flag,
                   summaries,
-                  paths: changes.map((c) => c.path),
+                  paths: changes.map((c) => c.path).filter((p) => !ignored(p)),
                 })
                 .catch(() => [] as string[])
             : [];
@@ -716,14 +725,20 @@ export async function executeClassification(deps: ReviewDeps, id: string) {
             title: pr.title,
             description: pr.body,
             summaries,
-            diffs: await diffsFor(git, changes, focus, picked.length > 0),
+            diffs: await diffsFor(
+              git,
+              changes,
+              focus,
+              ignored,
+              picked.length > 0
+            ),
             paths: focus,
           });
           const changed = new Set(changes.map((c) => c.path));
           await db
             .update(prReviewFlags)
             .set({
-              detail: await composeDetail(git, changes, out),
+              detail: await composeDetail(git, changes, out, ignored),
               detailModel: reviewModel(env),
               paths: out.paths.filter((p) => changed.has(p)),
             })

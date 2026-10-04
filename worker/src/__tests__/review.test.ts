@@ -63,7 +63,12 @@ type Review = {
 /** A repository whose main has `policy` (if any), and an open PR adding `changes`. */
 async function pullWith(
   changes: Record<string, string>,
-  opts: { policy?: string | null; actions?: boolean } = {}
+  opts: {
+    policy?: string | null;
+    actions?: boolean;
+    /** Extra files on main (and so on the branch too). */
+    base?: Record<string, string>;
+  } = {}
 ) {
   const t = makeEnv({ actions: true });
   const admin = await bootstrapAdmin(t);
@@ -76,7 +81,11 @@ async function pullWith(
   const main = await commitPaths(
     repo,
     'main',
-    { ...APP, ...(policy ? { '.gitorange/review.yml': policy } : {}) },
+    {
+      ...APP,
+      ...opts.base,
+      ...(policy ? { '.gitorange/review.yml': policy } : {}),
+    },
     'base'
   );
   repo.refs.set('refs/heads/feature', main);
@@ -85,6 +94,7 @@ async function pullWith(
     'feature',
     {
       ...APP,
+      ...opts.base,
       ...(policy ? { '.gitorange/review.yml': policy } : {}),
       ...changes,
     },
@@ -789,11 +799,17 @@ describe('what the investigating model reads', () => {
     const git = new GitService(new ArtifactsRepoClient(fake.binding, 'r'));
     const [from, to] = await Promise.all([git.commit(base), git.commit(head)]);
     const changes = await git.diffTrees(from!.treeHash, to!.treeHash);
-    const text = await diffsFor(git, changes, []);
+    const { ignoreMatcher } = await import('../review/ignore');
+    const text = await diffsFor(
+      git,
+      changes,
+      [],
+      ignoreMatcher('migrations/meta/*.json')
+    );
     expect(text).not.toContain('--- migrations/meta/0008_snapshot.json');
     expect(text).not.toContain('--- yarn.lock');
     expect(text).toContain(
-      'Generated files and lockfiles, not shown: migrations/meta/0008_snapshot.json, yarn.lock'
+      'Ignored (lockfiles and .orangeignore), not shown: migrations/meta/0008_snapshot.json, yarn.lock'
     );
     expect(text).toContain("(the rest of this file's diff is not shown)");
     // Source, then tests, then docs.
@@ -898,5 +914,64 @@ describe('flags show before and after, and their diagram', () => {
     expect(flag.detail).toContain('| | Before | After |');
     expect(flag.detail).toContain('| **x** | none | id \\| text |');
     expect(flag.detail).toContain('```mermaid\nerDiagram');
+  });
+});
+
+describe('.orangeignore', () => {
+  it('reads .gitignore-style patterns', async () => {
+    const { ignoreMatcher } = await import('../review/ignore');
+    const ignored = ignoreMatcher(
+      [
+        '# generated',
+        'worker-configuration.d.ts',
+        'migrations/meta/',
+        '*.snap',
+        'dist/**/*.js',
+        '/build',
+        '!dist/keep.js',
+      ].join('\n')
+    );
+    for (const p of [
+      'worker/worker-configuration.d.ts',
+      'migrations/meta/0008_snapshot.json',
+      'src/__snapshots__/a.test.ts.snap',
+      'dist/a/b.js',
+      'dist/x.js',
+      'build/out.txt',
+      'yarn.lock',
+      'packages/a/package-lock.json',
+    ])
+      expect(ignored(p), p).toBe(true);
+    for (const p of [
+      'worker/src/index.ts',
+      'migrations/0008_x.sql',
+      'dist/keep.js',
+      'src/build/x.ts',
+      'snap.ts',
+    ])
+      expect(ignored(p), p).toBe(false);
+    // No file: only lockfiles.
+    expect(ignoreMatcher(null)('yarn.lock')).toBe(true);
+    expect(ignoreMatcher(null)('gen.d.ts')).toBe(false);
+  });
+
+  it("skips ignored files on the target branch's list, but not ones a pull request adds to it", async () => {
+    const { t, admin } = await pullWith(
+      {
+        'src/gen.d.ts': 'export type X = 1;\n',
+        'src/vendor.js': 'var v;\n',
+        // The branch's own .orangeignore doesn't count.
+        '.orangeignore': 'src/gen.d.ts\nsrc/vendor.js\n',
+      },
+      { base: { '.orangeignore': 'src/gen.d.ts\n' } }
+    );
+    const { models, calls } = fakeModels({});
+    await runReviews(t, models);
+    expect(calls.summarized).not.toContain('src/gen.d.ts');
+    expect(calls.summarized).toContain('src/vendor.js');
+    const files = (await review(t, admin)).review!.classification!.files;
+    expect(files.find((f) => f.path === 'src/gen.d.ts')?.summary).toBe(
+      'Changed; ignored by .orangeignore.'
+    );
   });
 });
