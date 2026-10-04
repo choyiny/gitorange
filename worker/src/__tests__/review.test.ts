@@ -974,3 +974,76 @@ describe('.orangeignore', () => {
     );
   });
 });
+
+describe('review state in the pull request list', () => {
+  async function listed(t: TestEnv, cookie: string) {
+    const body = (await (
+      await call(t, '/api/repos/octocat/app/pulls', { cookie })
+    ).json()) as {
+      pulls: { review: { state: string; flags: number } | null }[];
+    };
+    return body.pulls[0].review;
+  }
+  // Waits on checks, so an approved PR stays open.
+  const HELD = POLICY.replace('require: none', 'require: all');
+
+  it('is null without a review.yml', async () => {
+    const { t, admin } = await pullWith(
+      { 'src/b.ts': 'b\n' },
+      { policy: null }
+    );
+    expect(await listed(t, admin)).toBeNull();
+  });
+
+  it('shows reviewing, then review required with unapproved flags, then approved', async () => {
+    const { t, admin } = await pullWith(
+      { 'migrations/0001.sql': 'x\n' },
+      { policy: HELD }
+    );
+    expect(await listed(t, admin)).toEqual({ state: 'reviewing', flags: 0 });
+    await runReviews(t, fakeModels(DATA_CHANGE).models);
+    await settle(t);
+    expect(await listed(t, admin)).toEqual({
+      state: 'review_required',
+      flags: 1,
+    });
+    const { review: r } = await review(t, admin);
+    await call(
+      t,
+      `/api/repos/octocat/app/pulls/1/review/flags/${r!.flags[0].id}/approve`,
+      { cookie: admin, method: 'POST' }
+    );
+    await settle(t);
+    expect(await listed(t, admin)).toEqual({ state: 'approved', flags: 0 });
+  });
+
+  it('shows a failed review', async () => {
+    const { t, admin } = await pullWith(
+      { 'src/b.ts': 'b\n' },
+      { policy: HELD }
+    );
+    await runReviews(t, fakeModels(undefined, { failClassify: true }).models);
+    expect(await listed(t, admin)).toEqual({ state: 'failed', flags: 0 });
+  });
+
+  it('starts over for a new head commit', async () => {
+    const { t, admin, repo } = await pullWith(
+      { 'migrations/0001.sql': 'x\n' },
+      { policy: HELD }
+    );
+    await runReviews(t, fakeModels(DATA_CHANGE).models);
+    expect((await listed(t, admin))?.state).toBe('review_required');
+    await commitPaths(
+      repo,
+      'feature',
+      {
+        ...APP,
+        '.gitorange/review.yml': HELD,
+        'migrations/0001.sql': 'x\n',
+        'src/c.ts': 'c\n',
+      },
+      'More'
+    );
+    expect(await listed(t, admin)).toEqual({ state: 'reviewing', flags: 0 });
+  });
+});

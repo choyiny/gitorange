@@ -9,6 +9,7 @@ import { api, qk, type RepoDetail } from '@/lib/uiApi';
 import { timeAgo } from '@/lib/format';
 import { Spinner } from '@/components/Spinner';
 import { ChecksBadge, useCommitStatuses } from '@/components/Checks';
+import { AiResolutionBadge, ReviewLabel } from '@/components/PullBadges';
 import { PrStateIcon } from './PrIcons';
 
 export default function Pulls() {
@@ -95,7 +96,8 @@ export default function Pulls() {
                 <ChecksBadge
                   repo={repo}
                   checks={p.headSha ? statuses.data?.[p.headSha] : undefined}
-                />
+                />{' '}
+                <AiResolutionBadge state={p.aiResolution} />
                 <div className="f6 color-fg-muted mt-1">
                   #{p.number}{' '}
                   {p.state === 'open' && (
@@ -107,6 +109,10 @@ export default function Pulls() {
                       >
                         {p.author.username}
                       </Link>
+                      <ReviewLabel
+                        review={p.review}
+                        to={`${base}/pull/${p.number}`}
+                      />
                     </>
                   )}
                   {p.state === 'merged' && (

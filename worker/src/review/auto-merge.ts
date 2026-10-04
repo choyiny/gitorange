@@ -5,6 +5,7 @@ import {
   pullRequests,
   workflowJobs,
   workflowRuns,
+  type PrClassification,
   type PullRequest,
 } from '../db/app.schema';
 import { users } from '../db/auth.schema';
@@ -95,6 +96,30 @@ async function checkProblem(
   return null;
 }
 
+/**
+ * Where the head commit's review stands; `review_required` counts unapproved flags.
+ * A future "changes requested" state belongs here too.
+ */
+export type ReviewProgress =
+  | { state: 'reviewing' }
+  | { state: 'failed'; error: string | null }
+  | { state: 'review_required'; flags: number }
+  | { state: 'approved' };
+
+export function reviewProgress(
+  review:
+    Pick<PrClassification, 'status' | 'verdict' | 'errorMessage'> | undefined,
+  unapprovedFlags: number
+): ReviewProgress {
+  if (!review) return { state: 'reviewing' };
+  if (review.status === 'failed')
+    return { state: 'failed', error: review.errorMessage };
+  if (review.status !== 'done') return { state: 'reviewing' };
+  if (review.verdict === 'human' && unapprovedFlags > 0)
+    return { state: 'review_required', flags: unapprovedFlags };
+  return { state: 'approved' };
+}
+
 export async function autoMergeStatus(
   db: DrizzleDB,
   git: GitService,
@@ -122,27 +147,30 @@ export async function autoMergeStatus(
   }
 
   const review = await classificationFor(db, pr.id, head, policyFile.sha);
-  if (!review) waiting.push('Reviewing the changes');
-  else if (review.status === 'failed') {
-    if (policy)
-      blocked.push(`Review failed: ${review.errorMessage ?? ''}`.trim());
-  } else if (review.status !== 'done') waiting.push('Reviewing the changes');
-  else if (review.verdict === 'human') {
-    const open = await db
-      .select({ id: prReviewFlags.id })
-      .from(prReviewFlags)
-      .where(
-        and(
-          eq(prReviewFlags.classificationId, review.id),
-          isNull(prReviewFlags.approvedAt)
-        )
-      )
-      .all();
-    if (open.length)
-      waiting.push(
-        `${plural(open.length, 'flag')} need${open.length === 1 ? 's' : ''} approval`
-      );
-  }
+  const progress = reviewProgress(
+    review,
+    review?.status === 'done' && review.verdict === 'human'
+      ? (
+          await db
+            .select({ id: prReviewFlags.id })
+            .from(prReviewFlags)
+            .where(
+              and(
+                eq(prReviewFlags.classificationId, review.id),
+                isNull(prReviewFlags.approvedAt)
+              )
+            )
+            .all()
+        ).length
+      : 0
+  );
+  if (progress.state === 'reviewing') waiting.push('Reviewing the changes');
+  else if (progress.state === 'failed') {
+    if (policy) blocked.push(`Review failed: ${progress.error ?? ''}`.trim());
+  } else if (progress.state === 'review_required')
+    waiting.push(
+      `${plural(progress.flags, 'flag')} need${progress.flags === 1 ? 's' : ''} approval`
+    );
 
   if (policy) {
     const checks = await checkProblem(

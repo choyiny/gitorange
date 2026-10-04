@@ -39,7 +39,8 @@ import { ensureResolution } from '../merge/auto';
 import { landPull, pullRef } from '../merge/land';
 import { addComment, openPull, pullShas } from '../lib/pulls';
 import { ensureClassification, retryClassification } from '../review/classify';
-import { maybeAutoMerge } from '../review/auto-merge';
+import { maybeAutoMerge, type ReviewProgress } from '../review/auto-merge';
+import { reviewProgressFor } from '../review/list';
 import { reviewView } from '../review/view';
 
 export const pullsRouter = new OpenAPIHono<RepoEnv>({
@@ -139,7 +140,28 @@ const listRoute = createRoute({
     ...json200Response(
       z.object({
         /** Commit the checks ran on: the branch tip, or the pinned head once closed. */
-        pulls: z.array(pullSchema.extend({ headSha: z.string().nullable() })),
+        pulls: z.array(
+          pullSchema.extend({
+            headSha: z.string().nullable(),
+            /** Open PRs: the latest AI conflict resolution for the current base and head tips. */
+            aiResolution: z
+              .enum(['queued', 'running', 'proposed', 'failed'])
+              .nullable(),
+            /** Open PRs under a review.yml: the head commit's auto-merge review. */
+            review: z
+              .object({
+                state: z.enum([
+                  'reviewing',
+                  'failed',
+                  'review_required',
+                  'approved',
+                ]),
+                /** Unapproved flags, when review is required. */
+                flags: z.number(),
+              })
+              .nullable(),
+          })
+        ),
         openCount: z.number(),
         closedCount: z.number(),
       }),
@@ -191,11 +213,73 @@ pullsRouter.openapi(listRoute, async (c) => {
       ? refs.get(`refs/heads/${pr.headRef}`)
       : (refs.get(pullRef(pr.number)) ??
         refs.get(`refs/heads/${pr.headRef}`))) ?? null;
+  // Latest resolution of every open PR in one query.
+  const resolutions = new Map<
+    string,
+    Pick<MergeResolution, 'status' | 'baseSha' | 'headSha' | 'errorMessage'>
+  >();
+  if (state === 'open' && rows.length)
+    for (const r of await db
+      .select({
+        pullRequestId: mergeResolutions.pullRequestId,
+        status: mergeResolutions.status,
+        baseSha: mergeResolutions.baseSha,
+        headSha: mergeResolutions.headSha,
+        errorMessage: mergeResolutions.errorMessage,
+      })
+      .from(mergeResolutions)
+      .innerJoin(
+        pullRequests,
+        eq(pullRequests.id, mergeResolutions.pullRequestId)
+      )
+      .where(
+        and(
+          eq(pullRequests.repositoryId, repo.id),
+          eq(pullRequests.state, 'open'),
+          sql`${mergeResolutions}.rowid = (SELECT m.rowid FROM merge_resolutions m WHERE m.pull_request_id = ${mergeResolutions.pullRequestId} ORDER BY m.created_at DESC, m.rowid DESC LIMIT 1)`
+        )
+      )
+      .all())
+      resolutions.set(r.pullRequestId, r);
+  const reviews =
+    state === 'open'
+      ? await reviewProgressFor(
+          db,
+          c.get('git'),
+          repo.id,
+          rows.map((r) => r.pr),
+          refs
+        )
+      : new Map<string, ReviewProgress>();
+  const review = (pr: PullRequest) => {
+    const p = reviews.get(pr.id);
+    return p
+      ? { state: p.state, flags: p.state === 'review_required' ? p.flags : 0 }
+      : null;
+  };
+  const aiResolution = (pr: PullRequest) => {
+    const r = resolutions.get(pr.id);
+    if (
+      !r ||
+      r.baseSha !== refs.get(`refs/heads/${pr.baseRef}`) ||
+      r.headSha !== refs.get(`refs/heads/${pr.headRef}`)
+    )
+      return null;
+    if (r.status === 'rejected') return 'failed';
+    if (
+      r.status === 'applied' ||
+      r.errorMessage === 'Superseded by newer commits.'
+    )
+      return null;
+    return r.status;
+  };
   return c.json(
     {
       pulls: rows.map((r) => ({
         ...serializePull(r.pr, people, Number(r.comments)),
         headSha: headSha(r.pr),
+        aiResolution: aiResolution(r.pr),
+        review: review(r.pr),
       })),
       openCount: count('open'),
       closedCount: count('closed') + count('merged'),

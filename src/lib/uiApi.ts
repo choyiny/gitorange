@@ -109,6 +109,13 @@ export type Pull = {
   headRef: string;
   /** Pull request lists only: the commit its checks ran on. */
   headSha?: string | null;
+  /** Pull request lists only (open): the current AI conflict resolution. */
+  aiResolution?: 'queued' | 'running' | 'proposed' | 'failed' | null;
+  /** Pull request lists only (open, under a review.yml): the head commit's review. */
+  review?: {
+    state: 'reviewing' | 'failed' | 'review_required' | 'approved';
+    flags: number;
+  } | null;
   mergeCommitSha: string | null;
   mergedBy: User | null;
   /** GitOrange merged it on its own (auto-merge); mergedBy is then null. */
