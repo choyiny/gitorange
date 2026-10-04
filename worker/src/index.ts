@@ -18,9 +18,6 @@ import { namespacesRouter, teamRouter } from './routers/teams-router';
 import { mcpApiRouter, mcpRouter } from './mcp';
 import { wellKnownRouter } from './mcp/well-known';
 import type { AppEnv } from './variables';
-import { drizzle } from 'drizzle-orm/d1';
-import { schema } from './db/schema';
-import { runActionsRetention } from './actions/retention';
 import type { Context, MiddlewareHandler } from 'hono';
 import type { RepoEnv } from './lib/repos';
 import { publishChange } from './live/publish';
@@ -137,11 +134,10 @@ export default {
    */
   scheduled(controller, env, ctx) {
     ctx.waitUntil(
-      runActionsRetention(env, drizzle(env.DB, { schema })).catch((e) =>
-        console.error('[actions] retention failed', e)
+      runScheduled(controller, env).catch((e) =>
+        console.error('[cron] failed', controller.cron, e)
       )
     );
-    ctx.waitUntil(runScheduled(controller, env));
   },
   fetch(request, env, ctx) {
     const url = new URL(request.url);
