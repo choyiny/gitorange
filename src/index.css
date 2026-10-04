@@ -567,3 +567,21 @@ body {
 .ai-resolution code {
   overflow-wrap: anywhere;
 }
+
+/* FileList: the directory shrinks with an ellipsis; the file name always shows. */
+.file-list li {
+  min-width: 0;
+}
+.file-list-path {
+  display: flex;
+  min-width: 0;
+}
+.file-list-dir {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.file-list-name {
+  flex-shrink: 0;
+  white-space: nowrap;
+}

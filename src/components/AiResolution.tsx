@@ -1,3 +1,4 @@
+import { FileList } from './FileList';
 import { useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import {
@@ -68,7 +69,7 @@ export function AiResolution({
   if (current?.status === 'queued')
     return (
       <div
-        className="Box-row d-flex flex-items-center ai-resolution"
+        className="Box-row d-flex flex-items-start ai-resolution"
         style={{ gap: 12 }}
       >
         <Spinner size={16} />
@@ -85,21 +86,17 @@ export function AiResolution({
   if (current?.status === 'running')
     return (
       <div
-        className="Box-row d-flex flex-items-center ai-resolution"
+        className="Box-row d-flex flex-items-start ai-resolution"
         style={{ gap: 12 }}
       >
         <Spinner size={16} />
         <div>
           <div className="text-bold">Resolving conflicts with AI…</div>
           <div className="f6 color-fg-muted">
-            An agent is combining both sides of{' '}
-            {current.conflictedPaths.map((p) => (
-              <code key={p} className="mr-1">
-                {p}
-              </code>
-            ))}
-            . This usually takes under a minute.
+            An agent is combining both sides of these files. This usually takes
+            under a minute.
           </div>
+          <FileList paths={current.conflictedPaths} />
         </div>
       </div>
     );
@@ -127,12 +124,8 @@ export function AiResolution({
           {current.touchedExtraPaths.length > 0 && (
             <div className="flash flash-warn mb-2 f6">
               <AlertIcon /> The agent also created or changed files outside the
-              conflicts; they are not included:{' '}
-              {current.touchedExtraPaths.map((p) => (
-                <code key={p} className="mr-1">
-                  {p}
-                </code>
-              ))}
+              conflicts; they are not included:
+              <FileList paths={current.touchedExtraPaths} />
             </div>
           )}
           {error && <div className="flash flash-error mb-2">{error}</div>}
@@ -174,7 +167,7 @@ export function AiResolution({
   if (!current)
     return (
       <div
-        className="Box-row d-flex flex-items-center ai-resolution"
+        className="Box-row d-flex flex-items-start ai-resolution"
         style={{ gap: 12 }}
       >
         <Spinner size={16} />

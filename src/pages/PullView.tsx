@@ -1,3 +1,4 @@
+import { FileList } from '@/components/FileList';
 import { Fragment, useState } from 'react';
 import { Link, NavLink, useOutletContext, useParams } from 'react-router-dom';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
@@ -197,6 +198,7 @@ function MergeBox({
       <div
         className="Box flex-1"
         style={{
+          minWidth: 0,
           borderColor: conflict
             ? undefined
             : 'var(--borderColor-success-emphasis)',
@@ -210,7 +212,7 @@ function MergeBox({
           ) : (
             <CheckIcon size={24} className="color-fg-success" />
           )}
-          <div>
+          <div className="flex-1" style={{ minWidth: 0 }}>
             <h3 className="f5">
               {resolving
                 ? 'Resolving conflicts with AI'
@@ -230,12 +232,7 @@ function MergeBox({
                   {showAi
                     ? 'An agent resolves them automatically. You can also resolve them locally and push to '
                     : 'Resolve conflicts locally, then push to '}
-                  <code>{pr.headRef}</code>. Conflicting files:{' '}
-                  {d.conflicts.map((c) => (
-                    <code key={c} className="mr-1">
-                      {c}
-                    </code>
-                  ))}
+                  <code>{pr.headRef}</code>.
                 </>
               ) : nothing ? (
                 'There is nothing to merge.'
@@ -243,6 +240,9 @@ function MergeBox({
                 'This branch can be rebased onto the base branch and merged.'
               )}
             </p>
+            {conflict && !d.resolvedByAi && d.conflicts.length > 0 && (
+              <FileList paths={d.conflicts} />
+            )}
           </div>
         </div>
         {showAi && <AiResolution repo={repo} d={d} onChange={onDone} />}
