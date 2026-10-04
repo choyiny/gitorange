@@ -19,6 +19,8 @@ export interface StepResult {
   outputs: Record<string, string>;
   envAdds: Record<string, string>;
   pathAdds: string[];
+  /** Set when the container stopped under the step (e.g. a deploy), as opposed to the step failing. */
+  interrupted?: string;
 }
 
 /** Executor-facing RPC surface of the Durable Object. */
@@ -98,6 +100,8 @@ export class JobRunner
   }
 
   async runStep(req: StepRequest): Promise<StepResult> {
+    if (!this.ctx.container?.running)
+      throw new Error('The runner container is no longer running');
     const files = {
       GITHUB_ENV: `${STATE_DIR}/env_${req.number}`,
       GITHUB_OUTPUT: `${STATE_DIR}/output_${req.number}`,
@@ -120,6 +124,7 @@ export class JobRunner
       abort.abort();
     }, req.timeoutMs);
     let exitCode = 1;
+    let interrupted: string | undefined;
     try {
       const proc = await this.container.exec(req.argv, {
         cwd: req.cwd,
@@ -141,11 +146,20 @@ export class JobRunner
       }
       exitCode = await proc.exitCode;
     } catch (e) {
-      if (!timedOut)
-        live.text += `\n${e instanceof Error ? e.message : String(e)}\n`;
+      const message = e instanceof Error ? e.message : String(e);
+      if (!timedOut) live.text += `\n${message}\n`;
+      if (!timedOut && !this.ctx.container?.running) interrupted = message;
     } finally {
       clearTimeout(timer);
     }
+    // A non-zero exit is the step's own failure unless the container itself went away.
+    if (
+      !interrupted &&
+      !timedOut &&
+      exitCode !== 0 &&
+      !this.ctx.container?.running
+    )
+      interrupted = `The runner container stopped while the step was running (exit code ${exitCode})`;
     if (timedOut) {
       exitCode = 1;
       live.text += `\nThe step exceeded its timeout of ${Math.round(req.timeoutMs / 60_000)} minutes and was stopped.\n`;
@@ -183,6 +197,7 @@ export class JobRunner
       outputs,
       envAdds,
       pathAdds,
+      ...(interrupted ? { interrupted } : {}),
     };
   }
 

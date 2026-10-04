@@ -41,6 +41,7 @@ import { instanceTypeFor, postStepIndexes } from './plan';
 import { githubContext, readWorkflowFiles } from './trigger';
 import {
   parseWorkflow,
+  stepDisplayName,
   type JobDef,
   type StepDef,
   type WorkflowDef,
@@ -64,11 +65,15 @@ export interface ExecutorDeps {
   db: Db;
   step: StepRunner;
   runner: (jobId: string) => JobRunnerApi;
+  /** Wait before restarting an interrupted job, times the attempt that failed. Default 15s. */
+  restartDelayMs?: number;
 }
 
 const DEFAULT_PATH =
   '/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin';
 const NO_RETRY = { retries: { limit: 0, delay: 0 } } as const;
+/** How many times a job runs in total when the platform keeps interrupting its runner. */
+export const MAX_JOB_ATTEMPTS = 3;
 
 export function logKey(
   repoId: string,
@@ -403,13 +408,230 @@ async function runJob(
   }
 
   const runner = deps.runner(job.id);
-  const jobTimeoutMs = def.timeoutMinutes * 60_000;
-  const deadline = Date.now() + jobTimeoutMs;
   const posts = postStepIndexes(def.steps);
   const lastStep = def.steps.length + 2 + posts.length;
-  // Restored cache per step index, for its post step.
-  const caches = new Map<number, CacheState>();
 
+  // A job whose runner the platform interrupts (a deploy restarts Durable Objects and drops the
+  // connection to the container) runs again from the start in a fresh container. A step that
+  // fails on its own is never retried.
+  let attempt = 1;
+  let restartNote: string | null = null;
+  let attemptState: AttemptState;
+  for (;;) {
+    const prefix = attempt === 1 ? name : `${name}:attempt:${attempt}`;
+    attemptState = await runAttempt(
+      deps,
+      ctx,
+      wf,
+      def,
+      job,
+      runner,
+      exprCtx,
+      prefix,
+      restartNote,
+      attempt === MAX_JOB_ATTEMPTS ? attempt : null
+    );
+    if (!attemptState.interrupted) break;
+    const stopped = attemptState.interrupted;
+    const next = await step.do(
+      `${prefix}:restart`,
+      { retries: { limit: 2, delay: '5 seconds' }, timeout: '5 minutes' },
+      async () => {
+        const run = await db
+          .select({ status: workflowRuns.status })
+          .from(workflowRuns)
+          .where(eq(workflowRuns.id, ctx.runId))
+          .get();
+        // A cancelled run is already marked finished; its containers were stopped on purpose.
+        if (!run || run.status === 'completed') return 'cancelled' as const;
+        try {
+          await runner.destroy();
+        } catch (e) {
+          console.warn('[actions] runner destroy failed', job.id, e);
+        }
+        const wait = (deps.restartDelayMs ?? 15_000) * attempt;
+        if (wait > 0) await new Promise((r) => setTimeout(r, wait));
+        await db
+          .update(workflowSteps)
+          .set({
+            status: 'queued',
+            conclusion: null,
+            startedAt: null,
+            completedAt: null,
+            logR2Key: null,
+          })
+          .where(eq(workflowSteps.jobId, job.id));
+        return 'restart' as const;
+      }
+    );
+    if (next === 'cancelled')
+      return { key: def.key, result: 'cancelled', outputs: {} };
+    attempt++;
+    restartNote = [
+      `Restarted after the runner was interrupted (attempt ${attempt} of ${MAX_JOB_ATTEMPTS}).`,
+      `Step ${stopped.number} (${stopped.name}) was interrupted: ${stopped.message}`,
+      'The job runs again from the start in a new container.',
+      '',
+    ].join('\n');
+  }
+  const { steps, caches, jobStatus } = attemptState;
+
+  // ── Post steps: save caches (GitHub runs them in reverse, on success only) ──
+  for (const [k, i] of posts.entries()) {
+    const number = def.steps.length + 2 + k;
+    const state = caches.get(i);
+    await step
+      .do(
+        `${name}:post:${number}`,
+        { ...NO_RETRY, timeout: '30 minutes' },
+        async () => {
+          const now = new Date();
+          await setStep(db, job.id, number, {
+            status: 'in_progress',
+            startedAt: now,
+          });
+          let log: string;
+          let ran = true;
+          if (jobStatus !== 'success') {
+            log = 'The job failed, so the cache is not saved.';
+            ran = false;
+          } else if (!state) {
+            log = 'Nothing to save: the cache step did not run.';
+            ran = false;
+          } else if (state.exact) {
+            log = `Cache hit on ${state.key}; nothing to save.`;
+            ran = false;
+          } else {
+            try {
+              const objectKey = cacheObjectKey(ctx.repoId, ctx.ref, state.key);
+              const url = await cacheUrl(env, objectKey, 'PUT');
+              const r = await runner.runStep({
+                number,
+                argv: [...SHELLS.bash, saveScript(state.paths, state.key)],
+                cwd: WORKSPACE,
+                env: { CACHE_URL: url, PATH: DEFAULT_PATH, HOME: '/root' },
+                timeoutMs: 25 * 60_000,
+                masks: [url],
+              });
+              log = r.log;
+              if (r.exitCode !== 0)
+                log +=
+                  '\nWarning: the cache could not be saved; the job is unaffected.';
+              else await enforceCacheLimit(env, ctx.repoId);
+            } catch (e) {
+              log = `Warning: the cache could not be saved: ${e instanceof Error ? e.message : String(e)}`;
+            }
+          }
+          await putLog(env, ctx, job.id, number, log);
+          // Saving is best effort, like GitHub's: it never fails the job.
+          await setStep(db, job.id, number, {
+            status: 'completed',
+            conclusion: ran ? 'success' : 'skipped',
+            completedAt: new Date(),
+            logR2Key: logKey(ctx.repoId, ctx.runId, job.id, number),
+          });
+          return true;
+        }
+      )
+      .catch(() =>
+        // Interrupted mid-save: the job already finished, so record the miss and move on.
+        step.do(`${name}:post:${number}:interrupted`, async () => {
+          await putLog(
+            env,
+            ctx,
+            job.id,
+            number,
+            'Warning: the runner was interrupted while saving the cache; the job is unaffected.'
+          );
+          await setStep(db, job.id, number, {
+            status: 'completed',
+            conclusion: 'skipped',
+            completedAt: new Date(),
+            logR2Key: logKey(ctx.repoId, ctx.runId, job.id, number),
+          });
+          return true;
+        })
+      );
+  }
+
+  // ── Complete job ──
+  return step.do(`${name}:complete`, async () => {
+    try {
+      await runner.destroy();
+    } catch (e) {
+      console.error('[actions] runner destroy failed', job.id, e);
+    }
+    const outputs: Record<string, string> = {};
+    for (const [k, v] of Object.entries(def.outputs)) {
+      try {
+        outputs[k] = interpolate(v, exprCtx({ steps }));
+      } catch {
+        outputs[k] = '';
+      }
+    }
+    const jobContinue =
+      typeof def.continueOnError === 'string'
+        ? safeTruthy(def.continueOnError, exprCtx())
+        : def.continueOnError;
+    const result: Conclusion =
+      jobStatus === 'failure' && !jobContinue ? 'failure' : 'success';
+    const now = new Date();
+    await putLog(
+      env,
+      ctx,
+      job.id,
+      lastStep,
+      'Cleaning up: the runner was stopped and its disk discarded.'
+    );
+    await setStep(db, job.id, lastStep, {
+      status: 'completed',
+      conclusion: 'success',
+      startedAt: now,
+      completedAt: now,
+      logR2Key: logKey(ctx.repoId, ctx.runId, job.id, lastStep),
+    });
+    await db
+      .update(workflowJobs)
+      .set({
+        status: 'completed',
+        conclusion: jobStatus === 'failure' ? 'failure' : 'success',
+        completedAt: now,
+      })
+      .where(eq(workflowJobs.id, job.id));
+    return { key: def.key, result, outputs } satisfies JobOutcome;
+  });
+}
+
+interface AttemptState {
+  jobStatus: JobStatus;
+  steps: Record<string, Value>;
+  /** What each caching step restored, for its post step. */
+  caches: Map<number, CacheState>;
+  /** The step whose runner went away, when this attempt should be restarted. */
+  interrupted?: { number: number; name: string; message: string };
+}
+
+/**
+ * Sets up the runner and runs the job's steps once. Returns early with `interrupted` when the
+ * platform stops the runner under a step, unless `final` is set: then that step fails with the
+ * reason and the remaining steps are skipped.
+ */
+async function runAttempt(
+  deps: ExecutorDeps,
+  ctx: RunContext,
+  wf: WorkflowDef,
+  def: JobDef,
+  job: RunContext['jobs'][number],
+  runner: JobRunnerApi,
+  exprCtx: (extra?: Record<string, Value>) => Record<string, Value>,
+  name: string,
+  restartNote: string | null,
+  final: number | null
+): Promise<AttemptState> {
+  const { db, step, env } = deps;
+  const jobTimeoutMs = def.timeoutMinutes * 60_000;
+  const deadline = Date.now() + jobTimeoutMs;
+  const caches = new Map<number, CacheState>();
   // ── Set up job ──
   const setup = await step.do(
     `${name}:setup`,
@@ -430,6 +652,7 @@ async function runJob(
         const size = instanceTypeFor(job.runsOn);
         const { ms } = await runner.boot(size, jobTimeoutMs);
         log = [
+          ...(restartNote ? [restartNote] : []),
           `Runner: GitOrange Actions (${size})`,
           `Labels: ${job.runsOn}`,
           `Image: Debian (trixie) with Node.js, git, and build tools`,
@@ -437,7 +660,7 @@ async function runJob(
         ].join('\n');
       } catch (e) {
         ok = false;
-        log = `Could not start the runner: ${e instanceof Error ? e.message : String(e)}`;
+        log = `${restartNote ?? ''}Could not start the runner: ${e instanceof Error ? e.message : String(e)}`;
       }
       await putLog(env, ctx, job.id, 1, log);
       await setStep(db, job.id, 1, {
@@ -451,6 +674,7 @@ async function runJob(
   );
 
   let jobStatus: JobStatus = setup ? 'success' : 'failure';
+  let runnerGone: string | null = null;
   const steps: Record<string, Value> = {};
   let envAdds: Record<string, string> = {};
   let pathAdds: string[] = [];
@@ -492,6 +716,8 @@ async function runJob(
     if (Date.now() > deadline && run) {
       prepError = `The job exceeded its timeout of ${def.timeoutMinutes} minutes.`;
     }
+
+    if (runnerGone) run = false;
 
     if (!run) {
       await step.do(`${name}:step:${number}:skip`, async () => {
@@ -549,6 +775,7 @@ async function runJob(
             else {
               cache = cmd.cache ?? null;
               const r = await runner.runStep(cmd.request);
+              if (r.interrupted) throw new Error(r.interrupted);
               exitCode = r.exitCode;
               log = (cmd.preamble ? cmd.preamble + '\n' : '') + r.log;
               if (exitCode !== 0)
@@ -573,6 +800,18 @@ async function runJob(
         cache: null,
         crash: e instanceof Error ? e.message : String(e),
       }));
+    if ('crash' in result && final === null)
+      return {
+        jobStatus,
+        steps,
+        caches,
+        interrupted: {
+          number,
+          name: stepDisplayName(s),
+          message: result.crash,
+        },
+      };
+    if ('crash' in result) runnerGone = result.crash;
     if (result.cache && result.outcome === 'success')
       caches.set(i, result.cache);
 
@@ -586,7 +825,16 @@ async function runJob(
         : result.outcome;
     await step.do(`${name}:step:${number}:done`, async () => {
       if ('crash' in result)
-        await putLog(env, ctx, job.id, number, `Error: ${result.crash}`);
+        await putLog(
+          env,
+          ctx,
+          job.id,
+          number,
+          `Error: ${result.crash}` +
+            (final
+              ? `\nThe runner was interrupted on all ${final} attempts, so the job was not restarted again.`
+              : '')
+        );
       await setStep(db, job.id, number, {
         status: 'completed',
         conclusion,
@@ -605,111 +853,7 @@ async function runJob(
     pathAdds = [...result.pathAdds, ...pathAdds];
     if (conclusion === 'failure') jobStatus = 'failure';
   }
-
-  // ── Post steps: save caches (reverse order, on success only) ──
-  for (const [k, i] of posts.entries()) {
-    const number = def.steps.length + 2 + k;
-    const state = caches.get(i);
-    await step.do(
-      `${name}:post:${number}`,
-      { ...NO_RETRY, timeout: '30 minutes' },
-      async () => {
-        const now = new Date();
-        await setStep(db, job.id, number, {
-          status: 'in_progress',
-          startedAt: now,
-        });
-        let log: string;
-        let ran = true;
-        if (jobStatus !== 'success') {
-          log = 'The job failed, so the cache is not saved.';
-          ran = false;
-        } else if (!state) {
-          log = 'Nothing to save: the cache step did not run.';
-          ran = false;
-        } else if (state.exact) {
-          log = `Cache hit on ${state.key}; nothing to save.`;
-          ran = false;
-        } else {
-          try {
-            const objectKey = cacheObjectKey(ctx.repoId, ctx.ref, state.key);
-            const url = await cacheUrl(env, objectKey, 'PUT');
-            const r = await runner.runStep({
-              number,
-              argv: [...SHELLS.bash, saveScript(state.paths, state.key)],
-              cwd: WORKSPACE,
-              env: { CACHE_URL: url, PATH: DEFAULT_PATH, HOME: '/root' },
-              timeoutMs: 25 * 60_000,
-              masks: [url],
-            });
-            log = r.log;
-            if (r.exitCode !== 0)
-              log +=
-                '\nWarning: the cache could not be saved; the job is unaffected.';
-            else await enforceCacheLimit(env, ctx.repoId);
-          } catch (e) {
-            log = `Warning: the cache could not be saved: ${e instanceof Error ? e.message : String(e)}`;
-          }
-        }
-        await putLog(env, ctx, job.id, number, log);
-        // Best effort: never fails the job.
-        await setStep(db, job.id, number, {
-          status: 'completed',
-          conclusion: ran ? 'success' : 'skipped',
-          completedAt: new Date(),
-          logR2Key: logKey(ctx.repoId, ctx.runId, job.id, number),
-        });
-        return true;
-      }
-    );
-  }
-
-  // ── Complete job ──
-  return step.do(`${name}:complete`, async () => {
-    try {
-      await runner.destroy();
-    } catch (e) {
-      console.error('[actions] runner destroy failed', job.id, e);
-    }
-    const outputs: Record<string, string> = {};
-    for (const [k, v] of Object.entries(def.outputs)) {
-      try {
-        outputs[k] = interpolate(v, exprCtx({ steps }));
-      } catch {
-        outputs[k] = '';
-      }
-    }
-    const jobContinue =
-      typeof def.continueOnError === 'string'
-        ? safeTruthy(def.continueOnError, exprCtx())
-        : def.continueOnError;
-    const result: Conclusion =
-      jobStatus === 'failure' && !jobContinue ? 'failure' : 'success';
-    const now = new Date();
-    await putLog(
-      env,
-      ctx,
-      job.id,
-      lastStep,
-      'Cleaning up: the runner was stopped and its disk discarded.'
-    );
-    await setStep(db, job.id, lastStep, {
-      status: 'completed',
-      conclusion: 'success',
-      startedAt: now,
-      completedAt: now,
-      logR2Key: logKey(ctx.repoId, ctx.runId, job.id, lastStep),
-    });
-    await db
-      .update(workflowJobs)
-      .set({
-        status: 'completed',
-        conclusion: jobStatus === 'failure' ? 'failure' : 'success',
-        completedAt: now,
-      })
-      .where(eq(workflowJobs.id, job.id));
-    return { key: def.key, result, outputs } satisfies JobOutcome;
-  });
+  return { jobStatus, steps, caches };
 }
 
 function safeTruthy(expr: string, ctx: Record<string, Value>) {

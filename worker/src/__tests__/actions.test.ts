@@ -158,18 +158,28 @@ async function runDetail(t: TestEnv, cookie: string, n: number) {
 /** Drives executeRun with a direct-call step and a scripted container. */
 function harness(
   t: TestEnv,
-  onStep: (req: StepRequest) => Partial<StepResult> = () => ({})
+  onStep: (
+    req: StepRequest
+  ) => Partial<StepResult> | Promise<Partial<StepResult>> = () => ({})
 ) {
   const requests: StepRequest[] = [];
   const destroyed: string[] = [];
+  const boots: string[] = [];
+  const stepNames: string[] = [];
   const step = {
-    do: async (_name: string, a: unknown, b?: unknown) =>
-      ((b ?? a) as () => Promise<unknown>)(),
+    do: async (name: string, a: unknown, b?: unknown) => {
+      stepNames.push(name);
+      return ((b ?? a) as () => Promise<unknown>)();
+    },
   } as unknown as StepRunner;
   const runner = (jobId: string): JobRunnerApi => ({
-    boot: async () => ({ ms: 420 }),
+    boot: async () => {
+      boots.push(jobId);
+      return { ms: 420 };
+    },
     runStep: async (req) => {
       requests.push(req);
+      const scripted = await onStep(req);
       return {
         exitCode: 0,
         timedOut: false,
@@ -177,17 +187,23 @@ function harness(
         outputs: {},
         envAdds: {},
         pathAdds: [],
-        ...onStep(req),
+        ...scripted,
       };
     },
     destroy: async () => void destroyed.push(jobId),
   });
   const run = (runId: string) =>
     executeRun(
-      { env: t.env, db: drizzle(t.env.DB, { schema }), step, runner },
+      {
+        env: t.env,
+        db: drizzle(t.env.DB, { schema }),
+        step,
+        runner,
+        restartDelayMs: 0,
+      },
       runId
     );
-  return { run, requests, destroyed };
+  return { run, requests, destroyed, boots, stepNames };
 }
 
 const script = (r: StepRequest) => r.argv[r.argv.length - 1];
@@ -568,6 +584,146 @@ jobs:
       { cookie: s.admin }
     );
     expect(await log.text()).toContain("doesn't run `uses: some/action@v1`");
+  });
+});
+
+describe('Actions restarts after interruptions', () => {
+  const stepLog = async (
+    s: Awaited<ReturnType<typeof setup>>,
+    jobId: string,
+    n: number
+  ) =>
+    (
+      await call(
+        s.t,
+        `/api/repos/octocat/app/actions/runs/1/jobs/${jobId}/steps/${n}/logs`,
+        { cookie: s.admin }
+      )
+    ).text();
+  const ranScripts = (h: ReturnType<typeof harness>) => h.requests.map(script);
+
+  it('restarts a job whose runner was interrupted, from the start in a new container', async () => {
+    const s = await setup();
+    await pushFiles(s, 'main', { '.github/workflows/ci.yml': CI });
+    const [queued] = (await runs(s.t, s.admin)).runs;
+    let interrupted = false;
+    const h = harness(s.t, (r) => {
+      if (script(r) === 'npm test' && !interrupted) {
+        interrupted = true;
+        // What the Workflow sees when a deploy resets the JobRunner mid-call.
+        throw new Error('Durable Object reset because its code was updated.');
+      }
+      return {};
+    });
+    expect(await h.run(queued.id)).toBe('success');
+    expect(ranScripts(h).filter((x) => !x.startsWith('mkdir'))).toEqual([
+      'echo building',
+      'npm test',
+      'echo building',
+      'npm test',
+    ]);
+    expect(h.requests).toHaveLength(6);
+    expect(new Set(h.stepNames).size).toBe(h.stepNames.length);
+    const { run, jobs } = await runDetail(s.t, s.admin, 1);
+    expect(h.boots).toEqual([jobs[0].id, jobs[0].id]);
+    // Destroyed once before the restart and once when the job completed.
+    expect(h.destroyed).toEqual([jobs[0].id, jobs[0].id]);
+    expect(run).toMatchObject({ status: 'completed', conclusion: 'success' });
+    expect(jobs[0].steps.every((x) => x.conclusion === 'success')).toBe(true);
+    const setupLog = await stepLog(s, jobs[0].id, 1);
+    expect(setupLog).toContain(
+      'Restarted after the runner was interrupted (attempt 2 of 3).'
+    );
+    expect(setupLog).toContain(
+      'Step 4 (Run npm test) was interrupted: Durable Object reset because its code was updated.'
+    );
+    expect(await stepLog(s, jobs[0].id, 4)).toBe('ran npm test');
+  });
+
+  it('restarts when the runner reports its container stopped under the step', async () => {
+    const s = await setup();
+    await pushFiles(s, 'main', { '.github/workflows/ci.yml': CI });
+    const [queued] = (await runs(s.t, s.admin)).runs;
+    let n = 0;
+    const h = harness(s.t, (r) =>
+      script(r) === 'echo building' && n++ === 0
+        ? { exitCode: 137, interrupted: 'The runner container stopped' }
+        : {}
+    );
+    expect(await h.run(queued.id)).toBe('success');
+    expect(h.boots).toHaveLength(2);
+  });
+
+  it('never retries a step that failed on its own', async () => {
+    const s = await setup();
+    await pushFiles(s, 'main', { '.github/workflows/ci.yml': CI });
+    const [queued] = (await runs(s.t, s.admin)).runs;
+    const h = harness(s.t, (r) =>
+      script(r) === 'npm test' ? { exitCode: 1, log: 'tests failed' } : {}
+    );
+    expect(await h.run(queued.id)).toBe('failure');
+    expect(h.boots).toHaveLength(1);
+    expect(ranScripts(h).filter((x) => x === 'npm test')).toHaveLength(1);
+    const { jobs } = await runDetail(s.t, s.admin, 1);
+    expect(await stepLog(s, jobs[0].id, 1)).not.toContain('Restarted');
+  });
+
+  it('gives up after three interrupted attempts with a clear message', async () => {
+    const s = await setup();
+    await pushFiles(s, 'main', { '.github/workflows/ci.yml': CI });
+    const [queued] = (await runs(s.t, s.admin)).runs;
+    const h = harness(s.t, (r) => {
+      if (script(r) === 'echo building')
+        throw new Error('Network connection lost.');
+      return {};
+    });
+    expect(await h.run(queued.id)).toBe('failure');
+    expect(h.boots).toHaveLength(3);
+    expect(ranScripts(h).filter((x) => x === 'echo building')).toHaveLength(3);
+    // The last attempt does not go on to run steps on a runner that is gone.
+    expect(ranScripts(h)).not.toContain('npm test');
+    const { run, jobs } = await runDetail(s.t, s.admin, 1);
+    expect(run).toMatchObject({ status: 'completed', conclusion: 'failure' });
+    expect(jobs[0].steps.map((x) => x.conclusion)).toEqual([
+      'success',
+      'success',
+      'failure',
+      'skipped',
+      'success',
+    ]);
+    expect(await stepLog(s, jobs[0].id, 1)).toContain(
+      'Restarted after the runner was interrupted (attempt 3 of 3).'
+    );
+    const log = await stepLog(s, jobs[0].id, 3);
+    expect(log).toContain('Error: Network connection lost.');
+    expect(log).toContain(
+      'The runner was interrupted on all 3 attempts, so the job was not restarted again.'
+    );
+  });
+
+  it('does not restart a job whose run was cancelled', async () => {
+    const s = await setup();
+    await pushFiles(s, 'main', { '.github/workflows/ci.yml': CI });
+    const [queued] = (await runs(s.t, s.admin)).runs;
+    const h = harness(s.t, async (r) => {
+      if (script(r) === 'npm test') {
+        const res = await call(
+          s.t,
+          '/api/repos/octocat/app/actions/runs/1/cancel',
+          { cookie: s.admin, method: 'POST' }
+        );
+        expect(res.status).toBe(200);
+        // Cancelling destroys the container under the running step.
+        throw new Error('The runner container is no longer running');
+      }
+      return {};
+    });
+    expect(await h.run(queued.id)).toBe('cancelled');
+    expect(h.boots).toHaveLength(1);
+    expect(ranScripts(h).filter((x) => x === 'npm test')).toHaveLength(1);
+    const { run, jobs } = await runDetail(s.t, s.admin, 1);
+    expect(run).toMatchObject({ status: 'completed', conclusion: 'cancelled' });
+    expect(jobs[0].conclusion).toBe('cancelled');
   });
 });
 
