@@ -18,7 +18,7 @@
     "db:migrate:prod": "wrangler d1 migrations apply DB --remote",
     "db:studio:dev": "drizzle-kit studio",
     "tail": "wrangler tail --format=pretty",
-    "test": "vitest run --config worker/vitest.config.ts",
+    "test": "vitest run --config worker/vitest.config.ts --max-workers=1 --no-isolate",
     "test:watch": "vitest --config worker/vitest.config.ts",
     "format": "prettier --write .",
     "format:check": "prettier --check .",
