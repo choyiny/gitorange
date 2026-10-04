@@ -42,13 +42,20 @@ const LOCKFILE =
 /** Diff text sent to summarize one file; a larger file is flagged instead. */
 const MAX_SUMMARY_DIFF = 200 * 1024;
 /** Diff text sent to investigate one flag; the rest is listed but left out. */
-const MAX_INVESTIGATE_DIFF = 400 * 1024;
+const MAX_INVESTIGATE_DIFF = 120 * 1024;
+/** One file's share of that: a huge file shows its start and is listed as cut. */
+const MAX_INVESTIGATE_FILE = 24 * 1024;
 /** Files summarized at once. */
 const SUMMARY_BATCH = 8;
 
 const MODEL_RETRIES: WorkflowStepConfig = {
   retries: { limit: 3, delay: '5 seconds', backoff: 'exponential' },
   timeout: '5 minutes',
+};
+/** One investigation: a bigger prompt than a summary, so more time, and fewer retries. */
+const INVESTIGATE_RETRIES: WorkflowStepConfig = {
+  retries: { limit: 2, delay: '10 seconds', backoff: 'exponential' },
+  timeout: '8 minutes',
 };
 
 /** The current classification of a pull request's head commit under a policy version. */
@@ -266,7 +273,12 @@ async function composeDetail(
   out: Investigation
 ): Promise<string> {
   const parts = [out.detail];
-  if (out.diagram) parts.push('```mermaid\n' + out.diagram + '\n```');
+  // A diagram needs more than its type line ("erDiagram") to be worth drawing.
+  if (
+    out.diagram &&
+    out.diagram.split('\n').filter((l) => l.trim()).length >= 2
+  )
+    parts.push('```mermaid\n' + out.diagram + '\n```');
   for (const s of out.snippets) {
     const ch = changes.find((c) => c.path === s.path);
     if (!ch) continue;
@@ -419,32 +431,70 @@ function describeFlag(policy: ReviewPolicy, f: NewFlag): string {
   return `Review question "${f.key}": ${q.ask}`;
 }
 
-/** Diffs for the investigating model: the given files first, within the size budget. */
-async function diffsFor(
+/** Generated files: their diffs are noise to a reviewer; their one-line summaries say enough. */
+const GENERATED =
+  /(^|\/)(migrations\/meta\/[^/]+\.json|worker-configuration\.d\.ts|[^/]+\.snap)$/;
+
+/** Source before tests, docs, and config: what a reviewer would read first. */
+function readingOrder(path: string): number {
+  if (/(^|\/)(__tests__|test|tests)\/|\.test\.[jt]sx?$/.test(path)) return 2;
+  if (/\.(md|mdx|txt)$/i.test(path) || path.startsWith('docs/')) return 3;
+  return 1;
+}
+
+/**
+ * Diffs for the investigating model, within a budget it can read quickly: the flag's own files
+ * first, then source, tests, and docs. Generated files and lockfiles are left out, and each file
+ * is capped; whatever doesn't fit is named so the model knows it exists (its one-line summary is
+ * in the prompt too).
+ */
+export async function diffsFor(
   git: GitService,
   changes: FileChange[],
-  first: string[]
+  first: string[],
+  /** Read only `first` (the files picked as relevant); list the rest by name. */
+  only = false
 ): Promise<string> {
-  const order = [
-    ...changes.filter((c) => first.includes(c.path)),
-    ...changes.filter((c) => !first.includes(c.path)),
-  ];
+  const skipped: string[] = [];
+  const unpicked: string[] = [];
+  const order = changes
+    .filter((c) => {
+      const noise = GENERATED.test(c.path) || LOCKFILE.test(c.path);
+      if (noise) skipped.push(c.path);
+      else if (only && !first.includes(c.path)) unpicked.push(c.path);
+      return !noise && !(only && !first.includes(c.path));
+    })
+    .sort(
+      (a, b) =>
+        Number(!first.includes(a.path)) - Number(!first.includes(b.path)) ||
+        readingOrder(a.path) - readingOrder(b.path)
+    );
   let out = '';
-  let left = 0;
-  for (const [i, ch] of order.entries()) {
+  const left: string[] = [];
+  for (const ch of order) {
+    if (out.length >= MAX_INVESTIGATE_DIFF) {
+      left.push(ch.path);
+      continue;
+    }
     const [d] = await git.fileDiffs([ch]);
-    const body =
+    let body =
       d.binary || d.tooLarge
         ? '(binary or too large to show)'
         : renderNumberedDiff(d) || '(no textual change)';
+    if (body.length > MAX_INVESTIGATE_FILE)
+      body = `${body.slice(0, MAX_INVESTIGATE_FILE)}\n… (the rest of this file's diff is not shown)`;
     const block = `--- ${ch.path} (${ch.status})\n${body}\n\n`;
-    if (out.length + block.length > MAX_INVESTIGATE_DIFF) {
-      left = order.length - i;
-      break;
-    }
-    out += block;
+    if (out.length + block.length > MAX_INVESTIGATE_DIFF) left.push(ch.path);
+    else out += block;
   }
-  return left ? `${out}(${left} more changed files not shown)` : out;
+  const notes = [
+    unpicked.length &&
+      `Not shown (judged unrelated to this flag from their summaries): ${unpicked.join(', ')}`,
+    skipped.length &&
+      `Generated files and lockfiles, not shown: ${skipped.join(', ')}`,
+    left.length && `Not shown (over the size budget): ${left.join(', ')}`,
+  ].filter(Boolean);
+  return notes.length ? `${out}${notes.join('\n')}` : out;
 }
 
 export interface ReviewDeps {
@@ -636,14 +686,27 @@ export async function executeClassification(deps: ReviewDeps, id: string) {
   await Promise.all(
     toInvestigate.map(({ f, flagId }, i) =>
       step
-        .do(`investigate:${i}`, MODEL_RETRIES, async () => {
+        .do(`investigate:${i}`, INVESTIGATE_RETRIES, async () => {
+          const flag = describeFlag(policy, f);
+          // Read only the files that matter for this flag, picked from the one-liners by the
+          // fast model; on any failure, read them all (within the budget).
+          const picked = models.selectFiles
+            ? await models
+                .selectFiles({
+                  flag,
+                  summaries,
+                  paths: changes.map((c) => c.path),
+                })
+                .catch(() => [] as string[])
+            : [];
+          const focus = picked.length ? picked : f.paths;
           const out = await models.investigate({
-            flag: describeFlag(policy, f),
+            flag,
             title: pr.title,
             description: pr.body,
             summaries,
-            diffs: await diffsFor(git, changes, f.paths),
-            paths: f.paths,
+            diffs: await diffsFor(git, changes, focus, picked.length > 0),
+            paths: focus,
           });
           const changed = new Set(changes.map((c) => c.path));
           await db

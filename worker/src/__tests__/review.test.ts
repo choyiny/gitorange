@@ -740,6 +740,97 @@ describe('code excerpts for flags', () => {
       diagram: null,
       snippets: [],
       paths: ['x'],
+      raw: true,
     });
+    // An answer cut off mid-JSON (the model ran out of room) still yields its explanation…
+    const cut = parseInvestigation(
+      '{"detail":"Adds a table.\\n- Migrate first.","diagram":"erDiagram\\n  A {\\n    text id PK\\n  }","snippets":[{"path":"migrations/0008.sql","sta',
+      []
+    );
+    expect(cut).toMatchObject({
+      detail: 'Adds a table.\n- Migrate first.',
+      diagram: 'erDiagram\n  A {\n    text id PK\n  }',
+      snippets: [],
+    });
+    expect(cut.raw).toBeUndefined();
+    // …and a JSON blob with nothing usable is never shown as the explanation.
+    expect(parseInvestigation('{"detail": "half a sen', [])).toMatchObject({
+      detail: '',
+      raw: true,
+    });
+  });
+});
+
+describe('what the investigating model reads', () => {
+  it('leaves out generated files and lockfiles, caps huge diffs, and reads source first', async () => {
+    const { diffsFor } = await import('../review/classify');
+    const { ArtifactsRepoClient } = await import('../git/remote');
+    const { GitService } = await import('../git/service');
+    const { createFakeArtifacts } = await import('./helpers/fake-artifacts');
+    const fake = createFakeArtifacts();
+    await fake.binding.create('r');
+    const repo = fake.repos.get('r')!;
+    const base = await commitPaths(repo, 'main', { 'src/a.ts': 'a\n' }, 'base');
+    const huge = Array.from({ length: 4000 }, (_, i) => `line ${i}`).join('\n');
+    const head = await commitPaths(
+      repo,
+      'main',
+      {
+        'src/a.ts': 'a\nb\n',
+        'docs/guide.md': 'guide\n',
+        'worker/src/__tests__/a.test.ts': 'test\n',
+        'migrations/meta/0008_snapshot.json': huge,
+        'yarn.lock': 'lock\n',
+        'src/big.ts': huge,
+      },
+      'change'
+    );
+    const git = new GitService(new ArtifactsRepoClient(fake.binding, 'r'));
+    const [from, to] = await Promise.all([git.commit(base), git.commit(head)]);
+    const changes = await git.diffTrees(from!.treeHash, to!.treeHash);
+    const text = await diffsFor(git, changes, []);
+    expect(text).not.toContain('--- migrations/meta/0008_snapshot.json');
+    expect(text).not.toContain('--- yarn.lock');
+    expect(text).toContain(
+      'Generated files and lockfiles, not shown: migrations/meta/0008_snapshot.json, yarn.lock'
+    );
+    expect(text).toContain("(the rest of this file's diff is not shown)");
+    // Source, then tests, then docs.
+    const at = (p: string) => text.indexOf(`--- ${p}`);
+    expect(at('src/a.ts')).toBeLessThan(at('worker/src/__tests__/a.test.ts'));
+    expect(at('worker/src/__tests__/a.test.ts')).toBeLessThan(
+      at('docs/guide.md')
+    );
+    expect(text.length).toBeLessThan(130 * 1024);
+  });
+});
+
+describe('investigations read only the relevant files', () => {
+  it('investigates only the files the fast model picked, and drops empty diagrams', async () => {
+    const { t, admin } = await pullWith({
+      'migrations/1.sql': 'CREATE TABLE x (id TEXT);\n',
+      'src/unrelated.ts': 'export const u = 1;\n',
+    });
+    const { models, calls } = fakeModels(DATA_CHANGE);
+    const asked: string[] = [];
+    models.selectFiles = async ({ paths }) => {
+      asked.push(...paths);
+      return ['migrations/1.sql', 'not/a/changed/file.ts'];
+    };
+    const investigate = models.investigate;
+    models.investigate = async (req) => ({
+      ...(await investigate(req)),
+      diagram: 'erDiagram',
+    });
+    await runReviews(t, models);
+    expect(asked.sort()).toEqual(['migrations/1.sql', 'src/unrelated.ts']);
+    const req = calls.investigated[0];
+    expect(req.diffs).toContain('--- migrations/1.sql');
+    expect(req.diffs).not.toContain('--- src/unrelated.ts');
+    expect(req.diffs).toContain(
+      'Not shown (judged unrelated to this flag from their summaries): src/unrelated.ts'
+    );
+    const flag = (await review(t, admin)).review!.flags[0];
+    expect(flag.detail).not.toContain('```mermaid');
   });
 });
