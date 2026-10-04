@@ -18,6 +18,7 @@ Tell the user this before touching anything, so they can back out cheaply:
 - **~15 minutes**, longer if their sending domain still needs DNS verification.
 - **One decision**: which hostname the instance runs on (custom domain or `*.workers.dev`), and which email domain sends invitations.
 - **Cost**: the Cloudflare **Workers Paid** plan (about 5 USD/month) is required, because Artifacts is not on Workers Free. It includes 10,000 Artifacts operations and 1 GB of storage per month; beyond that, 0.15 USD per 1,000 operations and 0.50 USD per GB-month.
+- **Usage-based extras**, billed only when used: Actions jobs run as Cloudflare Containers (about 0.0024 USD per minute on the default runner, after the plan's included minutes); AI conflict resolution and the auto-merge review use Workers AI (per token); LFS files and the Actions cache are R2 storage. Every AI call goes through an AI Gateway named `default`, created automatically, so its logs show exactly what AI costs.
 
 <!-- Never write a dollar sign followed by a digit in this file: Claude Code replaces those with the skill arguments. Write amounts as "5 USD". -->
 
@@ -75,7 +76,7 @@ Ask which listed domain should send invitation emails, and the address to use (e
 
 Restate, then wait for an explicit yes:
 
-> You've confirmed account `<name>` (`<id>`) is on Workers Paid with Artifacts access, and invites will come from `<FROM_EMAIL>`. I'm about to create a D1 database named `gitorange-db` and R2 buckets named `gitorange-lfs`, `gitorange-actions-logs`, and `gitorange-actions-cache`, deploy a worker named `gitorange`, and set its auth secret. Ready?
+> You've confirmed account `<name>` (`<id>`) is on Workers Paid with Artifacts access, and invites will come from `<FROM_EMAIL>`. I'm about to create a D1 database named `gitorange-db` and R2 buckets named `gitorange-lfs`, `gitorange-actions-logs`, and `gitorange-actions-cache`, deploy a worker named `gitorange` (with its Actions containers, Durable Objects, and Workflows), and set its auth secret. AI calls will be logged in the AI Gateway `default`, which Cloudflare creates on first use. Ready?
 
 ## Deployment steps
 
@@ -120,10 +121,11 @@ Fill in the top level (production):
 - `routes` — uncomment with the custom hostname, keep `custom_domain: true` (custom domain only)
 - `vars.BASE_URL`, `vars.FROM_EMAIL`
 - `vars.R2_ACCOUNT_ID` — the same account ID (keep `LFS_BUCKET_NAME` as `gitorange-lfs` unless they named the bucket differently)
+- Leave the AI defaults (`RESOLVER_MODEL`, `SUMMARY_MODEL`, `REVIEW_MODEL`, `AI_GATEWAY: "default"`) unless the user asks; `AI_GATEWAY: "off"` calls Workers AI without a gateway.
 
 Also replace the `FROM_EMAIL` and `R2_ACCOUNT_ID` placeholders in `env.dev.vars` so local development works later.
 
-Do not rename bindings — the code looks them up by name: `DB`, `ARTIFACTS`, `EMAIL`, `LFS`, `ACTIONS_LOGS`, `ACTIONS_CACHE`, `ACTIONS_RUN`, `JOB_RUNNER`, `ASSETS`. Keep the `containers`, `durable_objects`, `exports`, and `workflows` entries as shipped: they run GitOrange Actions. Keep `assets.run_worker_first` as shipped; the git endpoint depends on it. `wrangler.jsonc` is gitignored; never commit it.
+Do not rename bindings — the code looks them up by name: `DB`, `ARTIFACTS`, `EMAIL`, `LFS`, `ACTIONS_LOGS`, `ACTIONS_CACHE`, `ACTIONS_RUN`, `JOB_RUNNER`, `MERGE_RESOLVER`, `MERGE_RESOLUTION`, `LIVE`, `AI`, `ASSETS`. Keep the `containers`, `durable_objects`, `exports`, `workflows`, and `ai` entries as shipped: they run Actions, AI conflict resolution, the auto-merge review, and live page updates. Keep `assets.run_worker_first` as shipped; the git endpoint depends on it. `wrangler.jsonc` is gitignored; never commit it.
 
 ### Step 4: Migrate and deploy
 
@@ -159,6 +161,13 @@ If they chose workers.dev, set `vars.BASE_URL` to the URL `yarn deploy` printed 
 4. If the R2 secrets are set and they have [git-lfs](https://git-lfs.com) installed: in the clone, `git lfs install && git lfs track "*.bin"`, add a file, commit, and `git push`. The file's page in the UI should say **Stored with Git LFS** and offer a download.
 5. Have them invite themselves at a second address (**+ → Invite member**) and confirm the email arrives. If it doesn't, the `FROM_EMAIL` domain isn't verified for Email Sending — the invite link on the admin page still works meanwhile.
 
+Optional, once the basics work (point them to the docs rather than doing it for them):
+
+6. **Commit attribution:** under **avatar → Settings → Emails**, add any other address they commit with and click the verification link, so their commits link to their profile.
+7. **AI tools (MCP):** **avatar → MCP server** shows the command for their client, e.g. `claude mcp add --transport http gitorange <BASE_URL>/mcp`.
+8. **Actions:** a workflow file in `.github/workflows/` (GitHub Actions syntax) runs on pushes and pull requests; the run shows under the repository's **Actions** tab.
+9. **Auto-merge:** a `.gitorange/review.yml` on the default branch turns on the AI review and auto-merge for that repository, and `.orangeignore` keeps generated files out of it. See `docs/auto-merge.md`; GitOrange's own `.gitorange/review.yml` is a working example.
+
 ## Completion summary
 
 Report, with real values substituted:
@@ -169,8 +178,10 @@ Report, with real values substituted:
 - Invitations sent from `<FROM_EMAIL>` (binding `EMAIL`)
 - R2 bucket `gitorange-lfs` (binding `LFS`) for Git LFS — R2 secrets `<set | not set yet>`
 - GitOrange Actions: Workflow `gitorange-actions-run`, `JobRunner` containers, logs in R2 bucket `gitorange-actions-logs`, cache in `gitorange-actions-cache`
+- AI: conflict resolution and auto-merge review on Workers AI (Workflow `gitorange-merge-resolution`, `MergeResolver` Durable Object), logged in AI Gateway `<AI_GATEWAY>`
+- Live updates: `LiveHub` Durable Object (binding `LIVE`)
 - Admin account `<username>`
-- To update later: `git pull && yarn install && yarn db:migrate:prod && yarn deploy`
+- To update later: `git pull && yarn install && yarn db:migrate:prod && yarn deploy`. A deploy restarts running Actions jobs (each restarts from the beginning, up to 3 attempts), so prefer deploying when no CI is running.
 
 ## Common issues
 
@@ -181,3 +192,6 @@ Report, with real values substituted:
 - **`git push` 403** — the user isn't owner, site admin, or collaborator on that repository.
 - **`git lfs push` says LFS isn't configured** — `R2_ACCESS_KEY_ID` / `R2_SECRET_ACCESS_KEY` aren't set.
 - **LFS upload fails with `SignatureDoesNotMatch` / `AccessDenied`** — the R2 token lacks Object Read & Write on the bucket, or `R2_ACCOUNT_ID` / `LFS_BUCKET_NAME` don't match it.
+- **`wrangler deploy` says it "could not finish applying its Durable Object-managed Container application settings"** — the Worker itself deployed; run `yarn deploy` again to finish.
+- **Actions jobs never start** — Docker wasn't running when the runner image was built (Checkpoint 1.5), or the `containers` entry was removed.
+- **No AI resolution or auto-merge review** — the `ai` binding or the `MERGE_RESOLUTION` Workflow is missing, or (for review) the repository has no `.gitorange/review.yml` on its default branch.

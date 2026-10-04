@@ -35,7 +35,7 @@ yarn wrangler r2 bucket create gitorange-actions-cache
 yarn wrangler r2 bucket lifecycle add gitorange-actions-cache expire-7d --expire-days 7 -y
 ```
 
-Copy the `database_id` it prints. The second bucket holds Actions step logs. You don't need to create anything in Artifacts: the namespace is created automatically with the first repository.
+Copy the `database_id` it prints. `gitorange-actions-logs` holds Actions step logs, and `gitorange-actions-cache` holds the Actions cache (its lifecycle rule expires entries after 7 days). You don't need to create anything in Artifacts: the namespace is created automatically with the first repository.
 
 Git LFS clients upload and download directly to R2 with pre-signed URLs, which need an R2 API token. In the dashboard, open **R2 → Manage API tokens → Create API token**, choose **Object Read & Write**, scope it to the `gitorange-lfs` and `gitorange-actions-cache` buckets (the Actions cache uses pre-signed URLs too), and keep the **Access Key ID** and **Secret Access Key** for step 6.
 
@@ -53,6 +53,8 @@ Fill in:
 - `vars.FROM_EMAIL` — an address on your Email Sending domain, e.g. `noreply@example.com`.
 - `vars.R2_ACCOUNT_ID` — your account ID again (pre-signed LFS URLs point at `https://<account>.r2.cloudflarestorage.com`).
 - `routes` — uncomment and set `pattern` to your hostname if you're using a custom domain.
+
+Leave the AI variables at their defaults unless you want different models. `AI_GATEWAY: "default"` logs every Workers AI call (requests, tokens, cost) in an AI Gateway that Cloudflare creates on first use; set it to `"off"` to skip the gateway. Keep the `containers`, `durable_objects`, `exports`, `workflows`, and `ai` entries as shipped: they run Actions, AI conflict resolution, the auto-merge review, and live page updates.
 
 `wrangler.jsonc` is gitignored, so your IDs stay out of the repository. See [Configuration](configuration.md) for every key.
 
@@ -88,6 +90,16 @@ Then:
    git push -u origin main   # username: anything, password: the token
    ```
 
+## Linking commits to people
+
+Commits link to a member's profile when their author email matches the member's account email or a verified alternate. Each member adds the addresses they commit with under **avatar → Settings → Emails** and clicks the verification link they're sent.
+
+## Actions and auto-merge
+
+- **Actions:** workflow files in `.github/workflows/` (GitHub Actions syntax) run on pushes and pull requests, each job in its own container. See the repository's **Actions** tab.
+- **Auto-merge:** add a `.gitorange/review.yml` to a repository's default branch to turn on the AI review: pull requests that pass CI and raise no flags merge on their own, and flagged ones wait for a person on the **Approvals** page. `.orangeignore` keeps generated files out of the review. See [Auto-merge](auto-merge.md).
+- **AI conflict resolution** needs no setup: conflicting pull requests are resolved automatically.
+
 ## Connecting AI tools (MCP)
 
 Nothing to configure. Each member opens **avatar → MCP server** for their client's setup steps, e.g. `claude mcp add --transport http gitorange https://git.example.com/mcp`, then signs in and approves the app in the browser. MCP clients need to reach your instance over HTTPS.
@@ -113,6 +125,8 @@ yarn db:migrate:prod
 yarn deploy
 ```
 
+Run the migrations before the deploy: new code may read new tables. A deploy restarts any running Actions jobs (each restarts from the beginning, up to 3 attempts), so CI just takes longer; deploying when nothing is running avoids that.
+
 ## Troubleshooting
 
 - **`Access denied [code: 10004]` from Artifacts** — `account_id` points at a different account than the one you're logged into, the account isn't on Workers Paid, or your API token lacks Artifacts permissions (re-run `yarn wrangler login`).
@@ -121,3 +135,6 @@ yarn deploy
 - **`git clone` keeps asking for a password** — use a personal access token, not your account password.
 - **`git lfs push` says LFS isn't configured** — set `R2_ACCESS_KEY_ID` and `R2_SECRET_ACCESS_KEY` (step 6).
 - **LFS uploads fail with `403 SignatureDoesNotMatch` or `AccessDenied`** — the R2 token doesn't have Object Read & Write on the bucket named in `LFS_BUCKET_NAME`, or `R2_ACCOUNT_ID` is wrong.
+- **`wrangler deploy` says it "could not finish applying its Durable Object-managed Container application settings"** — the Worker deployed; run `yarn deploy` again to finish.
+- **Actions jobs never start** — Docker wasn't running when you deployed, so the runner image wasn't built.
+- **No AI resolution or auto-merge review** — the `ai` binding or the `MERGE_RESOLUTION` Workflow is missing, or (for review) the repository has no `.gitorange/review.yml` on its default branch.
