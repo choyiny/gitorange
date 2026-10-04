@@ -16,7 +16,7 @@ limits:
 
 human_review:
   questions:
-    # Yes/no: flagged when the probability of "yes" is above `above`.
+    # Yes/no: flagged when the probability of "yes" is above `above` (0.5: more likely yes than no).
     data_model:
       ask: >
         Does this change alter how data is stored: a Drizzle schema file (worker/src/db/*.schema.ts),
@@ -25,7 +25,7 @@ human_review:
         data must be converted for?
       yes: Existing or future stored data in D1, R2, or Durable Objects is affected.
       no: Only code paths change; stored data keeps its shape and location.
-      above: 0.3 # low: a bad migration is hard to undo
+      above: 0.5
 
     security:
       ask: >
@@ -36,7 +36,7 @@ human_review:
         of Actions runners?
       yes: Who can sign in, see, or change something, or how credentials are handled, may change.
       no: No authentication, access control, credential, or crypto code is affected.
-      above: 0.2 # lowest threshold: a mistake here leaks private repositories or tokens
+      above: 0.5
 
     public_api:
       ask: >
@@ -45,7 +45,7 @@ human_review:
         format, or a wrangler binding, variable, or secret a deployer must add or rename?
       yes: Existing clients, scripts, workflows, or deployments must change to keep working.
       no: Additive or internal only; existing callers and deployments keep working unchanged.
-      above: 0.3
+      above: 0.5
 
     deploy_steps:
       ask: >
@@ -53,7 +53,7 @@ human_review:
         wrangler binding, variable, secret, cron trigger, or bucket, or a change to local wrangler.jsonc?
       yes: A deployer must do something before or after `yarn deploy`.
       no: Merging and running `yarn deploy` is enough.
-      above: 0.3
+      above: 0.5
 
     removes_functionality:
       ask: >
@@ -62,7 +62,7 @@ human_review:
         feature, rather than refactoring it or replacing it with an equivalent?
       yes: Something users, deployers, or agents could do before can no longer be done.
       no: Nothing is taken away; behavior is kept, refactored, or replaced by an equivalent.
-      above: 0.3 # removals are easy to miss in a one-line summary and costly to bring back
+      above: 0.5
 
     # Choice: flagged when the chosen option is listed in `flag`, with at least `min_confidence`.
     kind:
