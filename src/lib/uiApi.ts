@@ -107,6 +107,8 @@ export type Pull = {
   headRef: string;
   mergeCommitSha: string | null;
   mergedBy: User | null;
+  /** GitOrange merged it on its own (auto-merge); mergedBy is then null. */
+  mergedAutomatically: boolean;
   mergedAt: string | null;
   closedAt: string | null;
   createdAt: string;
@@ -135,7 +137,63 @@ export type PullDetail = {
   resolvedByAi: boolean;
   aiResolution: boolean;
   resolution: MergeResolution | null;
+  /** Auto-merge review; null when the target branch has no .gitorange/review.yml. */
+  review: PullReview | null;
   canMerge: boolean;
+};
+export type ClassifierAnswer =
+  | { type: 'noul'; value: number }
+  | {
+      type: 'choice' | 'score';
+      value: string | number;
+      confidence: number;
+      probabilities: Record<string, number>;
+    };
+export type ReviewFlag = {
+  id: string;
+  source: 'question' | 'path' | 'limit';
+  key: string;
+  title: string;
+  value: unknown;
+  paths: string[];
+  detail: string | null;
+  detailModel: string | null;
+  approvedBy: User | null;
+  approvedAt: string | null;
+};
+export type PullReview = {
+  classification: {
+    id: string;
+    status: 'summarizing' | 'classifying' | 'investigating' | 'done' | 'failed';
+    verdict: 'auto' | 'human' | null;
+    headSha: string;
+    summaryModel: string;
+    classifierModel: string;
+    files: {
+      path: string;
+      status: 'added' | 'removed' | 'modified';
+      additions: number;
+      deletions: number;
+      summary: string;
+    }[];
+    errorMessage: string | null;
+    durationMs: number | null;
+    createdAt: string;
+  } | null;
+  questions: {
+    id: string;
+    ask: string;
+    type: 'noul' | 'choice' | 'score';
+    threshold: string;
+    answer: ClassifierAnswer | null;
+    flagged: boolean;
+  }[];
+  flags: ReviewFlag[];
+  autoMerge: {
+    state: 'off' | 'disabled' | 'waiting' | 'blocked' | 'ready';
+    reasons: string[];
+    disabledAt: string | null;
+  };
 };
 export type MergeResolution = {
   id: string;
@@ -432,6 +490,17 @@ export const api = {
   rejectResolution: (o: string, n: string, num: number, id: string) =>
     apiFetch(`${r(o, n)}/pulls/${num}/resolutions/${id}/reject`, {
       method: 'POST',
+    }),
+  approveFlag: (o: string, n: string, num: number, id: string) =>
+    apiFetch(`${r(o, n)}/pulls/${num}/review/flags/${id}/approve`, {
+      method: 'POST',
+    }),
+  retryReview: (o: string, n: string, num: number) =>
+    apiFetch(`${r(o, n)}/pulls/${num}/review/retry`, { method: 'POST' }),
+  setAutoMerge: (o: string, n: string, num: number, enabled: boolean) =>
+    apiFetch(`${r(o, n)}/pulls/${num}/auto-merge`, {
+      method: 'PUT',
+      json: { enabled },
     }),
   comment: (o: string, n: string, num: number, body: string) =>
     apiFetch<Comment>(`${r(o, n)}/pulls/${num}/comments`, {
