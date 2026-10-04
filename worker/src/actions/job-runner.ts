@@ -90,6 +90,14 @@ export class JobRunner
         throw new Error('The runner did not start within 3 minutes');
       await new Promise((r) => setTimeout(r, 250));
     }
+    // Cloudflare's microVM leaves `/` owned by an unmapped user, not root. Tools that check
+    // their parent directories for safety refuse to run under it (e.g. @swc/core: "cache root
+    // has a parent writable by another user"), so give it back to root, as on GitHub's runners.
+    // Best effort: a job still runs if this fails.
+    await this.container
+      .exec(['chown', '0:0', '/'])
+      .then((p) => p.exitCode)
+      .catch((e) => console.warn('[actions] chown / failed', e));
     return { ms: Date.now() - t };
   }
 
