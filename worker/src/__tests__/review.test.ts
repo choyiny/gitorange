@@ -11,7 +11,8 @@ import type {
   InvestigateRequest,
   ReviewModels,
 } from '../review/models';
-import { parsePolicy, PolicyError } from '../review/policy';
+import { parsePolicy, PolicyError, questionType } from '../review/policy';
+import OWN_POLICY from '../../../.gitorange/review.yml?raw';
 import {
   addMember,
   bootstrapAdmin,
@@ -221,6 +222,15 @@ describe('review.yml', () => {
     expect(() =>
       parsePolicy('human_review:\n  paths: [migrations/**]\n')
     ).toThrow(/human_review.paths is no longer supported/);
+  });
+
+  it("accepts this repository's own .gitorange/review.yml", () => {
+    const p = parsePolicy(OWN_POLICY);
+    expect(p.model).toBe('clef');
+    expect(p.checks.require).toBe('all');
+    const removes = p.human_review.questions.removes_functionality;
+    expect(removes).toBeDefined();
+    expect(questionType(removes)).toBe('noul');
   });
 });
 

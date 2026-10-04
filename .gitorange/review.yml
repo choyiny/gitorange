@@ -1,0 +1,81 @@
+# .gitorange/review.yml — GitOrange's own auto-merge policy.
+#
+# Read from the target branch (main), never from the pull request, so a pull request can't loosen its
+# own rules. A pull request merges on its own when its checks passed and nothing below is flagged (or
+# every flag was approved by someone who can merge). See docs/auto-merge.md.
+#
+# The questions are answered from one-line summaries of each changed file, not from raw diffs, so they
+# ask in plain terms about what must never slip through.
+model: clef # clef (27B) or clef-flash (9B, faster and cheaper)
+
+checks:
+  require: all # every Actions run for the commit passed (test, typecheck, format), and at least one ran
+
+limits:
+  max_files: 60 # more changed files than this: flagged for a person instead of reviewed
+
+human_review:
+  questions:
+    # Yes/no: flagged when the probability of "yes" is above `above`.
+    data_model:
+      ask: >
+        Does this change alter how data is stored: a Drizzle schema file (worker/src/db/*.schema.ts),
+        a SQL migration in migrations/, a D1 table, column, or index, the layout of R2 object keys
+        (LFS objects, Actions logs or cache), Durable Object storage, or a stored format that existing
+        data must be converted for?
+      yes: Existing or future stored data in D1, R2, or Durable Objects is affected.
+      no: Only code paths change; stored data keeps its shape and location.
+      above: 0.3 # low: a bad migration is hard to undo
+
+    security:
+      ask: >
+        Does this change touch authentication, authorization, secrets, or cryptography: better-auth
+        configuration or sessions, the OAuth provider or JWT verification for the MCP server, personal
+        access tokens or git/LFS Basic auth, the repository access checks (permissionsFor, visibleTo,
+        collaborators, site admins), Artifacts or R2 credentials and pre-signed URLs, or the isolation
+        of Actions runners?
+      yes: Who can sign in, see, or change something, or how credentials are handled, may change.
+      no: No authentication, access control, credential, or crypto code is affected.
+      above: 0.2 # lowest threshold: a mistake here leaks private repositories or tokens
+
+    public_api:
+      ask: >
+        Does this change break something callers or deployers rely on: a REST endpoint under /api, the
+        git or LFS HTTP protocol, an MCP tool's name or arguments, the review.yml or workflow file
+        format, or a wrangler binding, variable, or secret a deployer must add or rename?
+      yes: Existing clients, scripts, workflows, or deployments must change to keep working.
+      no: Additive or internal only; existing callers and deployments keep working unchanged.
+      above: 0.3
+
+    removes_functionality:
+      ask: >
+        Does this change remove or disable existing user-visible functionality: a page or UI action, an
+        API endpoint, an MCP tool, a CLI or configuration option, or a supported workflow or Actions
+        feature, rather than refactoring it or replacing it with an equivalent?
+      yes: Something users, deployers, or agents could do before can no longer be done.
+      no: Nothing is taken away; behavior is kept, refactored, or replaced by an equivalent.
+      above: 0.3 # removals are easy to miss in a one-line summary and costly to bring back
+
+    # Choice: flagged when the chosen option is listed in `flag`, with at least `min_confidence`.
+    kind:
+      ask: What kind of change is this, mostly?
+      options:
+        docs: Documentation, comments, or README only.
+        tests: Tests only.
+        fix: A bug fix that doesn't change intended behavior.
+        feature: New user-visible behavior.
+        infra: >
+          Build, CI, deployment, or dependency changes: package.json or yarn.lock, wrangler templates,
+          workflow files, the Actions runner image (actions/runner/Dockerfile), or deploy scripts.
+      flag: [infra]
+      min_confidence: 0.5
+
+    # Score: flagged when the score (levels numbered from 0) reaches `at_least`.
+    risk:
+      ask: How risky is it to ship this change without a person reading it?
+      levels:
+        - Trivial. Docs, comments, test-only, or formatting.
+        - Low. Small, local change with obvious behavior.
+        - Moderate. Touches shared code (git service, merging, review, Actions, live updates) or behavior tests may not cover.
+        - High. Broad, subtle, or hard to undo.
+      at_least: 2 # flagged from "Moderate" up

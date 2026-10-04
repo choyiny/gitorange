@@ -83,6 +83,14 @@ human_review:
       ask: Does this change touch authentication, authorization, secrets, or cryptography?
       above: 0.2
 
+    removes_functionality:
+      ask: >
+        Does this change remove or disable existing user-visible functionality, an API endpoint, or a
+        configuration option, rather than refactoring it or replacing it with an equivalent?
+      yes: Something users could do before can no longer be done.
+      no: Nothing is taken away; behavior is kept or replaced by an equivalent.
+      above: 0.3
+
     # Choice: flagged when the chosen option is listed in `flag`, with at least `min_confidence`.
     kind:
       ask: What kind of change is this, mostly?
