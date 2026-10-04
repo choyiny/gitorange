@@ -45,6 +45,8 @@
     { "name": "gitorange-actions-run", "binding": "ACTIONS_RUN", "class_name": "ActionsRun" },
     { "name": "gitorange-merge-resolution", "binding": "MERGE_RESOLUTION", "class_name": "MergeResolutionWorkflow" }
   ],
+  // Daily housekeeping: deletes Actions runs past their retention (Site admin → Actions).
+  "triggers": { "crons": ["17 4 * * *"] },
   // Workers AI: AI conflict resolution (RESOLVER_MODEL) and auto-merge review (SUMMARY_MODEL,
   // REVIEW_MODEL, and the Clef model named in each repository's .gitorange/review.yml).
   "ai": { "binding": "AI" },

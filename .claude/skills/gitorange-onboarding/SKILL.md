@@ -181,6 +181,8 @@ Report, with real values substituted:
 - GitOrange Actions: Workflow `gitorange-actions-run`, `JobRunner` containers, logs in R2 bucket `gitorange-actions-logs`, cache in `gitorange-actions-cache`
 - AI: conflict resolution and auto-merge review on Workers AI (Workflow `gitorange-merge-resolution`, `MergeResolver` Durable Object), logged in AI Gateway `<AI_GATEWAY>`
 - Live updates: `LiveHub` Durable Object (binding `LIVE`)
+- Daily Cron Trigger (`triggers.crons`, kept as shipped): deletes Actions runs past their retention (Site admin → Settings, 90 days by default)
+- Instance name, invitation sender, and AI models can later be changed in Site admin → Settings without a deploy; the wrangler vars are only defaults
 - Admin account `<username>`
 - To update later: `git pull && yarn install && yarn db:migrate:prod && yarn deploy`. A deploy restarts running Actions jobs (each restarts from the beginning, up to 3 attempts), so prefer deploying when no CI is running.
 

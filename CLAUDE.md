@@ -53,6 +53,11 @@ and better-auth. Git storage is **Cloudflare Artifacts**: one Artifacts repo per
   WebSockets (`GET /api/live[?repo=o/n]`, channels `repo:<id>` and `approvals`); pages refetch through the API. Pings
   come from a middleware after successful repo mutations, `pingingSteps` around Workflow step runners, pushes, and
   `landPull`. The client (`src/lib/live.tsx`) invalidates `['repo', o, n]` / `['approvals']`.
+- Instance settings (`worker/src/lib/settings.ts`, D1 `instance_settings`, Site admin → Settings, `/api/admin/settings`):
+  a typed registry of keys (instance name, invitation sender, AI models, Actions retention), each defaulting to the
+  wrangler var it replaced or a built-in value. Read with `getSetting`/`getSettings` only where used, never per request;
+  deploy-time facts (BASE_URL, bucket names) stay in wrangler. A daily Cron Trigger (`scheduled()` in `index.ts`) runs
+  `runActionsRetention` (`worker/src/actions/retention.ts`).
 - Artifacts has no local emulator: `yarn dev` runs `env.dev`, which uses the remote service in the
   `gitorange-dev` namespace. Tests use `wrangler.test.jsonc` (no remote bindings) plus an in-memory
   Artifacts fake.

@@ -54,6 +54,8 @@ Fill in:
 - `vars.R2_ACCOUNT_ID` — your account ID again (pre-signed LFS URLs point at `https://<account>.r2.cloudflarestorage.com`).
 - `routes` — uncomment and set `pattern` to your hostname if you're using a custom domain.
 
+Keep `triggers.crons` as shipped: a daily job deletes Actions runs past their retention (set in **Site admin → Settings**, 90 days by default). `APP_NAME`, `FROM_EMAIL`, and the model variables are defaults that a site admin can change later in **Site admin → Settings** without a deploy.
+
 Leave the AI variables at their defaults unless you want different models. `AI_GATEWAY: "default"` logs every Workers AI call (requests, tokens, cost) in an AI Gateway that Cloudflare creates on first use; set it to `"off"` to skip the gateway. Keep the `containers`, `durable_objects`, `exports`, `workflows`, and `ai` entries as shipped: they run Actions, AI conflict resolution, the auto-merge review, and live page updates.
 
 `wrangler.jsonc` is gitignored, so your IDs stay out of the repository. See [Configuration](configuration.md) for every key.

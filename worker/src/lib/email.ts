@@ -1,4 +1,5 @@
-import { appName } from './app-name';
+import type { DrizzleDB } from '../db/middleware';
+import { getSettings } from './settings';
 
 function escapeHtml(s: string) {
   return s.replace(/[&<>"']/g, (ch) => `&#${ch.charCodeAt(0)};`);
@@ -11,17 +12,21 @@ export function emailConfigured(
   return Boolean(env.EMAIL && env.FROM_EMAIL);
 }
 
+/** The instance name and sender, from Site admin settings (defaults: APP_NAME, FROM_EMAIL). */
+async function identity(db: DrizzleDB, env: CloudflareBindings) {
+  const s = await getSettings(db, env, ['app.name', 'email.from']);
+  return { app: s['app.name'], from: s['email.from'] };
+}
+
 async function send(
   env: CloudflareBindings,
+  from: { email: string; name: string },
   kind: string,
   m: { to: string; subject: string; text: string; html: string }
 ): Promise<boolean> {
-  if (!emailConfigured(env)) return false;
+  if (!env.EMAIL || !from.email) return false;
   try {
-    await env.EMAIL.send({
-      from: { email: env.FROM_EMAIL, name: appName(env) },
-      ...m,
-    });
+    await env.EMAIL.send({ from, ...m });
     return true;
   } catch (e) {
     console.error(`[${kind}] email send failed`, e);
@@ -36,10 +41,11 @@ const button = (url: string, label: string) =>
 
 export async function sendInviteEmail(
   env: CloudflareBindings,
+  db: DrizzleDB,
   opts: { to: string; inviterName: string; url: string }
 ): Promise<boolean> {
-  const app = appName(env);
-  return send(env, 'invite', {
+  const { app, from } = await identity(db, env);
+  return send(env, { email: from, name: app }, 'invite', {
     to: opts.to,
     subject: `${opts.inviterName} invited you to join ${app}`,
     text: `${opts.inviterName} has invited you to join ${app}.\n\nAccept the invitation:\n${opts.url}\n\nThis invitation expires in 7 days.`,
@@ -54,10 +60,11 @@ export async function sendInviteEmail(
 /** Asks the owner of an alternate commit email to confirm it. */
 export async function sendEmailVerification(
   env: CloudflareBindings,
+  db: DrizzleDB,
   opts: { to: string; username: string; url: string; hours: number }
 ): Promise<boolean> {
-  const app = appName(env);
-  return send(env, 'verify-email', {
+  const { app, from } = await identity(db, env);
+  return send(env, { email: from, name: app }, 'verify-email', {
     to: opts.to,
     subject: `Verify your email for ${app}`,
     text: `@${opts.username} added ${opts.to} to their ${app} account. Commits authored with this address will be linked to their profile once it is verified.\n\nVerify this email (you must be signed in as @${opts.username}):\n${opts.url}\n\nThis link expires in ${opts.hours} hours. If you did not add this address, you can ignore this email.`,

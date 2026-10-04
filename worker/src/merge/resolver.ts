@@ -14,7 +14,7 @@ import { Lifecycle } from 'agents/lifecycle';
 import { createAI } from 'agents/models/pi-ai';
 import { aiGateway } from '../lib/ai-gateway';
 
-/** The default model for conflict resolution; `RESOLVER_MODEL` overrides it. */
+/** The fallback model; each request names the configured one (Site admin, else `RESOLVER_MODEL`). */
 export const DEFAULT_RESOLVER_MODEL = '@cf/zai-org/glm-5.3';
 
 export interface ResolveRequest {
@@ -26,6 +26,8 @@ export interface ResolveRequest {
   theirsIntent: string;
   /** Marker labels as they appear in the files. */
   labels: { ours: string; theirs: string };
+  /** Workers AI model to resolve with (Site admin's setting when the attempt started). */
+  model?: string;
 }
 
 export interface ResolveResult {
@@ -212,6 +214,8 @@ export class MergeResolver
       `What the target branch (${request.labels.ours}) changed and why:\n${request.oursIntent}\n\n` +
       `What the pull request (${request.labels.theirs}) changes and why:\n${request.theirsIntent}`;
     // A retried call joins the same operation instead of starting a second run.
+    if (request.model)
+      await this.harness.session().setModel(this.ai(request.model as never));
     const response = await this.harness.prompt(prompt, {
       operationId: 'resolve',
     });

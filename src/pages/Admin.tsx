@@ -10,6 +10,7 @@ import { Avatar } from '@/components/Avatar';
 import { CopyButton } from '@/components/CopyButton';
 import { Spinner } from '@/components/Spinner';
 import { AdminSetup } from '@/components/AdminSetup';
+import { AdminSettings } from '@/components/AdminSettings';
 
 export default function Admin() {
   const qc = useQueryClient();
@@ -367,6 +368,7 @@ export default function Admin() {
             ))}
           </div>
         )}
+        <AdminSettings />
       </div>
     </>
   );

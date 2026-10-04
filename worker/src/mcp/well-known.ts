@@ -1,7 +1,9 @@
 import { Hono } from 'hono';
 import { oauthProviderAuthServerMetadata } from '@better-auth/oauth-provider';
 import { OAUTH_SCOPES, oauthIssuer } from '../auth';
-import { appName } from '../lib/app-name';
+import { drizzle } from 'drizzle-orm/d1';
+import { schema } from '../db/schema';
+import { instanceName } from '../lib/settings';
 import type { AppEnv } from '../variables';
 
 /**
@@ -10,7 +12,7 @@ import type { AppEnv } from '../variables';
  */
 export const wellKnownRouter = new Hono<AppEnv>();
 
-function protectedResource(c: {
+async function protectedResource(c: {
   req: { url: string };
   env: CloudflareBindings;
 }) {
@@ -20,15 +22,15 @@ function protectedResource(c: {
     authorization_servers: [oauthIssuer(origin)],
     bearer_methods_supported: ['header'],
     scopes_supported: OAUTH_SCOPES,
-    resource_name: appName(c.env),
+    resource_name: await instanceName(drizzle(c.env.DB, { schema }), c.env),
   };
 }
 
-wellKnownRouter.get('/.well-known/oauth-protected-resource', (c) =>
-  c.json(protectedResource(c))
+wellKnownRouter.get('/.well-known/oauth-protected-resource', async (c) =>
+  c.json(await protectedResource(c))
 );
-wellKnownRouter.get('/.well-known/oauth-protected-resource/mcp', (c) =>
-  c.json(protectedResource(c))
+wellKnownRouter.get('/.well-known/oauth-protected-resource/mcp', async (c) =>
+  c.json(await protectedResource(c))
 );
 
 const authServerMetadata = (c: {

@@ -2,14 +2,6 @@ import { DIAGRAM_SCHEMA, diagramSource } from './diagram';
 import { aiGateway, type AiFeature } from '../lib/ai-gateway';
 import type { ClassifierAnswer } from '../db/app.schema';
 
-/** Default models; `SUMMARY_MODEL` and `REVIEW_MODEL` override them. */
-export const DEFAULT_SUMMARY_MODEL = '@cf/zai-org/glm-5.3-flash';
-export const DEFAULT_REVIEW_MODEL = '@cf/zai-org/glm-5.3';
-
-export const summaryModel = (env: CloudflareBindings) =>
-  env.SUMMARY_MODEL || DEFAULT_SUMMARY_MODEL;
-export const reviewModel = (env: CloudflareBindings) =>
-  env.REVIEW_MODEL || DEFAULT_REVIEW_MODEL;
 export const classifierModel = (name: 'clef' | 'clef-flash') =>
   `@cf/cloudflare/${name}`;
 
@@ -42,6 +34,8 @@ export interface InvestigateRequest {
 
 /** What review needs from the models; tests pass a fake. */
 export interface ReviewModels {
+  /** The investigating model's id, recorded on each flag it explains. */
+  reviewModelId?: string;
   summarize(input: {
     path: string;
     status: string;
@@ -229,6 +223,8 @@ function unfence(text: string) {
 /** Workers AI models through AI Gateway. Every call caps its output. */
 export function workersAiModels(
   env: CloudflareBindings,
+  /** From Site admin's settings (defaults: SUMMARY_MODEL, REVIEW_MODEL). */
+  ids: { summary: string; review: string },
   context: { classificationId?: string } = {}
 ): ReviewModels {
   const tags: Record<string, string> = context.classificationId
@@ -243,9 +239,10 @@ export function workersAiModels(
     ) as Promise<unknown>;
   };
   return {
+    reviewModelId: ids.review,
     async summarize(f) {
       const out = await run(
-        summaryModel(env),
+        ids.summary,
         {
           messages: [
             { role: 'system', content: SUMMARY_SYSTEM },
@@ -280,7 +277,7 @@ export function workersAiModels(
 
     async selectFiles({ flag, summaries, paths }) {
       const out = await run(
-        summaryModel(env),
+        ids.summary,
         {
           messages: [
             { role: 'system', content: SELECT_SYSTEM },
@@ -305,7 +302,7 @@ export function workersAiModels(
 
     async investigate(req) {
       const out = await run(
-        reviewModel(env),
+        ids.review,
         {
           messages: [
             { role: 'system', content: INVESTIGATE_SYSTEM },

@@ -83,7 +83,7 @@ async function sendVerification(
     /\/$/,
     ''
   );
-  return sendEmailVerification(c.env, {
+  return sendEmailVerification(c.env, db, {
     to: row.email,
     username,
     url: `${origin}/settings/emails/verify?token=${token}`,

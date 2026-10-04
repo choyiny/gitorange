@@ -1,6 +1,7 @@
 import { drizzle } from 'drizzle-orm/d1';
 import { eq } from 'drizzle-orm';
 import { publishChange } from './live/publish';
+import { instanceName } from './lib/settings';
 import { schema } from './db/schema';
 import {
   personalAccessTokens,
@@ -16,7 +17,6 @@ import {
   type RepoPermissions,
 } from './lib/repos';
 import { hashToken } from './lib/tokens';
-import { appName } from './lib/app-name';
 import { actionsConfigured, diffRefs, onRefsUpdated } from './actions/trigger';
 import { autoResolveConflicts } from './merge/auto';
 import { resolutionConfigured } from './merge/resolution';
@@ -76,10 +76,11 @@ export async function authenticateRepoRequest(
   owner: string,
   name: string
 ): Promise<GitAccess | Response> {
-  const realm = appName(env);
   const db = drizzle(env.DB, { schema });
+  // Read only when challenging, not on every git request.
+  const realm = () => instanceName(db, env);
   const creds = parseBasic(request.headers.get('Authorization'));
-  if (!creds) return unauthorized(realm);
+  if (!creds) return unauthorized(await realm());
   const token =
     creds.pass && creds.pass !== 'x-oauth-basic' ? creds.pass : creds.user;
   const pat = await db
@@ -93,7 +94,7 @@ export async function authenticateRepoRequest(
     pat.user.banned ||
     (pat.pat.expiresAt && pat.pat.expiresAt < new Date())
   )
-    return unauthorized(realm);
+    return unauthorized(await realm());
   ctx.waitUntil(
     db
       .update(personalAccessTokens)

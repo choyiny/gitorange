@@ -17,6 +17,7 @@ const TABLES = [
   'workflow_steps',
   'workflow_jobs',
   'workflow_runs',
+  'instance_settings',
   'pr_review_flags',
   'pr_classifications',
   'merge_resolutions',

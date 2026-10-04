@@ -135,7 +135,7 @@ invitesRouter.openapi(createInviteRoute, async (c) => {
   await db.insert(invitations).values(row);
   const inviteUrl = `${new URL(c.req.url).origin}/invite/${token}`;
   const inviter = c.get('user')!;
-  const emailed = await sendInviteEmail(c.env, {
+  const emailed = await sendInviteEmail(c.env, c.get('db'), {
     to: normalized,
     inviterName: inviter.username ?? inviter.name,
     url: inviteUrl,

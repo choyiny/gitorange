@@ -6,7 +6,8 @@ import {
   oauthConsents,
   oauthRefreshTokens,
 } from '../db/auth.schema';
-import { appName, mcpServerName } from '../lib/app-name';
+import { mcpServerName } from '../lib/app-name';
+import { instanceName } from '../lib/settings';
 import type { AppEnv } from '../variables';
 import { McpToolError } from './errors';
 import { getMcpSession } from './oauth-session';
@@ -101,6 +102,7 @@ mcpRouter.post('/', async (c) => {
   switch (method) {
     case 'initialize': {
       const requested = params?.protocolVersion;
+      const name = await instanceName(db, c.env);
       return c.json(
         rpcResult(id, {
           protocolVersion:
@@ -110,12 +112,12 @@ mcpRouter.post('/', async (c) => {
               : PROTOCOL_VERSION,
           capabilities: { tools: { listChanged: false } },
           serverInfo: {
-            name: mcpServerName(appName(c.env)),
-            title: appName(c.env),
+            name: mcpServerName(name),
+            title: name,
             version: '1.0.0',
           },
           instructions:
-            `${appName(c.env)} is a self-hosted, GitHub-style git server. Use these tools to find and create ` +
+            `${name} is a self-hosted, GitHub-style git server. Use these tools to find and create ` +
             'repositories and to work with pull requests: push a branch with git, open a pull request, then ' +
             'follow its checks and auto-merge review with gitorange_get_pull_request. Merging is always rebase ' +
             'and merge. Review flags need a person to approve them or request changes; the tools that do so act ' +
@@ -162,10 +164,10 @@ mcpRouter.post('/', async (c) => {
 export const mcpApiRouter = new Hono<AppEnv>();
 
 /** The server URL and tool list, so the page always matches what /mcp serves. */
-mcpApiRouter.get('/', (c) =>
+mcpApiRouter.get('/', async (c) =>
   c.json({
     serverUrl: `${baseURLOf(c)}/mcp`,
-    serverName: mcpServerName(appName(c.env)),
+    serverName: mcpServerName(await instanceName(c.get('db'), c.env)),
     tools: TOOL_DEFINITIONS,
   })
 );

@@ -9,6 +9,7 @@ import { executeSweep, type SweepParams } from './auto';
 import { executeResolution, type StepRunner } from './resolution';
 import { executeClassification } from '../review/classify';
 import { workersAiModels } from '../review/models';
+import { getSettings } from '../lib/settings';
 
 export type MergeResolutionParams =
   | { resolutionId: string; sweep?: undefined; classificationId?: undefined }
@@ -29,15 +30,17 @@ export class MergeResolutionWorkflow extends WorkflowEntrypoint<
     // The executors' results are plain JSON; adapt to WorkflowStep's Serializable typing.
     const runner = step as unknown as StepRunner;
     if (event.payload.classificationId) {
+      const ids = await getSettings(db, this.env, [
+        'ai.summary_model',
+        'ai.review_model',
+      ]);
+      const models = workersAiModels(
+        this.env,
+        { summary: ids['ai.summary_model'], review: ids['ai.review_model'] },
+        { classificationId: event.payload.classificationId }
+      );
       await executeClassification(
-        {
-          env: this.env,
-          db,
-          step: runner,
-          models: workersAiModels(this.env, {
-            classificationId: event.payload.classificationId,
-          }),
-        },
+        { env: this.env, db, step: runner, models },
         event.payload.classificationId
       );
       return;

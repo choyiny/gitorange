@@ -255,6 +255,19 @@ export const mergeResolutions = sqliteTable(
 // One classification per PR head commit and review.yml version; approving every flag clears
 // it for auto-merge.
 
+// ── Instance settings ────────────────────────────────────────────────────────
+// Instance-wide settings a site admin changes without a deploy (worker/src/lib/settings.ts is
+// the registry of keys). A missing row means the default: the wrangler var, or a built-in value.
+
+export const instanceSettings = sqliteTable('instance_settings', {
+  key: text('key').primaryKey(),
+  value: text('value', { mode: 'json' }).$type<unknown>(),
+  updatedById: text('updated_by_id').references(() => users.id, {
+    onDelete: 'set null',
+  }),
+  updatedAt: integer('updated_at', { mode: 'timestamp' }).notNull(),
+});
+
 export type FileSummary = {
   path: string;
   status: 'added' | 'removed' | 'modified';
@@ -394,6 +407,8 @@ export const workflowRuns = sqliteTable(
       t.headSha,
       t.runNumber
     ),
+    // Retention cleanup: finished runs older than the cutoff.
+    index('workflow_runs_status_completed_idx').on(t.status, t.completedAt),
     // The Actions page: runs of one workflow file (count, newest first) and the file list.
     index('workflow_runs_repo_path_number_idx').on(
       t.repositoryId,
@@ -447,6 +462,7 @@ export type Repository = typeof repositories.$inferSelect;
 export type Team = typeof teams.$inferSelect;
 export type LfsObject = typeof lfsObjects.$inferSelect;
 export type PullRequest = typeof pullRequests.$inferSelect;
+export type InstanceSetting = typeof instanceSettings.$inferSelect;
 export type WorkflowRun = typeof workflowRuns.$inferSelect;
 export type WorkflowJob = typeof workflowJobs.$inferSelect;
 export type WorkflowStep = typeof workflowSteps.$inferSelect;

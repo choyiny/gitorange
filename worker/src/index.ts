@@ -18,6 +18,9 @@ import { namespacesRouter, teamRouter } from './routers/teams-router';
 import { mcpApiRouter, mcpRouter } from './mcp';
 import { wellKnownRouter } from './mcp/well-known';
 import type { AppEnv } from './variables';
+import { drizzle } from 'drizzle-orm/d1';
+import { schema } from './db/schema';
+import { runActionsRetention } from './actions/retention';
 import type { Context, MiddlewareHandler } from 'hono';
 import type { RepoEnv } from './lib/repos';
 import { publishChange } from './live/publish';
@@ -25,6 +28,7 @@ import { liveSocket } from './live/route';
 import { approvalsRouter } from './routers/approvals-router';
 import { insightsRouter } from './routers/insights-router';
 import { adminSetupRouter } from './routers/admin-setup-router';
+import { adminRouter } from './routers/admin-router';
 
 const app = new OpenAPIHono<AppEnv>();
 
@@ -67,6 +71,8 @@ const pingAfterChange: MiddlewareHandler<AppEnv> = async (c, next) => {
 };
 app.use('/api/repos/:owner/:repo', pingAfterChange);
 app.use('/api/repos/:owner/:repo/*', pingAfterChange);
+app.use('/api/admin/*', requireAuth);
+app.route('/api/admin', adminRouter);
 app.use('/api/approvals', requireAuth);
 app.route('/api/approvals', approvalsRouter);
 app.use('/api/live', requireAuth);
@@ -120,6 +126,14 @@ export { MergeResolutionWorkflow } from './merge/workflow';
 export { LiveHub } from './live/hub';
 
 export default {
+  /** Daily housekeeping (Cron Trigger): deletes Actions runs past their retention. */
+  scheduled(_controller, env, ctx) {
+    ctx.waitUntil(
+      runActionsRetention(env, drizzle(env.DB, { schema })).catch((e) =>
+        console.error('[actions] retention failed', e)
+      )
+    );
+  },
   fetch(request, env, ctx) {
     const url = new URL(request.url);
     if (isGitRequest(url)) return handleGitRequest(request, env, ctx);

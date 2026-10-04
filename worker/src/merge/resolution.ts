@@ -15,12 +15,9 @@ import { decoder } from '../git/bytes';
 import { ZERO_SHA } from '../git/remote';
 import type { GitService } from '../git/service';
 import { findRepoById, gitFor } from '../lib/repos';
+import { getSetting } from '../lib/settings';
 import { maybeAutoMerge } from '../review/auto-merge';
-import {
-  DEFAULT_RESOLVER_MODEL,
-  type ConflictResolverApi,
-  type ResolveRequest,
-} from './resolver';
+import { type ConflictResolverApi, type ResolveRequest } from './resolver';
 
 /** Where a proposed resolution's commit waits until it is applied. */
 export const resolutionRef = (id: string) => `refs/resolutions/${id}`;
@@ -32,8 +29,9 @@ export const transcriptKey = (repoId: string, id: string) =>
 const CONFLICT_MARKER = /^(<{7}|\|{7}|={7}|>{7})( |$)/m;
 const MAX_INTENT_COMMITS = 30;
 
-export const resolverModel = (env: CloudflareBindings) =>
-  env.RESOLVER_MODEL || DEFAULT_RESOLVER_MODEL;
+/** The model conflict resolution uses: Site admin's setting, else `RESOLVER_MODEL`. */
+export const resolverModel = (db: DrizzleDB, env: CloudflareBindings) =>
+  getSetting(db, env, 'ai.resolver_model');
 
 export function resolutionConfigured(env: CloudflareBindings): boolean {
   return Boolean((env as Partial<CloudflareBindings>).MERGE_RESOLUTION);
@@ -112,7 +110,7 @@ export async function startResolution(
     baseSha: shas.base,
     headSha: shas.head,
     status: busy >= MAX_CONCURRENT_PER_REPO ? 'queued' : 'running',
-    model: resolverModel(env),
+    model: await resolverModel(db, env),
     conflictedPaths: plan.conflicts,
     touchedExtraPaths: null,
     explanation: null,
@@ -464,7 +462,10 @@ export async function executeResolution(deps: ResolutionDeps, id: string) {
         timeout: '15 minutes',
       },
       async () => {
-        const r = await deps.resolver(id).resolve(request);
+        // The model recorded when the attempt started, so a retry uses the same one.
+        const r = await deps
+          .resolver(id)
+          .resolve({ ...request, model: row.model });
         await env.ACTIONS_LOGS.put(transcriptKey(repo.id, id), r.transcript, {
           httpMetadata: { contentType: 'application/json' },
         });

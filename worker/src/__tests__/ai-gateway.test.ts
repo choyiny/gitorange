@@ -42,7 +42,11 @@ function recordingEnv(gatewayId: string) {
 describe('AI Gateway', () => {
   it('routes every review call through the gateway, tagged with its feature', async () => {
     const { env: e, calls } = recordingEnv('default');
-    const models = workersAiModels(e, { classificationId: 'c1' });
+    const models = workersAiModels(
+      e,
+      { summary: '@cf/zai-org/glm-5.3-flash', review: '@cf/zai-org/glm-5.3' },
+      { classificationId: 'c1' }
+    );
     await models.summarize({
       path: 'a.ts',
       status: 'added',

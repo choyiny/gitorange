@@ -176,6 +176,30 @@ export type ReviewFlag = {
   changesRequestedAt: string | null;
   changesRequestedNote: string | null;
 };
+/** One instance setting in Site admin (GET /api/admin/settings). */
+export type InstanceSetting = {
+  key: string;
+  label: string;
+  description: string;
+  group: 'General' | 'AI models' | 'Actions';
+  value: unknown;
+  default: unknown;
+  overridden: boolean;
+  updatedAt: string | null;
+};
+export type AdminSettingsView = {
+  settings: InstanceSetting[];
+  actions: {
+    runs: number;
+    oldestFinishedAt: string | null;
+    retention: {
+      at: string;
+      retentionDays: number | null;
+      deletedRuns: number;
+      more: boolean;
+    } | null;
+  };
+};
 /** An open pull request waiting on a person (GET /api/approvals). */
 export type ApprovalItem = {
   repo: { fullName: string; name: string };
@@ -626,6 +650,11 @@ export const api = {
   approvals: () => apiFetch<ApprovalItem[]>('/api/approvals'),
   insights: (o: string, n: string, days: number) =>
     apiFetch<RepoInsights>(`${r(o, n)}/insights?${q({ days })}`),
+  adminSettings: () => apiFetch<AdminSettingsView>('/api/admin/settings'),
+  saveSetting: (key: string, value: unknown) =>
+    apiFetch(`/api/admin/settings/${key}`, { method: 'PUT', json: { value } }),
+  resetSetting: (key: string) =>
+    apiFetch(`/api/admin/settings/${key}`, { method: 'DELETE' }),
   approveFlag: (o: string, n: string, num: number, id: string) =>
     apiFetch(`${r(o, n)}/pulls/${num}/review/flags/${id}/approve`, {
       method: 'POST',
@@ -664,6 +693,7 @@ export const qk = {
   emails: ['emails'] as const,
   mcp: ['mcp'] as const,
   approvals: ['approvals'] as const,
+  adminSettings: ['admin', 'settings'] as const,
   mcpConnections: ['mcp', 'connections'] as const,
   namespace: (u: string) => ['namespace', u] as const,
   team: ['team'] as const,

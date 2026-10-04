@@ -1,4 +1,4 @@
-import { appName } from '../lib/app-name';
+import { instanceName } from '../lib/settings';
 import { OpenAPIHono, createRoute, z } from '@hono/zod-openapi';
 import { sql } from 'drizzle-orm';
 import { users } from '../db/auth.schema';
@@ -55,7 +55,7 @@ setupRouter.openapi(statusRoute, async (c) => {
   return c.json(
     {
       setupRequired: (await countUsers(c.get('db'))) === 0,
-      appName: appName(c.env),
+      appName: await instanceName(c.get('db'), c.env),
     },
     200
   );

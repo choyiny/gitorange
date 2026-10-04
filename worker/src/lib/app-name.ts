@@ -1,7 +1,4 @@
-/** `APP_NAME`, e.g. "GitOrange". */
-export function appName(env: Pick<CloudflareBindings, 'APP_NAME'>): string {
-  return env.APP_NAME?.trim() || 'GitOrange';
-}
+export const DEFAULT_APP_NAME = 'GitOrange';
 
 /** App name as an MCP server id: "XY Space Git" → "xy-space-git". */
 export function mcpServerName(name: string): string {

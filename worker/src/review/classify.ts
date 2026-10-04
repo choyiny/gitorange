@@ -14,13 +14,12 @@ import {
 import { decoder } from '../git/bytes';
 import type { FileChange, FileDiff, GitService } from '../git/service';
 import { findRepoById, gitFor } from '../lib/repos';
+import { getSetting } from '../lib/settings';
 import type { StepRunner } from '../merge/resolution';
 import { resolutionConfigured } from '../merge/resolution';
 import {
   classifierModel,
   mermaidSource,
-  reviewModel,
-  summaryModel,
   type ClefQuestion,
   type Investigation,
   type ReviewModels,
@@ -109,7 +108,7 @@ export async function ensureClassification(
     headSha: shas.head,
     policySha: policy.sha,
     status: error ? 'failed' : 'summarizing',
-    summaryModel: summaryModel(env),
+    summaryModel: await getSetting(db, env, 'ai.summary_model'),
     classifierModel: classifierModel(parsed?.model ?? 'clef'),
     files: null,
     answers: null,
@@ -725,7 +724,7 @@ export async function executeClassification(deps: ReviewDeps, id: string) {
             .update(prReviewFlags)
             .set({
               detail: await composeDetail(git, changes, out, ignored),
-              detailModel: reviewModel(env),
+              detailModel: models.reviewModelId ?? null,
               paths: out.paths.filter((p) => changed.has(p)),
             })
             .where(eq(prReviewFlags.id, flagId));
