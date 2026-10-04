@@ -35,5 +35,7 @@
     "R2_ACCOUNT_ID": "0123456789abcdef0123456789abcdef",
     "LFS_BUCKET_NAME": "gitorange-lfs-test",
     "RESOLVER_MODEL": "@cf/zai-org/glm-5.3",
+    "SUMMARY_MODEL": "@cf/zai-org/glm-5.3-flash",
+    "REVIEW_MODEL": "@cf/zai-org/glm-5.3",
   },
 }

@@ -14,6 +14,7 @@ import { decoder } from '../git/bytes';
 import { ZERO_SHA } from '../git/remote';
 import type { GitService } from '../git/service';
 import { findRepoById, gitFor } from '../lib/repos';
+import { maybeAutoMerge } from '../review/auto-merge';
 import {
   DEFAULT_RESOLVER_MODEL,
   type ConflictResolverApi,
@@ -420,6 +421,7 @@ export async function executeResolution(deps: ResolutionDeps, id: string) {
     repo: Repository;
     author: { name: string; email: string };
   } | null = null;
+  let proposed = false;
   try {
     job = await step.do('load', async () => {
       const row = await db
@@ -545,6 +547,7 @@ export async function executeResolution(deps: ResolutionDeps, id: string) {
     );
     if (committed.error !== undefined)
       throw new ResolutionError(committed.error);
+    proposed = true;
   } catch (e) {
     const message =
       e instanceof ResolutionError
@@ -557,6 +560,14 @@ export async function executeResolution(deps: ResolutionDeps, id: string) {
       return true;
     });
   }
+  // Resolved: the pull request may now be ready to merge on its own.
+  if (proposed && job)
+    await step.do('auto-merge', async () => {
+      await maybeAutoMerge(env, db, job!.pr.id).catch((e) =>
+        console.error('[merge] auto-merge failed', id, e)
+      );
+      return true;
+    });
   // This attempt's slot is free: start the repository's next queued one.
   if (job)
     await step.do('next', async () => {

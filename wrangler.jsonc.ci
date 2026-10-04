@@ -42,7 +42,8 @@
     { "name": "gitorange-actions-run", "binding": "ACTIONS_RUN", "class_name": "ActionsRun" },
     { "name": "gitorange-merge-resolution", "binding": "MERGE_RESOLUTION", "class_name": "MergeResolutionWorkflow" }
   ],
-  // Workers AI: AI conflict resolution (the model is RESOLVER_MODEL).
+  // Workers AI: AI conflict resolution (RESOLVER_MODEL) and auto-merge review (SUMMARY_MODEL,
+  // REVIEW_MODEL, and the Clef model named in each repository's .gitorange/review.yml).
   "ai": { "binding": "AI" },
   "assets": {
     "binding": "ASSETS",
@@ -58,6 +59,8 @@
     "R2_ACCOUNT_ID": "00000000000000000000000000000000",
     "LFS_BUCKET_NAME": "gitorange-lfs",
     // Workers AI model that resolves merge conflicts (pi agent with file tools).
-    "RESOLVER_MODEL": "@cf/zai-org/glm-5.3"
+    "RESOLVER_MODEL": "@cf/zai-org/glm-5.3",
+    "SUMMARY_MODEL": "@cf/zai-org/glm-5.3-flash",
+    "REVIEW_MODEL": "@cf/zai-org/glm-5.3"
   }
 }

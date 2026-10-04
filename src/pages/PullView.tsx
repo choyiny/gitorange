@@ -10,6 +10,7 @@ import {
   GitPullRequestClosedIcon,
   AlertIcon,
   GitBranchIcon,
+  SparkleFillIcon,
 } from '@primer/octicons-react';
 import {
   api,
@@ -28,6 +29,7 @@ import { MarkdownEditor } from '@/components/CommentForm';
 import { Markdown } from '@/components/Markdown';
 import { ChecksBox } from '@/components/Checks';
 import { AiResolution } from '@/components/AiResolution';
+import { AutoMergeReview } from '@/components/AutoMergeReview';
 import { Spinner } from '@/components/Spinner';
 import { NotFound } from './NotFound';
 import { PrStateBadge } from './PrIcons';
@@ -244,6 +246,7 @@ function MergeBox({
           </div>
         </div>
         {showAi && <AiResolution repo={repo} d={d} onChange={onDone} />}
+        {d.review && <AutoMergeReview repo={repo} d={d} onChange={onDone} />}
         {d.canMerge &&
           d.mergeable &&
           (confirming ? (
@@ -327,8 +330,17 @@ function Conversation({
               icon={<GitMergeIcon />}
               bg="var(--bgColor-done-emphasis)"
             >
-              <Avatar user={pr.mergedBy!} size={20} />
-              <strong>{pr.mergedBy!.username}</strong> merged commit{' '}
+              {pr.mergedBy ? (
+                <>
+                  <Avatar user={pr.mergedBy} size={20} />
+                  <strong>{pr.mergedBy.username}</strong> merged commit{' '}
+                </>
+              ) : (
+                <>
+                  <SparkleFillIcon className="color-fg-done" />
+                  <strong>Auto-merge</strong> merged commit{' '}
+                </>
+              )}
               <Link
                 to={`/${repo.fullName}/commit/${pr.mergeCommitSha}`}
                 className="text-mono-sm text-bold"
@@ -469,6 +481,20 @@ export default function PullView() {
       if (!d) return false;
       const r = d.resolution && !d.resolution.stale ? d.resolution : null;
       if (r?.status === 'running' || r?.status === 'queued') return 3000;
+      // Follow the auto-merge review, and the merge it leads to.
+      const review = d.review;
+      if (
+        review &&
+        (!review.classification ||
+          (review.classification.status !== 'done' &&
+            review.classification.status !== 'failed'))
+      )
+        return 3000;
+      if (
+        review?.autoMerge.state === 'ready' ||
+        review?.autoMerge.state === 'waiting'
+      )
+        return 5000;
       const pending =
         d.aiResolution &&
         d.conflictsResolvable &&

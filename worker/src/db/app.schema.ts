@@ -128,6 +128,14 @@ export const pullRequests = sqliteTable(
     mergedById: text('merged_by_id').references(() => users.id),
     mergedAt: integer('merged_at', { mode: 'timestamp' }),
     closedAt: integer('closed_at', { mode: 'timestamp' }),
+    // Merged by GitOrange on its own (auto-merge); such merges have no merged_by_id.
+    mergedAutomatically: integer('merged_automatically', { mode: 'boolean' })
+      .notNull()
+      .default(false),
+    // A maintainer turned auto-merge off for this pull request.
+    autoMergeDisabledAt: integer('auto_merge_disabled_at', {
+      mode: 'timestamp',
+    }),
     createdAt: integer('created_at', { mode: 'timestamp' }).notNull(),
     updatedAt: integer('updated_at', { mode: 'timestamp' }).notNull(),
   },
@@ -214,6 +222,101 @@ export const mergeResolutions = sqliteTable(
     decidedAt: integer('decided_at', { mode: 'timestamp' }),
   },
   (t) => [index('merge_resolutions_pr_idx').on(t.pullRequestId, t.createdAt)]
+);
+
+// ── Auto-merge review ────────────────────────────────────────────────────────
+// One classification per pull request head commit and `.gitorange/review.yml` version: a
+// one-line summary per changed file (GLM), Clef's answers to the policy's questions over those
+// summaries, and the flags that need a person. Approving every flag clears it for auto-merge.
+
+export type FileSummary = {
+  path: string;
+  status: 'added' | 'removed' | 'modified';
+  additions: number;
+  deletions: number;
+  summary: string;
+};
+
+export type ClassifierAnswer =
+  | { type: 'noul'; value: number }
+  | {
+      type: 'choice';
+      value: string;
+      confidence: number;
+      probabilities: Record<string, number>;
+    }
+  | {
+      type: 'score';
+      value: number;
+      confidence: number;
+      probabilities: Record<string, number>;
+    };
+
+export const prClassifications = sqliteTable(
+  'pr_classifications',
+  {
+    id: text('id').primaryKey(),
+    pullRequestId: text('pull_request_id')
+      .notNull()
+      .references(() => pullRequests.id, { onDelete: 'cascade' }),
+    headSha: text('head_sha').notNull(),
+    // Blob sha of the `.gitorange/review.yml` the target branch had when this started.
+    policySha: text('policy_sha').notNull(),
+    status: text('status', {
+      enum: ['summarizing', 'classifying', 'investigating', 'done', 'failed'],
+    }).notNull(),
+    summaryModel: text('summary_model').notNull(),
+    classifierModel: text('classifier_model').notNull(),
+    files: text('files', { mode: 'json' }).$type<FileSummary[]>(),
+    answers: text('answers', { mode: 'json' }).$type<
+      Record<string, ClassifierAnswer>
+    >(),
+    // auto: nothing flagged; human: flags need approval. Null until done (or when it failed).
+    verdict: text('verdict', { enum: ['auto', 'human'] }),
+    errorMessage: text('error_message'),
+    durationMs: integer('duration_ms'),
+    createdAt: integer('created_at', { mode: 'timestamp' }).notNull(),
+    finishedAt: integer('finished_at', { mode: 'timestamp' }),
+  },
+  (t) => [
+    uniqueIndex('pr_classifications_pr_head_policy_uq').on(
+      t.pullRequestId,
+      t.headSha,
+      t.policySha
+    ),
+  ]
+);
+
+export const prReviewFlags = sqliteTable(
+  'pr_review_flags',
+  {
+    id: text('id').primaryKey(),
+    classificationId: text('classification_id')
+      .notNull()
+      .references(() => prClassifications.id, { onDelete: 'cascade' }),
+    // question: a review.yml question crossed its threshold; path: a path rule matched;
+    // limit: the pull request is too large, or a file couldn't be summarized.
+    source: text('source', { enum: ['question', 'path', 'limit'] }).notNull(),
+    // The question id, the matching path pattern, or the limit's name.
+    key: text('key').notNull(),
+    value: text('value', { mode: 'json' }).$type<unknown>(),
+    paths: text('paths', { mode: 'json' }).$type<string[]>().notNull(),
+    // What the investigating model found, as Markdown; null while it runs or if it failed.
+    detail: text('detail'),
+    detailModel: text('detail_model'),
+    approvedById: text('approved_by_id').references(() => users.id, {
+      onDelete: 'set null',
+    }),
+    approvedAt: integer('approved_at', { mode: 'timestamp' }),
+    createdAt: integer('created_at', { mode: 'timestamp' }).notNull(),
+  },
+  (t) => [
+    uniqueIndex('pr_review_flags_classification_key_uq').on(
+      t.classificationId,
+      t.source,
+      t.key
+    ),
+  ]
 );
 
 // ── Actions ──────────────────────────────────────────────────────────────────
@@ -303,3 +406,5 @@ export type WorkflowRun = typeof workflowRuns.$inferSelect;
 export type WorkflowJob = typeof workflowJobs.$inferSelect;
 export type WorkflowStep = typeof workflowSteps.$inferSelect;
 export type MergeResolution = typeof mergeResolutions.$inferSelect;
+export type PrClassification = typeof prClassifications.$inferSelect;
+export type PrReviewFlag = typeof prReviewFlags.$inferSelect;

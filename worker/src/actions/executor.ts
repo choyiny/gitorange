@@ -1,5 +1,6 @@
 import type { WorkflowStepConfig } from 'cloudflare:workers';
 import { and, eq, inArray } from 'drizzle-orm';
+import { autoMergeForCommit } from '../review/auto-merge';
 import type { DrizzleD1Database } from 'drizzle-orm/d1';
 import type { schema } from '../db/schema';
 import { users } from '../db/auth.schema';
@@ -243,6 +244,14 @@ export async function executeRun(
     await finishRun(db, runId, conclusion, null);
     return true;
   });
+  // Passing checks may be the last thing an open pull request at this commit waited on.
+  if (conclusion === 'success')
+    await step.do('auto-merge', async () => {
+      await autoMergeForCommit(env, db, ctx.repoId, ctx.headSha).catch((e) =>
+        console.error('[actions] auto-merge failed', runId, e)
+      );
+      return true;
+    });
   return conclusion;
 }
 

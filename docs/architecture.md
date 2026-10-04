@@ -17,6 +17,7 @@ The diagram's source is [`diagrams/architecture.html`](diagrams/architecture.htm
 | Git LFS file contents                                                                     | **R2**, one object per repository and oid; D1's `lfs_objects` records which objects each repository has                                                                                                           |
 | Actions runs, jobs, and steps                                                             | **D1** (`workflow_runs`, `workflow_jobs`, `workflow_steps`); step logs in **R2**; jobs run in **Cloudflare Containers**                                                                                           |
 | OAuth clients, consents, tokens, and signing keys for the MCP server                      | **D1**, in better-auth's generated tables (`oauth_*`, `jwkss`)                                                                                                                                                    |
+| Auto-merge reviews                                                                        | **D1** (`pr_classifications`, `pr_review_flags`); runs on **Workflows** and **Workers AI** (GLM-5.3-flash, Clef, GLM-5.3)                                                                                         |
 | AI merge resolutions                                                                      | **D1** (`merge_resolutions`); resolved commits on `refs/resolutions/*` in **Artifacts**; transcripts in **R2**; runs on **Workflows**, **Durable Objects** (Cloudflare Computer + Pi Durable), and **Workers AI** |
 | Web interface                                                                             | React SPA in `src/`, served from the same Worker via the `ASSETS` binding                                                                                                                                         |
 
@@ -77,6 +78,14 @@ Text conflicts are resolved by AI ([`worker/src/merge/`](../worker/src/merge/)),
 5. **Commit.** GitOrange reads the files back, rejects any with markers, rebuilds the merge with them, and pushes the squashed commit to a side ref, `refs/resolutions/<id>`. The pull request then counts as mergeable; merging lands that commit if neither branch has moved. The agent's transcript goes to R2 (`merge-resolutions/<repository id>/<id>.json`).
 
 A person is needed only when the model fails to answer (after pi's own retries with backoff, and Workflow retries), or after discarding a resolution: the pull request then offers to try again.
+
+## Auto-merge
+
+A repository opts in with `.gitorange/review.yml` on the target branch ([format](auto-merge.md)). Code: [`worker/src/review/`](../worker/src/review/).
+
+- **Review, once per head commit and policy version** (`pr_classifications`, unique on pull request, head sha, and the policy's blob sha). Started by the same triggers as conflict resolution (the push/merge sweep, PR open and reopen, the PR page as a backstop) and run as a `MERGE_RESOLUTION` Workflow instance: a durable step per file summary (GLM-5.3-flash), one Clef call over the summaries, then a step per flag for GLM-5.3's investigation. Flags (`pr_review_flags`) hold the investigation and the approval.
+- **The gate** (`autoMergeStatus`): the review is clean or every flag is approved; the required Actions runs for the head commit succeeded; and the pull request merges cleanly or has a valid AI resolution.
+- **Merging** goes through the same `landPull` as the button, with no merging user (`merged_automatically`). It's attempted whenever something the gate waits on finishes: a review, an approval, a successful Actions run (from the `ActionsRun` Workflow), a proposed AI resolution, or turning auto-merge back on. Compare-and-swap on the base branch makes concurrent attempts safe; a lost race waits for the next trigger.
 
 ## MCP server and OAuth 2.1
 

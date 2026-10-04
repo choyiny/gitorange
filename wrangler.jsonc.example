@@ -59,7 +59,8 @@
     { "name": "gitorange-actions-run", "binding": "ACTIONS_RUN", "class_name": "ActionsRun" },
     { "name": "gitorange-merge-resolution", "binding": "MERGE_RESOLUTION", "class_name": "MergeResolutionWorkflow" }
   ],
-  // Workers AI: AI conflict resolution (the model is RESOLVER_MODEL).
+  // Workers AI: AI conflict resolution (RESOLVER_MODEL) and auto-merge review (SUMMARY_MODEL,
+  // REVIEW_MODEL, and the Clef model named in each repository's .gitorange/review.yml).
   "ai": { "binding": "AI" },
   "assets": {
     "binding": "ASSETS",
@@ -79,7 +80,9 @@
     "R2_ACCOUNT_ID": "<your-cloudflare-account-id>",
     "LFS_BUCKET_NAME": "gitorange-lfs",
     // Workers AI model that resolves merge conflicts (pi agent with file tools).
-    "RESOLVER_MODEL": "@cf/zai-org/glm-5.3"
+    "RESOLVER_MODEL": "@cf/zai-org/glm-5.3",
+    "SUMMARY_MODEL": "@cf/zai-org/glm-5.3-flash",
+    "REVIEW_MODEL": "@cf/zai-org/glm-5.3"
   },
   // BETTER_AUTH_SECRET is a secret: `wrangler secret put BETTER_AUTH_SECRET` (prod) / .dev.vars (dev).
 
@@ -126,7 +129,9 @@
         "FROM_EMAIL": "noreply@<your-email-sending-domain>",
         "R2_ACCOUNT_ID": "<your-cloudflare-account-id>",
         "LFS_BUCKET_NAME": "gitorange-lfs-dev",
-        "RESOLVER_MODEL": "@cf/zai-org/glm-5.3"
+        "RESOLVER_MODEL": "@cf/zai-org/glm-5.3",
+        "SUMMARY_MODEL": "@cf/zai-org/glm-5.3-flash",
+        "REVIEW_MODEL": "@cf/zai-org/glm-5.3"
       }
     }
   }
