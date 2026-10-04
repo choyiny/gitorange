@@ -20,6 +20,10 @@
   "r2_buckets": [
     { "binding": "LFS", "bucket_name": "gitorange-lfs-test" },
     { "binding": "ACTIONS_LOGS", "bucket_name": "gitorange-actions-logs-test" },
+    {
+      "binding": "ACTIONS_CACHE",
+      "bucket_name": "gitorange-actions-cache-test",
+    },
   ],
   // Live updates: the real hub, so tests can open a WebSocket and hear pings.
   "durable_objects": {
@@ -39,6 +43,7 @@
     "BASE_URL": "http://test.local",
     "R2_ACCOUNT_ID": "0123456789abcdef0123456789abcdef",
     "LFS_BUCKET_NAME": "gitorange-lfs-test",
+    "ACTIONS_CACHE_BUCKET_NAME": "gitorange-actions-cache-test",
     "RESOLVER_MODEL": "@cf/zai-org/glm-5.3",
     "SUMMARY_MODEL": "@cf/zai-org/glm-5.3-flash",
     "REVIEW_MODEL": "@cf/zai-org/glm-5.3",

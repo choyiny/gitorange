@@ -5,7 +5,7 @@
 FROM node:24-trixie-slim
 RUN apt-get update \
   && apt-get install -y --no-install-recommends \
-    git git-lfs ca-certificates curl wget jq unzip zip xz-utils \
+    git git-lfs ca-certificates curl wget jq unzip zip xz-utils zstd \
     python3 python3-pip build-essential openssh-client procps \
   && rm -rf /var/lib/apt/lists/*
 WORKDIR /workspace

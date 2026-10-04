@@ -31,11 +31,13 @@ yarn wrangler whoami   # note your account ID
 yarn wrangler d1 create gitorange-db
 yarn wrangler r2 bucket create gitorange-lfs
 yarn wrangler r2 bucket create gitorange-actions-logs
+yarn wrangler r2 bucket create gitorange-actions-cache
+yarn wrangler r2 bucket lifecycle add gitorange-actions-cache expire-7d --expire-days 7 -y
 ```
 
 Copy the `database_id` it prints. The second bucket holds Actions step logs. You don't need to create anything in Artifacts: the namespace is created automatically with the first repository.
 
-Git LFS clients upload and download directly to R2 with pre-signed URLs, which need an R2 API token. In the dashboard, open **R2 → Manage API tokens → Create API token**, choose **Object Read & Write**, scope it to the `gitorange-lfs` bucket, and keep the **Access Key ID** and **Secret Access Key** for step 6.
+Git LFS clients upload and download directly to R2 with pre-signed URLs, which need an R2 API token. In the dashboard, open **R2 → Manage API tokens → Create API token**, choose **Object Read & Write**, scope it to the `gitorange-lfs` and `gitorange-actions-cache` buckets (the Actions cache uses pre-signed URLs too), and keep the **Access Key ID** and **Secret Access Key** for step 6.
 
 ## 4. Configure `wrangler.jsonc`
 

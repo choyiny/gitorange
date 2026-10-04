@@ -7,6 +7,7 @@ import {
   type JobDef,
   type Scalar,
   type WorkflowDef,
+  type StepDef,
 } from './workflow-file';
 
 // ── filters ──────────────────────────────────────────────────────────────────
@@ -114,8 +115,9 @@ const SIZES: InstanceType[] = [
 ];
 
 /**
- * Maps `runs-on` to a container instance type. GitHub's Linux labels get `standard-1`
- * (½ vCPU, 4 GiB); `gitorange-standard-3` (or just `standard-3`) picks a size explicitly.
+ * Maps `runs-on` to a container instance type. GitHub's Linux labels get `standard-2` (1 vCPU,
+ * 6 GiB, 12 GB disk: a cold JavaScript install can need 6+ GB); `gitorange-standard-3` (or just
+ * `standard-3`) picks a size explicitly.
  */
 export function instanceTypeFor(runsOn: string): InstanceType {
   const labels = runsOn.split(',').map((l) => l.trim().toLowerCase());
@@ -127,7 +129,7 @@ export function instanceTypeFor(runsOn: string): InstanceType {
     throw new WorkflowFileError(
       `runs-on: ${runsOn} is not available. GitOrange Actions runs Linux jobs only (use ubuntu-latest).`
     );
-  return 'standard-1';
+  return 'standard-2';
 }
 
 // ── jobs ─────────────────────────────────────────────────────────────────────
@@ -201,13 +203,18 @@ function planJob(
     combo && !(job.name && job.name.includes('${{'))
       ? `${base} (${Object.values(combo).map(String).join(', ')})`
       : base;
+  const posts = postStepIndexes(job.steps);
   const steps: PlannedStep[] = [
     { number: 1, name: 'Set up job' },
     ...job.steps.map((s, i) => ({
       number: i + 2,
       name: safeInterpolate(stepDisplayName(s), ctx),
     })),
-    { number: job.steps.length + 2, name: 'Complete job' },
+    ...posts.map((i, k) => ({
+      number: job.steps.length + 2 + k,
+      name: `Post ${safeInterpolate(stepDisplayName(job.steps[i]), ctx)}`,
+    })),
+    { number: job.steps.length + 2 + posts.length, name: 'Complete job' },
   ];
   return {
     key: job.key,
@@ -217,4 +224,24 @@ function planJob(
     matrix: combo,
     steps,
   };
+}
+
+/** Whether a step has a "Post" phase: saving a cache after the job's steps. */
+export function hasPostStep(s: StepDef): boolean {
+  const action = s.uses?.split('@')[0];
+  return (
+    action === 'actions/cache' ||
+    (action === 'actions/setup-node' && Boolean(s.with.cache?.trim()))
+  );
+}
+
+/**
+ * Indexes of the steps with a post phase, in the order the posts run: last step first, as on
+ * GitHub. Post steps are numbered after the job's steps and before "Complete job".
+ */
+export function postStepIndexes(steps: StepDef[]): number[] {
+  return steps
+    .map((s, i) => (hasPostStep(s) ? i : -1))
+    .filter((i) => i >= 0)
+    .reverse();
 }

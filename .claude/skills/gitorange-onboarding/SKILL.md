@@ -75,7 +75,7 @@ Ask which listed domain should send invitation emails, and the address to use (e
 
 Restate, then wait for an explicit yes:
 
-> You've confirmed account `<name>` (`<id>`) is on Workers Paid with Artifacts access, and invites will come from `<FROM_EMAIL>`. I'm about to create a D1 database named `gitorange-db` and R2 buckets named `gitorange-lfs` and `gitorange-actions-logs`, deploy a worker named `gitorange`, and set its auth secret. Ready?
+> You've confirmed account `<name>` (`<id>`) is on Workers Paid with Artifacts access, and invites will come from `<FROM_EMAIL>`. I'm about to create a D1 database named `gitorange-db` and R2 buckets named `gitorange-lfs`, `gitorange-actions-logs`, and `gitorange-actions-cache`, deploy a worker named `gitorange`, and set its auth secret. Ready?
 
 ## Deployment steps
 
@@ -91,16 +91,18 @@ Ask: custom domain (e.g. `git.example.com`, the zone must be on Cloudflare) or t
 yarn wrangler d1 create gitorange-db
 yarn wrangler r2 bucket create gitorange-lfs
 yarn wrangler r2 bucket create gitorange-actions-logs
+yarn wrangler r2 bucket create gitorange-actions-cache
+yarn wrangler r2 bucket lifecycle add gitorange-actions-cache expire-7d --expire-days 7 -y
 ```
 
-Capture the `database_id`. `gitorange-actions-logs` holds Actions step logs. If any already exists, get the ID from `yarn wrangler d1 list` / confirm the bucket with `yarn wrangler r2 bucket list`. No Artifacts resource needs creating: the `gitorange` namespace is created with the first repository.
+Capture the `database_id`. `gitorange-actions-logs` holds Actions step logs; `gitorange-actions-cache` holds the Actions cache, and its lifecycle rule expires entries after 7 days. If any already exists, get the ID from `yarn wrangler d1 list` / confirm the bucket with `yarn wrangler r2 bucket list`. No Artifacts resource needs creating: the `gitorange` namespace is created with the first repository.
 
 ### Step 2.5: R2 API token for Git LFS (the user does this in the dashboard)
 
 Git LFS hands clients pre-signed R2 URLs, which need S3-compatible credentials. Wrangler can't create them, so ask the user to:
 
 1. Open https://dash.cloudflare.com/?to=/:account/r2/api-tokens → **Create API token**.
-2. Permission **Object Read & Write**, scoped to **Apply to specific buckets only → gitorange-lfs**.
+2. Permission **Object Read & Write**, scoped to **Apply to specific buckets only → gitorange-lfs and gitorange-actions-cache** (Git LFS and the Actions cache both use pre-signed URLs).
 3. Keep the **Access Key ID** and **Secret Access Key** for Step 5. Never ask them to paste the values into the chat.
 
 If they want to skip LFS for now, continue: everything else works, and Git LFS answers "not configured" until the two secrets are set.
@@ -121,7 +123,7 @@ Fill in the top level (production):
 
 Also replace the `FROM_EMAIL` and `R2_ACCOUNT_ID` placeholders in `env.dev.vars` so local development works later.
 
-Do not rename bindings — the code looks them up by name: `DB`, `ARTIFACTS`, `EMAIL`, `LFS`, `ACTIONS_LOGS`, `ACTIONS_RUN`, `JOB_RUNNER`, `ASSETS`. Keep the `containers`, `durable_objects`, `exports`, and `workflows` entries as shipped: they run GitOrange Actions. Keep `assets.run_worker_first` as shipped; the git endpoint depends on it. `wrangler.jsonc` is gitignored; never commit it.
+Do not rename bindings — the code looks them up by name: `DB`, `ARTIFACTS`, `EMAIL`, `LFS`, `ACTIONS_LOGS`, `ACTIONS_CACHE`, `ACTIONS_RUN`, `JOB_RUNNER`, `ASSETS`. Keep the `containers`, `durable_objects`, `exports`, and `workflows` entries as shipped: they run GitOrange Actions. Keep `assets.run_worker_first` as shipped; the git endpoint depends on it. `wrangler.jsonc` is gitignored; never commit it.
 
 ### Step 4: Migrate and deploy
 
@@ -166,7 +168,7 @@ Report, with real values substituted:
 - Artifacts namespace `gitorange` (binding `ARTIFACTS`) — repositories appear there as they're created
 - Invitations sent from `<FROM_EMAIL>` (binding `EMAIL`)
 - R2 bucket `gitorange-lfs` (binding `LFS`) for Git LFS — R2 secrets `<set | not set yet>`
-- GitOrange Actions: Workflow `gitorange-actions-run`, `JobRunner` containers, logs in R2 bucket `gitorange-actions-logs`
+- GitOrange Actions: Workflow `gitorange-actions-run`, `JobRunner` containers, logs in R2 bucket `gitorange-actions-logs`, cache in `gitorange-actions-cache`
 - Admin account `<username>`
 - To update later: `git pull && yarn install && yarn db:migrate:prod && yarn deploy`
 

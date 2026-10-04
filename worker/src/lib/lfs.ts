@@ -42,7 +42,12 @@ export async function presign(
   env: CloudflareBindings,
   key: string,
   method: 'GET' | 'PUT',
-  opts: { headers?: Record<string, string>; filename?: string } = {}
+  opts: {
+    headers?: Record<string, string>;
+    filename?: string;
+    /** Another bucket the R2 API token can reach (default: the LFS bucket). */
+    bucket?: string;
+  } = {}
 ): Promise<string> {
   const client = new AwsClient({
     accessKeyId: env.R2_ACCESS_KEY_ID,
@@ -51,7 +56,7 @@ export async function presign(
     region: 'auto',
   });
   const url = new URL(
-    `https://${env.R2_ACCOUNT_ID}.r2.cloudflarestorage.com/${env.LFS_BUCKET_NAME}/${key}`
+    `https://${env.R2_ACCOUNT_ID}.r2.cloudflarestorage.com/${opts.bucket ?? env.LFS_BUCKET_NAME}/${key}`
   );
   url.searchParams.set('X-Amz-Expires', String(LFS_URL_TTL_SECONDS));
   if (opts.filename) {

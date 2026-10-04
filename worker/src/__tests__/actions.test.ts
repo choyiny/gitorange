@@ -389,7 +389,7 @@ describe('Actions execution', () => {
       `/api/repos/octocat/app/actions/runs/1/jobs/${jobs[0].id}/steps/1/logs`,
       { cookie: s.admin }
     );
-    expect(await setupLog.text()).toContain('standard-1');
+    expect(await setupLog.text()).toContain('standard-2');
   });
 
   it('skips later steps after a failure but runs if: always() steps', async () => {
@@ -516,7 +516,7 @@ jobs:
   test:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/cache@v4
+      - uses: actions/upload-artifact@v4
         continue-on-error: true
       - uses: some/action@v1
       - run: echo after
@@ -665,5 +665,171 @@ describe('Actions API', () => {
     });
     expect(del.ok).toBe(true);
     expect(await listed()).toBe(0);
+  });
+});
+
+describe('Actions cache', () => {
+  const NODE_CI = `on: push
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: yarn
+      - run: yarn install --frozen-lockfile
+`;
+  const files = {
+    '.github/workflows/ci.yml': NODE_CI,
+    'package.json': '{"name":"app"}\n',
+    'yarn.lock': '# yarn lockfile v1\n',
+  };
+  const repoId = async (t: TestEnv) =>
+    (await t.env.DB.prepare('SELECT id FROM repositories').first<{
+      id: string;
+    }>())!.id;
+
+  it('caches node_modules for setup-node: a miss saves after the job, the next run restores', async () => {
+    const s = await setup();
+    await pushFiles(s, 'main', files);
+    let [queued] = (await runs(s.t, s.admin)).runs;
+    let h = harness(s.t);
+    expect(await h.run(queued.id)).toBe('success');
+
+    const { jobs } = await runDetail(s.t, s.admin, 1);
+    expect(jobs[0].steps.map((x) => [x.name, x.conclusion])).toEqual([
+      ['Set up job', 'success'],
+      ['Run actions/checkout@v4', 'success'],
+      ['Run actions/setup-node@v4', 'success'],
+      ['Run yarn install --frozen-lockfile', 'success'],
+      ['Post Run actions/setup-node@v4', 'success'],
+      ['Complete job', 'success'],
+    ]);
+    // setup-node uses the preinstalled Node.js: no download, a note about the request.
+    const setupNode = script(h.requests[1]);
+    expect(setupNode).not.toMatch(/\bn -q\b|npm install -g/);
+    expect(setupNode).toContain('node-version 22 was requested');
+    expect(setupNode).toMatch(
+      /Cache not found for node-modules-yarn-linux-x64-node24-[0-9a-f]{32}/
+    );
+    // The post step uploads node_modules straight to R2 with a masked, pre-signed URL.
+    const save = h.requests[3];
+    expect(script(save)).toContain("'/workspace/node_modules'");
+    const url = save.env.CACHE_URL;
+    expect(url).toContain(
+      `/gitorange-actions-cache-test/actions-cache/${await repoId(s.t)}/refs~2fheads~2fmain/node-modules-yarn-`
+    );
+    expect(url).toContain('X-Amz-Signature=');
+    expect(save.masks).toEqual([url]);
+
+    // Pretend the upload landed, then run again on a new commit with the same lockfile.
+    // The URL's path is exactly the object key: nothing for S3 to decode differently.
+    const objectKey = new URL(url).pathname.split(
+      '/gitorange-actions-cache-test/'
+    )[1];
+    expect(objectKey).not.toContain('%');
+    await s.t.env.ACTIONS_CACHE.put(objectKey, 'tarball');
+    await pushFiles(s, 'main', { ...files, 'README.md': 'v2\n' }, 'Docs');
+    [queued] = (await runs(s.t, s.admin)).runs;
+    h = harness(s.t);
+    expect(await h.run(queued.id)).toBe('success');
+    const restore = h.requests[1];
+    expect(script(restore)).toContain('Restoring cache: node-modules-yarn-');
+    expect(script(restore)).toContain('cache-hit=true');
+    expect(restore.env.CACHE_URL).toContain('X-Amz-Signature=');
+    expect(restore.masks).toEqual([restore.env.CACHE_URL]);
+    // Exact hit: nothing to save, so the post step never reaches the runner.
+    expect(h.requests).toHaveLength(3);
+    const second = await runDetail(s.t, s.admin, 2);
+    expect(second.jobs[0].steps[4]).toMatchObject({
+      name: 'Post Run actions/setup-node@v4',
+      conclusion: 'skipped',
+    });
+  });
+
+  it('lets a branch restore from the default branch, but saves only to its own', async () => {
+    const s = await setup();
+    const id = await repoId(s.t);
+    await s.t.env.ACTIONS_CACHE.put(
+      `actions-cache/${id}/refs~2fheads~2fmain/deps-old.tar.zst`,
+      'tarball'
+    );
+    await pushFiles(s, 'feature', {
+      '.github/workflows/ci.yml': `on: push
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/cache@v4
+        id: deps
+        with:
+          path: |
+            node_modules
+            ~/.cache/tool
+          key: deps-new
+          restore-keys: deps-
+      - run: echo "hit=\${{ steps.deps.outputs.cache-hit }}"
+`,
+    });
+    const [queued] = (await runs(s.t, s.admin)).runs;
+    const h = harness(s.t);
+    expect(await h.run(queued.id)).toBe('success');
+    const restore = script(h.requests[0]);
+    expect(restore).toContain('Restoring cache: deps-old');
+    expect(restore).toContain('cache-hit=false'); // a restore key, not the exact key
+    // The post step saves under the branch, never under main.
+    const saveUrl = h.requests[2].env.CACHE_URL;
+    expect(saveUrl).toContain(`/${id}/refs~2fheads~2ffeature/deps-new.tar.zst`);
+    expect(script(h.requests[2])).toContain("'/root/.cache/tool'");
+  });
+
+  it('does not save after a failed job', async () => {
+    const s = await setup();
+    await pushFiles(s, 'main', files);
+    const [queued] = (await runs(s.t, s.admin)).runs;
+    const h = harness(s.t, (req) =>
+      script(req).startsWith('yarn install') ? { exitCode: 1 } : {}
+    );
+    expect(await h.run(queued.id)).toBe('failure');
+    expect(h.requests).toHaveLength(3); // checkout, setup-node, install; no save
+    const { jobs } = await runDetail(s.t, s.admin, 1);
+    expect(jobs[0].steps[4]).toMatchObject({ conclusion: 'skipped' });
+  });
+
+  it('runs without a cache when the server has none set up', async () => {
+    const s = await setup();
+    (
+      s.t.env as { ACTIONS_CACHE_BUCKET_NAME?: string }
+    ).ACTIONS_CACHE_BUCKET_NAME = '';
+    await pushFiles(s, 'main', files);
+    const [queued] = (await runs(s.t, s.admin)).runs;
+    const h = harness(s.t);
+    expect(await h.run(queued.id)).toBe('success');
+    expect(script(h.requests[1])).toContain('The Actions cache isn');
+    expect(h.requests).toHaveLength(3);
+  });
+
+  it('evicts the oldest entries past the per-repository cap, and deletes with the repository', async () => {
+    const { enforceCacheLimit, deleteRepositoryCache } =
+      await import('../actions/cache');
+    const s = await setup();
+    const id = await repoId(s.t);
+    for (const k of ['a', 'b', 'c']) {
+      await s.t.env.ACTIONS_CACHE.put(
+        `actions-cache/${id}/r/${k}.tar.zst`,
+        'x'.repeat(10)
+      );
+      await new Promise((r) => setTimeout(r, 5));
+    }
+    expect(await enforceCacheLimit(s.t.env, id, 20)).toEqual([
+      `actions-cache/${id}/r/a.tar.zst`,
+    ]);
+    await deleteRepositoryCache(s.t.env, id);
+    expect(
+      (await s.t.env.ACTIONS_CACHE.list({ prefix: `actions-cache/${id}/` }))
+        .objects
+    ).toEqual([]);
   });
 });

@@ -181,7 +181,7 @@ jobs:
   });
 
   it('refuses non-Linux runners and caps matrix size', () => {
-    expect(instanceTypeFor('ubuntu-latest')).toBe('standard-1');
+    expect(instanceTypeFor('ubuntu-latest')).toBe('standard-2');
     expect(instanceTypeFor('standard-4')).toBe('standard-4');
     expect(() => instanceTypeFor('macos-latest')).toThrow(/Linux jobs only/);
     const big = parseWorkflow(

@@ -2,6 +2,18 @@ import type { WorkflowStepConfig } from 'cloudflare:workers';
 import { and, eq, inArray } from 'drizzle-orm';
 import { pingingSteps } from '../live/publish';
 import { autoMergeForCommit } from '../review/auto-merge';
+import {
+  absolutePaths,
+  cacheConfigured,
+  cacheObjectKey,
+  cacheUrl,
+  enforceCacheLimit,
+  findCacheEntry,
+  nodeModulesKey,
+  restoreScript,
+  RUNNER_NODE_MAJOR,
+  saveScript,
+} from './cache';
 import type { DrizzleD1Database } from 'drizzle-orm/d1';
 import type { schema } from '../db/schema';
 import { users } from '../db/auth.schema';
@@ -13,6 +25,7 @@ import {
   type WorkflowJob,
 } from '../db/app.schema';
 import { ArtifactsRepoClient } from '../git/remote';
+import { GitService } from '../git/service';
 import { gitFor, findRepoById } from '../lib/repos';
 import {
   ExpressionError,
@@ -24,7 +37,7 @@ import {
   type Value,
 } from './expressions';
 import { WORKSPACE, type JobRunnerApi, type StepRequest } from './job-runner';
-import { instanceTypeFor } from './plan';
+import { instanceTypeFor, postStepIndexes } from './plan';
 import { githubContext, readWorkflowFiles } from './trigger';
 import {
   parseWorkflow,
@@ -75,6 +88,7 @@ interface RunContext {
   repoId: string;
   repoFullName: string;
   artifactsName: string;
+  defaultBranch: string;
   status: string;
   event: string;
   ref: string;
@@ -126,6 +140,7 @@ async function loadRun(
     repoId: found.repo.id,
     repoFullName: `${found.namespace.username}/${found.repo.name}`,
     artifactsName: found.repo.artifactsName,
+    defaultBranch: found.repo.defaultBranch,
     status: run.status,
     event: run.event,
     ref: run.ref,
@@ -394,7 +409,10 @@ async function runJob(
   const runner = deps.runner(job.id);
   const jobTimeoutMs = def.timeoutMinutes * 60_000;
   const deadline = Date.now() + jobTimeoutMs;
-  const lastStep = def.steps.length + 2;
+  const posts = postStepIndexes(def.steps);
+  const lastStep = def.steps.length + 2 + posts.length;
+  // What each caching step restored, for its post step (step results replay deterministically).
+  const caches = new Map<number, CacheState>();
 
   // ── Set up job ──
   const setup = await step.do(
@@ -521,6 +539,7 @@ async function runJob(
             envAdds: {},
             pathAdds: [],
           };
+          let cache: CacheState | null = null;
           if (prepError || !prepared) {
             log = `Error: ${prepError}`;
           } else {
@@ -532,6 +551,7 @@ async function runJob(
             });
             if ('error' in cmd) log = `Error: ${cmd.error}`;
             else {
+              cache = cmd.cache ?? null;
               const r = await runner.runStep(cmd.request);
               exitCode = r.exitCode;
               log = (cmd.preamble ? cmd.preamble + '\n' : '') + r.log;
@@ -546,7 +566,7 @@ async function runJob(
           }
           const outcome: Conclusion = exitCode === 0 ? 'success' : 'failure';
           await putLog(env, ctx, job.id, number, log);
-          return { outcome, ...out };
+          return { outcome, ...out, cache };
         }
       )
       .catch((e: unknown) => ({
@@ -554,8 +574,11 @@ async function runJob(
         outputs: {},
         envAdds: {},
         pathAdds: [],
+        cache: null,
         crash: e instanceof Error ? e.message : String(e),
       }));
+    if (result.cache && result.outcome === 'success')
+      caches.set(i, result.cache);
 
     const continueOnError =
       typeof s.continueOnError === 'string'
@@ -585,6 +608,64 @@ async function runJob(
     envAdds = { ...envAdds, ...result.envAdds };
     pathAdds = [...result.pathAdds, ...pathAdds];
     if (conclusion === 'failure') jobStatus = 'failure';
+  }
+
+  // ── Post steps: save caches (GitHub runs them in reverse, on success only) ──
+  for (const [k, i] of posts.entries()) {
+    const number = def.steps.length + 2 + k;
+    const state = caches.get(i);
+    await step.do(
+      `${name}:post:${number}`,
+      { ...NO_RETRY, timeout: '30 minutes' },
+      async () => {
+        const now = new Date();
+        await setStep(db, job.id, number, {
+          status: 'in_progress',
+          startedAt: now,
+        });
+        let log: string;
+        let ran = true;
+        if (jobStatus !== 'success') {
+          log = 'The job failed, so the cache is not saved.';
+          ran = false;
+        } else if (!state) {
+          log = 'Nothing to save: the cache step did not run.';
+          ran = false;
+        } else if (state.exact) {
+          log = `Cache hit on ${state.key}; nothing to save.`;
+          ran = false;
+        } else {
+          try {
+            const objectKey = cacheObjectKey(ctx.repoId, ctx.ref, state.key);
+            const url = await cacheUrl(env, objectKey, 'PUT');
+            const r = await runner.runStep({
+              number,
+              argv: [...SHELLS.bash, saveScript(state.paths, state.key)],
+              cwd: WORKSPACE,
+              env: { CACHE_URL: url, PATH: DEFAULT_PATH, HOME: '/root' },
+              timeoutMs: 25 * 60_000,
+              masks: [url],
+            });
+            log = r.log;
+            if (r.exitCode !== 0)
+              log +=
+                '\nWarning: the cache could not be saved; the job is unaffected.';
+            else await enforceCacheLimit(env, ctx.repoId);
+          } catch (e) {
+            log = `Warning: the cache could not be saved: ${e instanceof Error ? e.message : String(e)}`;
+          }
+        }
+        await putLog(env, ctx, job.id, number, log);
+        // Saving is best effort, like GitHub's: it never fails the job.
+        await setStep(db, job.id, number, {
+          status: 'completed',
+          conclusion: ran ? 'success' : 'skipped',
+          completedAt: new Date(),
+          logR2Key: logKey(ctx.repoId, ctx.runId, job.id, number),
+        });
+        return true;
+      }
+    );
   }
 
   // ── Complete job ──
@@ -688,7 +769,10 @@ async function buildCommand(
     pathAdds: string[];
     remainingMs: number;
   }
-): Promise<{ request: StepRequest; preamble?: string } | { error: string }> {
+): Promise<
+  | { request: StepRequest; preamble?: string; cache?: CacheState }
+  | { error: string }
+> {
   const timeoutMs = Math.max(
     1000,
     Math.min(
@@ -808,32 +892,156 @@ async function buildCommand(
     }
 
     if (action === 'actions/setup-node') {
-      const version = (withArgs['node-version'] ?? '')
-        .replace(/^v/, '')
-        .replace(/^lts\/\*$/, 'lts');
-      const script = [
-        `if [ -z "$NODE_VERSION" ]; then echo "Using the preinstalled Node.js $(node -v)";`,
-        `elif node -v | grep -Eq "^v$(printf '%s' "$NODE_VERSION" | sed 's/[.]x$//; s/[.]/\\\\./g')([.]|$)"; then echo "Node.js $(node -v) is already installed";`,
-        `else echo "Installing Node.js $NODE_VERSION"; npm install -g --silent n && n -q "$NODE_VERSION"; hash -r; fi`,
-        `echo "node $(node -v), npm $(npm -v)"`,
-      ].join('\n');
+      // GitOrange runners use the image's preinstalled Node.js (current release) rather than
+      // downloading another one per job.
+      const requested = (withArgs['node-version'] ?? '').replace(/^v/, '');
+      const lines = [
+        'echo "Using the preinstalled Node.js $(node -v), npm $(npm -v)"',
+        ...(requested
+          ? [
+              `case "$(node -v)" in v${requested.replace(/[^0-9.]/g, '').replace(/\.x$/, '')}*) ;; *) echo ${quoteSh(`Note: node-version ${requested} was requested; GitOrange runners provide the preinstalled Node.js instead.`)} ;; esac`,
+            ]
+          : []),
+      ];
+      let cache: CacheState | undefined;
+      const env2: Record<string, string> = { ...stepEnv };
+      const masks: string[] = [];
+      const manager = withArgs.cache?.trim();
+      if (manager) {
+        const restore = await prepareRestore(env, ctx, {
+          paths: [`${WORKSPACE}/node_modules`],
+          key: async () => {
+            const k = await nodeModulesKey(
+              gitForRun(env, ctx),
+              ctx.headSha,
+              manager,
+              RUNNER_NODE_MAJOR,
+              withArgs['cache-dependency-path']
+            );
+            return 'error' in k ? k : { key: k.key };
+          },
+          restoreKeys: [],
+          label: 'node_modules',
+        });
+        lines.push(restore.script);
+        if (restore.url) {
+          env2.CACHE_URL = restore.url;
+          masks.push(restore.url);
+        }
+        cache = restore.state ?? undefined;
+      }
       return {
         request: {
           number: state.number,
-          argv: [...SHELLS.bash, script],
+          argv: [...SHELLS.bash, lines.join('\n')],
           cwd: WORKSPACE,
-          env: { ...stepEnv, NODE_VERSION: version },
+          env: env2,
           timeoutMs,
-          masks: [],
+          masks,
         },
+        cache,
+      };
+    }
+
+    if (action === 'actions/cache') {
+      const paths = absolutePaths((withArgs.path ?? '').split('\n'), WORKSPACE);
+      const key = withArgs.key?.trim();
+      if (!paths.length || !key)
+        return { error: 'actions/cache needs `path` and `key`.' };
+      const restore = await prepareRestore(env, ctx, {
+        paths,
+        key: async () => ({ key }),
+        restoreKeys: (withArgs['restore-keys'] ?? '')
+          .split('\n')
+          .map((k) => k.trim())
+          .filter(Boolean),
+        label: key,
+      });
+      return {
+        request: {
+          number: state.number,
+          argv: [...SHELLS.bash, restore.script],
+          cwd: WORKSPACE,
+          env: restore.url ? { ...stepEnv, CACHE_URL: restore.url } : stepEnv,
+          timeoutMs,
+          masks: restore.url ? [restore.url] : [],
+        },
+        cache: restore.state ?? undefined,
       };
     }
 
     return {
-      error: `GitOrange Actions doesn't run \`uses: ${uses}\` yet. Supported actions: actions/checkout and actions/setup-node. Use a \`run:\` step instead.`,
+      error: `GitOrange Actions doesn't run \`uses: ${uses}\` yet. Supported actions: actions/checkout, actions/setup-node, and actions/cache. Use a \`run:\` step instead.`,
     };
   } catch (e) {
     if (e instanceof ExpressionError) return { error: e.message };
     throw e;
   }
+}
+
+// ── cache ────────────────────────────────────────────────────────────────────
+
+/** What a caching step restored; its post step saves under `key` unless it was an exact hit. */
+export type CacheState = { key: string; paths: string[]; exact: boolean };
+
+const quoteSh = (t: string) => `'${t.replace(/'/g, `'\\''`)}'`;
+
+function gitForRun(env: CloudflareBindings, ctx: RunContext) {
+  return new GitService(
+    new ArtifactsRepoClient(env.ARTIFACTS, ctx.artifactsName)
+  );
+}
+
+/**
+ * Finds the entry to restore and returns the script that restores it (with its pre-signed URL)
+ * plus the state its post step needs. Missing configuration or a miss is reported in the log and
+ * never fails the step; `cache-hit` is written to the step's outputs either way.
+ */
+async function prepareRestore(
+  env: CloudflareBindings,
+  ctx: RunContext,
+  opts: {
+    paths: string[];
+    key: () => Promise<{ key: string } | { error: string }>;
+    restoreKeys: string[];
+    label: string;
+  }
+): Promise<{ script: string; url: string | null; state: CacheState | null }> {
+  const say = (t: string, hit = false) =>
+    `echo ${quoteSh(t)}\necho "cache-hit=${hit}" >> "$GITHUB_OUTPUT"`;
+  if (!cacheConfigured(env))
+    return {
+      script: say(
+        "The Actions cache isn't set up on this server; continuing without it."
+      ),
+      url: null,
+      state: null,
+    };
+  const k = await opts.key();
+  if ('error' in k) return { script: say(k.error), url: null, state: null };
+  const refs = [ctx.ref, `refs/heads/${ctx.defaultBranch}`];
+  const found = await findCacheEntry(
+    env,
+    ctx.repoId,
+    refs,
+    k.key,
+    opts.restoreKeys
+  );
+  const state: CacheState = {
+    key: k.key,
+    paths: opts.paths,
+    exact: !!found?.exact,
+  };
+  if (!found)
+    return { script: say(`Cache not found for ${k.key}`), url: null, state };
+  const url = await cacheUrl(env, found.objectKey, 'GET');
+  return {
+    script:
+      restoreScript(
+        opts.paths,
+        `${found.key} (${Math.round(found.size / 1048576)} MB)`
+      ) + `\necho "cache-hit=${found.exact}" >> "$GITHUB_OUTPUT"`,
+    url,
+    state,
+  };
 }

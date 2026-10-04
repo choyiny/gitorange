@@ -19,7 +19,8 @@
   "send_email": [{ "name": "EMAIL" }],
   "r2_buckets": [
     { "binding": "LFS", "bucket_name": "gitorange-lfs" },
-    { "binding": "ACTIONS_LOGS", "bucket_name": "gitorange-actions-logs" }
+    { "binding": "ACTIONS_LOGS", "bucket_name": "gitorange-actions-logs" },
+    { "binding": "ACTIONS_CACHE", "bucket_name": "gitorange-actions-cache" }
   ],
   "containers": [
     {
@@ -60,6 +61,7 @@
     "FROM_EMAIL": "noreply@example.com",
     "R2_ACCOUNT_ID": "00000000000000000000000000000000",
     "LFS_BUCKET_NAME": "gitorange-lfs",
+    "ACTIONS_CACHE_BUCKET_NAME": "gitorange-actions-cache",
     // Workers AI model that resolves merge conflicts (pi agent with file tools).
     "RESOLVER_MODEL": "@cf/zai-org/glm-5.3",
     "SUMMARY_MODEL": "@cf/zai-org/glm-5.3-flash",
