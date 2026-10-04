@@ -21,6 +21,11 @@ jobs:
       - uses: actions/setup-node@v7
         with:
           node-version: 22
-          cache: yarn
-      - run: yarn install --frozen-lockfile
-      - run: yarn format:check
+      # Only Prettier, not the whole dependency tree: the exact version yarn.lock pins, so the
+      # check matches `yarn format` locally.
+      - name: Install Prettier
+        run: |
+          version=$(awk '/^prettier@/ { getline; gsub(/"/, "", $2); print $2; exit }' yarn.lock)
+          yarn global add "prettier@$version" --silent
+          yarn global bin >> "$GITHUB_PATH"
+      - run: prettier --check .
