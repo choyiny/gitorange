@@ -20,6 +20,8 @@ import {
 } from './openapi-helpers';
 import { ownerRepoParams, publicUserSchema } from './schemas';
 import { runnersStopped } from '../usage/record';
+import { dropRun, queuePositions } from '../actions/queue';
+import { finishAbandoned } from '../actions/abandon';
 
 export const actionsRouter = new OpenAPIHono<RepoEnv>({
   defaultHook: validationHook,
@@ -70,6 +72,8 @@ const jobSchema = z
     name: z.string(),
     runsOn: z.string(),
     needs: z.array(z.string()),
+    /** Jobs ahead of this one in the instance's queue; null when it isn't waiting for a slot. */
+    queuedAhead: z.number().nullable(),
     status: statusEnum,
     conclusion: conclusionEnum,
     startedAt: z.string().nullable(),
@@ -220,6 +224,7 @@ async function reconcile(
       run.id,
       status === 'terminated' ? 'cancelled' : 'failure'
     );
+    await dropRun(env, run.id);
     return (await db
       .select()
       .from(workflowRuns)
@@ -228,64 +233,6 @@ async function reconcile(
   } catch {
     return run;
   }
-}
-
-/** Marks a run and everything still open in it as finished. */
-async function finishAbandoned(
-  db: RepoEnv['Variables']['db'],
-  runId: string,
-  conclusion: 'cancelled' | 'failure'
-) {
-  const now = new Date();
-  const open = inArray(workflowJobs.status, ['queued', 'in_progress']);
-  const jobIds = (
-    await db
-      .select({ id: workflowJobs.id })
-      .from(workflowJobs)
-      .where(and(eq(workflowJobs.runId, runId), open))
-      .all()
-  ).map((j) => j.id);
-  await db.batch([
-    db
-      .update(workflowRuns)
-      .set({
-        status: 'completed',
-        conclusion,
-        completedAt: now,
-        errorMessage:
-          conclusion === 'failure'
-            ? 'The run stopped unexpectedly. Try re-running it.'
-            : null,
-      })
-      .where(
-        and(
-          eq(workflowRuns.id, runId),
-          inArray(workflowRuns.status, ['queued', 'in_progress'])
-        )
-      ),
-    db
-      .update(workflowJobs)
-      .set({ status: 'completed', conclusion, completedAt: now })
-      .where(and(eq(workflowJobs.runId, runId), open)),
-    ...(jobIds.length
-      ? [
-          db
-            .update(workflowSteps)
-            .set({
-              status: 'completed',
-              conclusion: sql`CASE WHEN status = 'in_progress' THEN ${conclusion} ELSE 'skipped' END`,
-              completedAt: now,
-            })
-            .where(
-              and(
-                inArray(workflowSteps.jobId, jobIds),
-                inArray(workflowSteps.status, ['queued', 'in_progress'])
-              )
-            ),
-        ]
-      : []),
-  ]);
-  return jobIds;
 }
 
 const getRunRoute = createRoute({
@@ -325,6 +272,12 @@ actionsRouter.openapi(getRunRoute, async (c) => {
         .all()
     : [];
   const people = await usersById(db, [run.actorId ?? '']);
+  // A restarted job waits again while still in_progress, so ask about every unfinished job.
+  const waiting =
+    run.status === 'completed'
+      ? []
+      : jobs.filter((j) => j.status !== 'completed').map((j) => j.id);
+  const ahead = await queuePositions(c.env, waiting);
   return c.json(
     {
       run: serializeRun(run, people),
@@ -334,6 +287,7 @@ actionsRouter.openapi(getRunRoute, async (c) => {
         name: j.name,
         runsOn: j.runsOn,
         needs: j.needs,
+        queuedAhead: ahead[j.id] ?? null,
         status: j.status,
         conclusion: j.conclusion,
         startedAt: iso(j.startedAt),
@@ -444,7 +398,9 @@ actionsRouter.openapi(cancelRoute, async (c) => {
     c.executionCtx.waitUntil(
       Promise.allSettled(
         jobIds.map((id) => c.env.JOB_RUNNER.getByName(id).destroy())
-      ).then(() => runnersStopped(db, jobIds))
+      )
+        .then(() => runnersStopped(db, jobIds))
+        .then(() => dropRun(c.env, run.id))
     );
   return c.json({ ok: true as const }, 200);
 });

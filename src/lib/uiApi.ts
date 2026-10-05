@@ -402,6 +402,8 @@ export type WorkflowJob = {
   name: string;
   runsOn: string;
   needs: string[];
+  /** Jobs ahead of this one in the instance's queue; null when it isn't waiting for a slot. */
+  queuedAhead: number | null;
   status: RunStatus;
   conclusion: RunConclusion;
   startedAt: string | null;

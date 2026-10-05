@@ -126,9 +126,11 @@ function JobLog({
           <div className="f6" style={{ color: '#8b949e' }}>
             {job.status === 'completed'
               ? `${runStatusLabel(job.status, job.conclusion).toLowerCase()} ${job.completedAt ? timeAgo(job.completedAt) : ''} in ${duration(job.startedAt, job.completedAt)}`
-              : job.status === 'in_progress'
-                ? `started ${job.startedAt ? timeAgo(job.startedAt) : ''}`
-                : 'Waiting for a runner'}
+              : job.queuedAhead !== null
+                ? `Queued (${job.queuedAhead} ahead)`
+                : job.status === 'in_progress'
+                  ? `started ${job.startedAt ? timeAgo(job.startedAt) : ''}`
+                  : 'Waiting for a runner'}
           </div>
         </div>
       </div>
@@ -379,9 +381,11 @@ export default function RunView() {
                         />
                         <span className="flex-1 text-bold f6">{j.name}</span>
                         <span className="f6 color-fg-muted">
-                          {j.startedAt && j.conclusion !== 'skipped'
-                            ? duration(j.startedAt, j.completedAt, now)
-                            : ''}
+                          {j.queuedAhead !== null
+                            ? `Queued (${j.queuedAhead} ahead)`
+                            : j.startedAt && j.conclusion !== 'skipped'
+                              ? duration(j.startedAt, j.completedAt, now)
+                              : ''}
                         </span>
                       </Link>
                     ))}

@@ -1,212 +1,25 @@
 import { describe, expect, it } from 'vitest';
-import { drizzle } from 'drizzle-orm/d1';
-import { handleGitRequest } from '../git-http';
-import { concat } from '../git/bytes';
-import { FLUSH, pktLine } from '../git/pktline';
-import { buildPack } from '../git/pack';
-import { schema } from '../db/schema';
-import { executeRun, type StepRunner } from '../actions/executor';
-import type {
-  JobRunnerApi,
-  StepRequest,
-  StepResult,
-} from '../actions/job-runner';
 import {
+  addMember,
   bootstrapAdmin,
   call,
   makeEnv,
   settle,
-  addMember,
   type TestEnv,
 } from './helpers/app';
 import { commitPaths } from './helpers/seed';
-
-const CI = `name: CI
-on:
-  push:
-    branches: [main]
-  pull_request:
-jobs:
-  test:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - id: build
-        run: echo building
-      - run: npm test
-`;
-
-type Run = {
-  id: string;
-  runNumber: number;
-  name: string;
-  event: string;
-  ref: string;
-  refName: string;
-  pullRequestNumber: number | null;
-  headSha: string;
-  displayTitle: string;
-  actor: { username: string } | null;
-  status: string;
-  conclusion: string | null;
-  errorMessage: string | null;
-};
-type Job = {
-  id: string;
-  name: string;
-  status: string;
-  conclusion: string | null;
-  steps: {
-    number: number;
-    name: string;
-    status: string;
-    conclusion: string | null;
-  }[];
-};
-
-async function pat(t: TestEnv, cookie: string) {
-  const res = await call(t, '/api/tokens', {
-    cookie,
-    json: { name: 'cli', expiresInDays: 30 },
-  });
-  return ((await res.json()) as { plaintext: string }).plaintext;
-}
-
-/** A `git push` through the proxy: objects go into the fake repo, receive-pack moves the ref. */
-async function push(
-  t: TestEnv,
-  token: string,
-  path: string,
-  ref: string,
-  oldSha: string,
-  newSha: string
-) {
-  const body = concat([
-    pktLine(`${oldSha} ${newSha} ${ref}\0report-status\n`),
-    FLUSH,
-    await buildPack([]),
-  ]);
-  const res = await handleGitRequest(
-    new Request(`http://test.local${path}/git-receive-pack`, {
-      method: 'POST',
-      headers: {
-        Authorization: `Basic ${btoa(`u:${token}`)}`,
-        'Content-Type': 'application/x-git-receive-pack-request',
-      },
-      body,
-    }),
-    t.env,
-    t.ctx
-  );
-  expect(res.status).toBe(200);
-  await settle(t);
-}
-
-async function setup() {
-  const t = makeEnv({ actions: true });
-  const admin = await bootstrapAdmin(t);
-  await call(t, '/api/repos', {
-    cookie: admin,
-    json: { name: 'app', addReadme: true, visibility: 'internal' },
-  });
-  const repo = [...t.fake.repos.values()][0];
-  const token = await pat(t, admin);
-  return { t, admin, repo, token };
-}
-
-/** Commits `files` on `branch` and pushes it through the proxy. Returns the new sha. */
-async function pushFiles(
-  s: Awaited<ReturnType<typeof setup>>,
-  branch: string,
-  files: Record<string, string>,
-  message = 'Add CI'
-) {
-  const old = s.repo.refs.get(`refs/heads/${branch}`) ?? '0'.repeat(40);
-  // Build on the branch's tip without moving it; the push moves it.
-  const sha = await commitPaths(s.repo, branch, files, message, {
-    moveRef: false,
-  });
-  await push(
-    s.t,
-    s.token,
-    '/octocat/app.git',
-    `refs/heads/${branch}`,
-    old,
-    sha
-  );
-  return sha;
-}
-
-async function runs(t: TestEnv, cookie: string) {
-  const res = await call(t, '/api/repos/octocat/app/actions/runs', { cookie });
-  expect(res.status).toBe(200);
-  return (await res.json()) as {
-    configured: boolean;
-    totalCount: number;
-    workflows: { path: string; name: string }[];
-    runs: Run[];
-  };
-}
-
-async function runDetail(t: TestEnv, cookie: string, n: number) {
-  const res = await call(t, `/api/repos/octocat/app/actions/runs/${n}`, {
-    cookie,
-  });
-  return (await res.json()) as { run: Run; jobs: Job[] };
-}
-
-/** Drives executeRun with a direct-call step and a scripted container. */
-function harness(
-  t: TestEnv,
-  onStep: (
-    req: StepRequest
-  ) => Partial<StepResult> | Promise<Partial<StepResult>> = () => ({})
-) {
-  const requests: StepRequest[] = [];
-  const destroyed: string[] = [];
-  const boots: string[] = [];
-  const stepNames: string[] = [];
-  const step = {
-    do: async (name: string, a: unknown, b?: unknown) => {
-      stepNames.push(name);
-      return ((b ?? a) as () => Promise<unknown>)();
-    },
-  } as unknown as StepRunner;
-  const runner = (jobId: string): JobRunnerApi => ({
-    boot: async () => {
-      boots.push(jobId);
-      return { ms: 420 };
-    },
-    runStep: async (req) => {
-      requests.push(req);
-      const scripted = await onStep(req);
-      return {
-        exitCode: 0,
-        timedOut: false,
-        log: `ran ${req.argv[req.argv.length - 1].split('\n')[0]}`,
-        outputs: {},
-        envAdds: {},
-        pathAdds: [],
-        ...scripted,
-      };
-    },
-    destroy: async () => void destroyed.push(jobId),
-  });
-  const run = (runId: string) =>
-    executeRun(
-      {
-        env: t.env,
-        db: drizzle(t.env.DB, { schema }),
-        step,
-        runner,
-        restartDelayMs: 0,
-      },
-      runId
-    );
-  return { run, requests, destroyed, boots, stepNames };
-}
-
-const script = (r: StepRequest) => r.argv[r.argv.length - 1];
+import {
+  CI,
+  harness,
+  pat,
+  push,
+  pushFiles,
+  runDetail,
+  runs,
+  script,
+  setup,
+  type Run,
+} from './helpers/actions';
 
 describe('Actions triggers', () => {
   it("names each workflow after its own latest run, not the repository's latest run", async () => {

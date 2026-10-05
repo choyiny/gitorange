@@ -38,7 +38,7 @@
   // GitOrange Actions. Each run is a Workflow; each job gets its own container, started by a
   // JobRunner Durable Object (scheduling policy "durable_object"), which picks the instance size
   // from the job's runs-on. Wrangler builds the runner image from actions/runner/Dockerfile on
-  // deploy. Step logs go to R2. Remove these four entries to deploy without Actions.
+  // deploy. Step logs go to R2. The ActionsQueue Durable Object caps how many jobs run at once (Site admin → Settings). Remove these entries to deploy without Actions.
   "containers": [
     {
       "class_name": "JobRunner",
@@ -49,12 +49,14 @@
   "durable_objects": {
     "bindings": [
       { "name": "JOB_RUNNER", "class_name": "JobRunner" },
+      { "name": "ACTIONS_QUEUE", "class_name": "ActionsQueue" },
       { "name": "MERGE_RESOLVER", "class_name": "MergeResolver" },
       { "name": "LIVE", "class_name": "LiveHub" }
     ]
   },
   "exports": {
     "JobRunner": { "type": "durable-object", "storage": "sqlite" },
+    "ActionsQueue": { "type": "durable-object", "storage": "sqlite" },
     "MergeResolver": { "type": "durable-object", "storage": "sqlite" },
     "LiveHub": { "type": "durable-object", "storage": "sqlite" }
   },
@@ -136,6 +138,7 @@
       "durable_objects": {
         "bindings": [
           { "name": "JOB_RUNNER", "class_name": "JobRunner" },
+          { "name": "ACTIONS_QUEUE", "class_name": "ActionsQueue" },
           { "name": "MERGE_RESOLVER", "class_name": "MergeResolver" },
           { "name": "LIVE", "class_name": "LiveHub" }
         ]

@@ -42,10 +42,11 @@ export function connectLive(
   return hub(env).fetch(new Request(request.url, { headers }));
 }
 
-/** The `do` of a Workflow step runner, as the executors use it. */
+/** The parts of a Workflow step runner the executors use. */
 interface Steps {
   do<T>(name: string, ...args: unknown[]): Promise<T>;
   sleep?(name: string, duration: number): Promise<void>;
+  waitForEvent?(name: string, options: unknown): Promise<unknown>;
 }
 
 /** Wraps a Workflow step runner so each completed step pings the repository. */
@@ -65,5 +66,9 @@ export function pingingSteps<S>(
     // Sleeping changes nothing anyone sees: no ping.
     sleep: (name, duration) => inner.sleep!(name, duration),
   };
+  // Waiting changes nothing on screen; the step after it pings.
+  if (inner.waitForEvent)
+    wrapped.waitForEvent = (name, options) =>
+      inner.waitForEvent!(name, options);
   return wrapped as unknown as S;
 }

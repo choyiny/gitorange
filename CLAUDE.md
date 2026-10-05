@@ -27,13 +27,17 @@ and better-auth. Git storage is **Cloudflare Artifacts**: one Artifacts repo per
   sharing the git endpoint's auth. Bytes go client ↔ R2 directly via pre-signed URLs (needs the
   `R2_ACCESS_KEY_ID`/`R2_SECRET_ACCESS_KEY` secrets); D1 `lfs_objects` holds bare R2 keys, never URLs. One copy
   per repository under `lfs/<repository id>/`, deleted with the repository.
-- Actions (`worker/src/actions/`): pushes/merges/PR opens queue `workflow_runs` rows (D1, written before the Workflow starts), an
-  `ActionsRun` Workflow executes jobs, and a `JobRunner` Durable Object per job owns its container (Cloudflare Containers,
-  `durable_object` scheduling, image `actions/runner/Dockerfile`). Step logs in R2 (`ACTIONS_LOGS`). Tests drive `executeRun`
-  with a fake step and runner; `makeEnv({ actions: true })` adds fake `ACTIONS_RUN`/`JOB_RUNNER` bindings. The cache
-  (`actions/cache.ts`): zstd tarballs in R2 `ACTIONS_CACHE`, moved by the runner via pre-signed URLs (never through the
-  Worker), scoped per ref (read own ref then default branch, write own ref), saved by "Post" steps. `setup-node` uses
-  the image's Node.js and its `cache:` caches `node_modules` keyed by lockfile. `ubuntu-latest` → `standard-2`.
+- Actions (`worker/src/actions/`): pushes/merges/PR opens queue `workflow_runs` rows (D1, written before the Workflow
+  starts), an `ActionsRun` Workflow executes jobs, and a `JobRunner` Durable Object per job owns its container
+  (Cloudflare Containers, `durable_object` scheduling, image `actions/runner/Dockerfile`). Step logs in R2
+  (`ACTIONS_LOGS`). Tests drive `executeRun` with a fake step and runner; `makeEnv({ actions: true })` adds fake
+  `ACTIONS_RUN`/`JOB_RUNNER` bindings and a fresh real `ACTIONS_QUEUE`. A job waits for a slot from the one
+  `ActionsQueue` DO (`actions/queue.ts`, setting `actions.max_concurrent_jobs`) before its container starts
+  (`step.waitForEvent`, rechecking after 5/10/20/30 minutes; fails open if the queue is unreachable); it gives the slot
+  back on complete, restart, and cancel. The cache (`actions/cache.ts`): zstd tarballs in R2 `ACTIONS_CACHE`, moved by
+  the runner via pre-signed URLs (never through the Worker), scoped per ref (read own ref then default branch, write own
+  ref), saved by "Post" steps. `setup-node` uses the image's Node.js and its `cache:` caches `node_modules` keyed by
+  lockfile. `ubuntu-latest` → `standard-2`.
 - MCP (`worker/src/mcp/`): `POST /mcp` is a hand-rolled JSON-RPC MCP server. better-auth's `@better-auth/oauth-provider`
   (+ `jwt()`) is the OAuth 2.1 authorization server; `/mcp` verifies JWT access tokens (audience `<origin>/mcp`) locally
   and requires the user's consent row, so disconnecting an app is immediate. Discovery routes live at the origin root.

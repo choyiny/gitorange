@@ -16,6 +16,8 @@ function SettingRow({
   onSaved: () => void;
 }) {
   const retention = s.key === 'actions.retention_days';
+  // Other number settings (e.g. actions.max_concurrent_jobs) save numbers, not text.
+  const numeric = !retention && typeof s.default === 'number';
   const [text, setText] = useState('');
   const [forever, setForever] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -30,7 +32,13 @@ function SettingRow({
     } else setText(String(s.value ?? ''));
   }, [s.value, retention]);
 
-  const current = retention ? (forever ? null : Number(text)) : text.trim();
+  const current = retention
+    ? forever
+      ? null
+      : Number(text)
+    : numeric
+      ? Number(text)
+      : text.trim();
   const dirty = current !== s.value;
 
   const run = async (fn: () => Promise<unknown>) => {
@@ -95,6 +103,18 @@ function SettingRow({
               Keep forever
             </label>
           </>
+        ) : numeric ? (
+          <input
+            id={`setting-${s.key}`}
+            className="form-control"
+            type="number"
+            min={1}
+            step={1}
+            style={{ width: 100 }}
+            value={text}
+            onChange={(e) => setText(e.target.value)}
+            required
+          />
         ) : (
           <input
             id={`setting-${s.key}`}

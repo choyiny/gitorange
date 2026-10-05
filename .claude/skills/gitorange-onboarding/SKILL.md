@@ -126,7 +126,7 @@ Fill in the top level (production):
 
 Also replace the `FROM_EMAIL` and `R2_ACCOUNT_ID` placeholders in `env.dev.vars` so local development works later.
 
-Do not rename bindings — the code looks them up by name: `DB`, `ARTIFACTS`, `EMAIL`, `LFS`, `ACTIONS_LOGS`, `ACTIONS_CACHE`, `ACTIONS_RUN`, `JOB_RUNNER`, `MERGE_RESOLVER`, `MERGE_RESOLUTION`, `LIVE`, `AI`, `ASSETS`. Keep the `containers`, `durable_objects`, `exports`, `workflows`, and `ai` entries as shipped: they run Actions, AI conflict resolution, the auto-merge review, and live page updates. Keep `assets.run_worker_first` as shipped; the git endpoint depends on it. `wrangler.jsonc` is gitignored; never commit it.
+Do not rename bindings — the code looks them up by name: `DB`, `ARTIFACTS`, `EMAIL`, `LFS`, `ACTIONS_LOGS`, `ACTIONS_CACHE`, `ACTIONS_RUN`, `JOB_RUNNER`, `ACTIONS_QUEUE`, `MERGE_RESOLVER`, `MERGE_RESOLUTION`, `LIVE`, `AI`, `ASSETS`. Keep the `containers`, `durable_objects`, `exports`, `workflows`, and `ai` entries as shipped: they run Actions, AI conflict resolution, the auto-merge review, and live page updates. Keep `assets.run_worker_first` as shipped; the git endpoint depends on it. `wrangler.jsonc` is gitignored; never commit it.
 
 ### Step 4: Migrate and deploy
 

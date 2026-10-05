@@ -25,11 +25,18 @@
       "bucket_name": "gitorange-actions-cache-test",
     },
   ],
-  // Live updates: the real hub, so tests can open a WebSocket and hear pings.
+  // Live updates: the real hub, so tests can open a WebSocket and hear pings. The Actions job
+  // queue: the real Durable Object (makeEnv gives each test a fresh instance name).
   "durable_objects": {
-    "bindings": [{ "name": "LIVE", "class_name": "LiveHub" }],
+    "bindings": [
+      { "name": "LIVE", "class_name": "LiveHub" },
+      { "name": "ACTIONS_QUEUE", "class_name": "ActionsQueue" },
+    ],
   },
-  "migrations": [{ "tag": "v1", "new_sqlite_classes": ["LiveHub"] }],
+  "migrations": [
+    { "tag": "v1", "new_sqlite_classes": ["LiveHub"] },
+    { "tag": "v2", "new_sqlite_classes": ["ActionsQueue"] },
+  ],
   // No Actions containers or Workflow here: tests inject a fake ACTIONS_RUN and drive the
   // executor directly with a fake runner.
   "assets": {

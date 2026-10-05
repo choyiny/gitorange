@@ -75,6 +75,14 @@ export const SETTINGS = {
     schema: z.number().int().min(1).max(400).nullable(),
     default: () => 90,
   } satisfies Definition<number | null>,
+  'actions.max_concurrent_jobs': {
+    label: 'Jobs running at once',
+    description:
+      'The most Actions jobs that run at the same time across the instance, each in its own container. Jobs past the limit wait in a queue, first come first served, and the run page shows how many are ahead.',
+    group: 'Actions',
+    schema: z.number().int().min(1).max(500),
+    default: () => 10,
+  } satisfies Definition<number>,
 } as const;
 
 export type SettingKey = keyof typeof SETTINGS;

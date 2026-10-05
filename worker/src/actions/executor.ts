@@ -40,6 +40,18 @@ import {
 import { WORKSPACE, type JobRunnerApi, type StepRequest } from './job-runner';
 import { instanceTypeFor, postStepIndexes } from './plan';
 import { runnerStarted, runnersStopped } from '../usage/record';
+import { getSetting } from '../lib/settings';
+import {
+  actionsQueue,
+  markStarted,
+  queueConfigured,
+  releaseSlot,
+  slotEventType,
+  slotRecheck,
+} from './queue';
+
+/** Each post step (cache save) may take this long. */
+const POST_STEP_MINUTES = 30;
 import { githubContext, readWorkflowFiles } from './trigger';
 import {
   parseWorkflow,
@@ -60,6 +72,11 @@ export interface StepRunner {
     config: WorkflowStepConfig,
     fn: () => Promise<T>
   ): Promise<T>;
+  /** Waits for `instance.sendEvent({ type })`; throws when `timeout` passes first. */
+  waitForEvent<T = unknown>(
+    name: string,
+    options: { type: string; timeout?: string }
+  ): Promise<{ payload: T }>;
 }
 
 export interface ExecutorDeps {
@@ -350,6 +367,70 @@ async function skipJob(deps: ExecutorDeps, jobId: string, name: string) {
   });
 }
 
+/**
+ * Waits durably for one of the instance's job slots (ActionsQueue) before a container starts.
+ * The grant arrives as a Workflow event; a lost or early event is caught by the next recheck
+ * (5, 10, 20, then every 30 minutes), when the queue is asked again. Returns false when the run
+ * was cancelled while waiting. Fails open: if the queue can't be reached after its retries, the
+ * job runs without a slot (giving it back later is a no-op).
+ */
+async function waitForSlot(
+  deps: ExecutorDeps,
+  ctx: RunContext,
+  def: JobDef,
+  job: RunContext['jobs'][number],
+  prefix: string
+): Promise<boolean> {
+  const { env, db, step } = deps;
+  if (!queueConfigured(env)) return true;
+  // The slot covers the steps and the cache saves after them.
+  const maxMinutes =
+    def.timeoutMinutes + POST_STEP_MINUTES * postStepIndexes(def.steps).length;
+  const ask = async () => {
+    const run = await db
+      .select({ status: workflowRuns.status })
+      .from(workflowRuns)
+      .where(eq(workflowRuns.id, ctx.runId))
+      .get();
+    if (!run || run.status === 'completed')
+      return { cancelled: true, granted: false, ahead: 0 };
+    const limit = await getSetting(db, env, 'actions.max_concurrent_jobs');
+    const s = await actionsQueue(env).acquire({
+      jobId: job.id,
+      runId: ctx.runId,
+      maxMinutes,
+      limit,
+    });
+    return { cancelled: false, granted: s.granted, ahead: s.ahead };
+  };
+  const config: WorkflowStepConfig = {
+    retries: { limit: 5, delay: '10 seconds', backoff: 'exponential' },
+    timeout: '1 minute',
+  };
+  try {
+    let state = await step.do(`${prefix}:queue`, config, ask);
+    for (let i = 1; !state.cancelled && !state.granted; i++) {
+      try {
+        await step.waitForEvent(`${prefix}:queue:wait:${i}`, {
+          type: slotEventType(job.id),
+          timeout: slotRecheck(i),
+        });
+      } catch {
+        // Timed out: ask again (this also picks up a grant whose event was lost).
+      }
+      state = await step.do(`${prefix}:queue:${i}`, config, ask);
+    }
+    return !state.cancelled;
+  } catch (e) {
+    console.warn(
+      '[actions] job queue unavailable; running without a slot',
+      job.id,
+      e
+    );
+    return true;
+  }
+}
+
 async function setStep(
   db: Db,
   jobId: string,
@@ -429,6 +510,8 @@ async function runJob(
   let attemptState: AttemptState;
   for (;;) {
     const prefix = attempt === 1 ? name : `${name}:attempt:${attempt}`;
+    if (!(await waitForSlot(deps, ctx, def, job, prefix)))
+      return { key: def.key, result: 'cancelled', outputs: {} };
     attemptState = await runAttempt(
       deps,
       ctx,
@@ -453,13 +536,18 @@ async function runJob(
           .where(eq(workflowRuns.id, ctx.runId))
           .get();
         // A cancelled run is already marked finished; its containers were stopped on purpose.
-        if (!run || run.status === 'completed') return 'cancelled' as const;
+        if (!run || run.status === 'completed') {
+          await releaseSlot(env, job.id);
+          return 'cancelled' as const;
+        }
         try {
           await runner.destroy();
         } catch (e) {
           console.warn('[actions] runner destroy failed', job.id, e);
         }
         await runnersStopped(db, [job.id]);
+        // The container is gone: the restart queues again, and meanwhile someone else may use the slot.
+        await releaseSlot(env, job.id);
         const wait = (deps.restartDelayMs ?? 15_000) * attempt;
         if (wait > 0) await new Promise((r) => setTimeout(r, wait));
         await db
@@ -494,7 +582,7 @@ async function runJob(
     await step
       .do(
         `${name}:post:${number}`,
-        { ...NO_RETRY, timeout: '30 minutes' },
+        { ...NO_RETRY, timeout: `${POST_STEP_MINUTES} minutes` },
         async () => {
           const now = new Date();
           await setStep(db, job.id, number, {
@@ -573,6 +661,7 @@ async function runJob(
       console.error('[actions] runner destroy failed', job.id, e);
     }
     await runnersStopped(db, [job.id]);
+    await releaseSlot(env, job.id);
     const outputs: Record<string, string> = {};
     for (const [k, v] of Object.entries(def.outputs)) {
       try {
@@ -645,6 +734,24 @@ async function runAttempt(
   const deadline = Date.now() + jobTimeoutMs;
   const caches = new Map<number, CacheState>();
   // ── Set up job ──
+  // The slot's reclaim deadline counts from the container's start, not the grant. Its own step,
+  // so a failed mark is retried without booting twice, and a final failure never fails the job.
+  if (queueConfigured(env))
+    await step
+      .do(
+        `${name}:queue:started`,
+        {
+          retries: { limit: 3, delay: '5 seconds', backoff: 'exponential' },
+          timeout: '1 minute',
+        },
+        async () => {
+          await markStarted(env, job.id);
+          return true;
+        }
+      )
+      .catch((err) =>
+        console.warn('[actions] could not mark slot started', job.id, err)
+      );
   const setup = await step.do(
     `${name}:setup`,
     {

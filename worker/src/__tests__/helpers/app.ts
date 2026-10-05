@@ -9,6 +9,7 @@ function fakeActions() {
   const destroyed: string[] = [];
   const instanceStatus = new Map<string, string>();
   const live = new Map<string, string>();
+  const events: { id: string; type: string; payload: unknown }[] = [];
   const ACTIONS_RUN = {
     create: async (opts: { id: string; params: unknown }) => {
       started.push(opts);
@@ -18,6 +19,8 @@ function fakeActions() {
       id,
       status: async () => ({ status: instanceStatus.get(id) ?? 'running' }),
       terminate: async () => void terminated.push(id),
+      sendEvent: async (e: { type: string; payload?: unknown }) =>
+        void events.push({ id, type: e.type, payload: e.payload ?? null }),
     }),
   };
   // MERGE_RESOLUTION: attempts and sweeps, recorded separately from Actions runs.
@@ -39,8 +42,14 @@ function fakeActions() {
       destroy: async () => void destroyed.push(jobId),
     }),
   };
+  // The real ActionsQueue Durable Object, under a name of its own per makeEnv() so tests never
+  // share slots (test files share storage).
+  const queueName = `test-${crypto.randomUUID()}`;
+  const ACTIONS_QUEUE = {
+    getByName: () => env.ACTIONS_QUEUE.getByName(queueName),
+  };
   return {
-    bindings: { ACTIONS_RUN, JOB_RUNNER, MERGE_RESOLUTION },
+    bindings: { ACTIONS_RUN, JOB_RUNNER, MERGE_RESOLUTION, ACTIONS_QUEUE },
     started,
     terminated,
     destroyed,
@@ -48,6 +57,7 @@ function fakeActions() {
     terminatedResolutions,
     instanceStatus,
     live,
+    events,
   };
 }
 

@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { drizzle } from 'drizzle-orm/d1';
 import { schema } from '../db/schema';
 import { runActionsRetention } from '../actions/retention';
+import { getSetting } from '../lib/settings';
 import { addMember, bootstrapAdmin, call, makeEnv } from './helpers/app';
 
 type Setting = {
@@ -34,6 +35,30 @@ const put = (
   });
 
 describe('instance settings', () => {
+  it('limits Actions jobs running at once: 10 by default, a whole number of at least 1', async () => {
+    const t = makeEnv();
+    const admin = await bootstrapAdmin(t);
+    expect(
+      (await get(t, admin)).settings.find(
+        (s) => s.key === 'actions.max_concurrent_jobs'
+      )
+    ).toMatchObject({ value: 10, default: 10, overridden: false });
+    expect((await put(t, admin, 'actions.max_concurrent_jobs', 0)).status).toBe(
+      400
+    );
+    expect(
+      (await put(t, admin, 'actions.max_concurrent_jobs', 2.5)).status
+    ).toBe(400);
+    expect(
+      (await put(t, admin, 'actions.max_concurrent_jobs', '3')).status
+    ).toBe(400);
+    expect((await put(t, admin, 'actions.max_concurrent_jobs', 3)).status).toBe(
+      200
+    );
+    const db = drizzle(t.env.DB, { schema });
+    expect(await getSetting(db, t.env, 'actions.max_concurrent_jobs')).toBe(3);
+  });
+
   it('defaults to the wrangler vars, and Site admin overrides them where they are used', async () => {
     const t = makeEnv();
     const admin = await bootstrapAdmin(t);

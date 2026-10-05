@@ -261,6 +261,14 @@ const BINDINGS: BindingSpec[] = [
 "durable_objects": { "bindings": [{ "name": "JOB_RUNNER", "class_name": "JobRunner" }, …] }`,
   },
   {
+    name: 'ACTIONS_QUEUE',
+    required: false,
+    without:
+      'Actions jobs start as soon as they are ready, with no limit on how many run at once (Site admin → Settings → Jobs running at once is ignored).',
+    snippet: `"durable_objects": { "bindings": [{ "name": "ACTIONS_QUEUE", "class_name": "ActionsQueue" }, …] },
+"exports": { "ActionsQueue": { "type": "durable-object", "storage": "sqlite" }, … }`,
+  },
+  {
     name: 'ACTIONS_LOGS',
     required: false,
     without: 'Actions step logs cannot be stored or shown.',
