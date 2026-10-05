@@ -423,6 +423,8 @@ function recordingSteps(
       await finish('succeeded', { decision: decisionFor(name, result) });
       return result;
     },
+    // A sleep (a sweep's settle delay) isn't a step: nothing to record.
+    sleep: (name: string, duration: number) => inner.sleep(name, duration),
   };
   return steps as unknown as StepRunner;
 }

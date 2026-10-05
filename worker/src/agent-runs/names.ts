@@ -15,11 +15,15 @@ const FIXED: Record<string, string> = {
   next: 'Start queued resolutions',
   repo: 'Load repository',
   targets: 'Find pull requests',
+  states: 'Record pull request states',
+  'current:before-resolve': 'Check the commits are current',
+  'current:before-commit': 'Check the commits are still current',
 };
 
 /** Steps named `<kind>:<pull request id>`, about another pull request. */
 const ABOUT_PULL: Record<string, string> = {
   pr: 'Check',
+  resolve: 'Resolve conflicts of',
   claim: 'Claim pair with',
   conflicts: 'Check conflicts with',
   decide: 'Decide relationship with',

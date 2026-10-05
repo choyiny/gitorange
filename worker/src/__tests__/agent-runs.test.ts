@@ -60,6 +60,7 @@ function durableSteps() {
           if (attempt >= limit) throw e;
         }
     },
+    async sleep() {},
   };
   return { step: runner as unknown as StepRunner, cache };
 }
@@ -612,8 +613,10 @@ describe('agent runs: conflict resolution, sweep, stack discovery', () => {
     const steps = await stepsOf(t, run.id);
     expect(steps.map((s) => s.name)).toEqual([
       'load',
+      'current:before-resolve',
       'prepare',
       'resolve',
+      'current:before-commit',
       'commit',
       'auto-merge',
       'next',
@@ -657,6 +660,7 @@ describe('agent runs: conflict resolution, sweep, stack discovery', () => {
       'repo',
       'targets',
       'pr',
+      'resolve',
     ]);
     expect(steps[1].decision).toBe('1 open pull request to check');
   });
