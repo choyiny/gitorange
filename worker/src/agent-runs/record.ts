@@ -413,9 +413,11 @@ function recordingSteps(
         });
       let result: unknown;
       try {
+        // Called as a method: in production `inner` is an RPC stub, where `do.apply` would be
+        // sent as a call to a method named "apply".
         result = await (
-          inner.do as (...a: unknown[]) => Promise<unknown>
-        ).apply(inner, [name, ...callArgs]);
+          inner as unknown as { do: (...a: unknown[]) => Promise<unknown> }
+        ).do(name, ...callArgs);
       } catch (e) {
         await finish('failed', { error: shortError(e) });
         throw e;

@@ -62,7 +62,28 @@ function durableSteps() {
     },
     async sleep() {},
   };
-  return { step: runner as unknown as StepRunner, cache };
+  return { step: rpcStub(runner) as unknown as StepRunner, cache };
+}
+
+/**
+ * Behaves like the Workflow step in production, an RPC stub: its methods can only be called.
+ * Reading a property of a method (`do.apply`, `do.call`, `do.bind`) is sent as an RPC call and fails.
+ */
+function rpcStub<T extends object>(target: T): T {
+  return new Proxy(target, {
+    get(t, key) {
+      const value = Reflect.get(t, key);
+      if (typeof value !== 'function') return value;
+      const method = (...args: unknown[]) => value.apply(t, args);
+      return new Proxy(method, {
+        get(_m, prop) {
+          throw new TypeError(
+            `The RPC receiver does not implement the method "${String(prop)}".`
+          );
+        },
+      });
+    },
+  });
 }
 
 type RunRow = {
