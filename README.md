@@ -41,38 +41,32 @@ or runners to operate.
 
 ## How a change moves through GitOrange
 
-```mermaid
-flowchart LR
-  A[Agent pushes a branch<br/>and opens a pull request] --> B[Actions run your<br/>.github/workflows]
-  A --> C[One-line summary<br/>of every changed file]
-  C --> D{Clef answers your<br/>review questions}
-  C --> E{Clef: how does this PR<br/>relate to other open PRs?}
-  D -- nothing flagged --> F[Auto-merge]
-  D -- flagged --> G[Reasoning model explains<br/>with a diagram and excerpts]
-  G --> H[A person approves<br/>on the Approvals page]
-  H --> F
-  E -- must change because of #28 --> I[Instructions go to<br/>the PR's agent]
-  I --> A
-  B -- failed --> I
-  F -- conflicts with main --> J[Durable Pi agent<br/>resolves them]
-  J --> F
-```
+<p align="center">
+  <img src="docs/images/how-it-works.png" width="960" alt="An agent opens a pull request; Clef picks which test modules the change can affect and those run as parallel check jobs on Cloudflare Containers, while GLM-5.3-flash summarizes each changed file; Clef answers the review questions (flagged answers get a GLM-5.3 investigation) and compares the pull request with other open and recently landed ones to build a stack tree; the pull request's state then sends it back to the agent to fix and push again, to a person on the Approvals page, keeps it waiting while something runs, or lets it land on its own with a rebase-merge.">
+</p>
 
 1. **An agent opens a pull request**, through `git push` and the [Model Context Protocol (MCP) server](#built-for-agents) or the web UI.
-2. **Checks run.** Your existing `.github/workflows/*.yml` files run unchanged on Cloudflare Containers.
+2. **Checks run.** Your existing `.github/workflows/*.yml` files run unchanged on Cloudflare Containers; with
+   [`gitorange/relevance@v1`](docs/ci-relevance.md), Clef skips the test modules a change can't affect (unsure,
+   pushes to `main`, and shared files run everything), and the rest run as parallel jobs, at most N at once in an
+   instance-wide queue.
 3. **Every changed file gets a one-line summary**, written by GLM-5.3-flash. These summaries are what the
    decision model reads, so review never truncates a large pull request.
 4. **Clef answers the questions in your `.gitorange/review.yml`**, from those summaries: "does this change how
    data is stored?", "does it touch authentication?", "how risky is it?". Each answer has a probability, and
-   your thresholds decide what is flagged.
+   your thresholds decide what is flagged. GLM-5.3 investigates each flag: one sentence, a before/after table, a
+   diagram, and excerpts cut from the real diff.
 5. **Clef also compares the pull request with every other open one** into the same branch, and with ones that
-   landed since it branched. Related pairs get a closer read of the real diffs.
+   landed since it branched. Related pairs get a closer read of the real diffs, and the result is a stack tree: a
+   pull request can be stacked on a parent (retargeted onto its branch), ordered after another, wait on one, or
+   have to account for one.
 6. **The pull request's state tells the next actor what to do.** An agent with a failed check, a requested
-   change, or a dependency to account for sees exactly that, with the run number or the instructions. A person
-   sees only flags that need approval.
+   change, a dependency to account for, or a parent to rebase onto sees exactly that, with the run number or the
+   instructions. A person sees only flags that need approval, on the Approvals page. While checks, review, or stack
+   discovery are still running, the pull request is waiting.
 7. **It merges on its own** once its checks pass and every flag is approved, and its branch is deleted unless
-   another open pull request builds on it. If `main` moved and the change now conflicts, a Pi agent resolves the
-   conflict first.
+   another open pull request builds on it; pull requests stacked on it move onto `main`. If `main` moved and the
+   change now conflicts, a Pi agent resolves the conflict first.
 
 ## Built for many agents at once
 

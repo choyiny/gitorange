@@ -1,0 +1,1117 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>How a change moves</title>
+    <link
+      href="https://fonts.googleapis.com/css2?family=Instrument+Serif:ital@0;1&family=Geist:wght@400;500;600&family=Geist+Mono:wght@400;500;600&display=swap"
+      rel="stylesheet"
+    />
+    <!--
+    Source for docs/images/how-it-works.png (the README's "How a change moves through GitOrange").
+    Re-export after editing: render this file with the fonts loaded and screenshot the <svg> at 2x
+    (diagram-design skill, references/export.md). The README uses the PNG because a README image
+    can't load web fonts, so an SVG would fall back to other fonts and clip its labels.
+  -->
+    <style>
+      *,
+      *::before,
+      *::after {
+        box-sizing: border-box;
+        margin: 0;
+        padding: 0;
+      }
+      :root {
+        --color-paper: #f5f5f5;
+        --color-ink: #2d3142;
+        --color-muted: #4f5d75;
+        --color-accent: #eb6c36;
+        --font-sans: 'Geist', system-ui, sans-serif;
+        --font-serif: 'Instrument Serif', serif;
+        --font-mono: 'Geist Mono', ui-monospace, monospace;
+      }
+      body {
+        font-family: var(--font-sans);
+        background: var(--color-paper);
+        color: var(--color-ink);
+        min-height: 100vh;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        padding: 3rem 2rem;
+      }
+      .frame {
+        max-width: 1000px;
+        width: 100%;
+      }
+      .eyebrow {
+        font-family: var(--font-mono);
+        font-size: 0.66rem;
+        font-weight: 500;
+        letter-spacing: 0.18em;
+        text-transform: uppercase;
+        color: var(--color-muted);
+        margin-bottom: 0.5rem;
+      }
+      h1 {
+        font-family: var(--font-serif);
+        font-size: clamp(1.5rem, 2.4vw + 0.75rem, 2rem);
+        font-weight: 400;
+        letter-spacing: -0.02em;
+        line-height: 1.15;
+        color: var(--color-ink);
+        margin-bottom: 1.5rem;
+      }
+      svg {
+        width: 100%;
+        min-width: 900px;
+        display: block;
+      }
+    </style>
+  </head>
+  <body>
+    <div class="frame">
+      <p class="eyebrow">Flowchart · GitOrange</p>
+      <h1>How a change moves through GitOrange</h1>
+      <svg
+        viewBox="0 0 960 804"
+        xmlns="http://www.w3.org/2000/svg"
+        role="img"
+        aria-labelledby="how-it-works-title how-it-works-desc"
+      >
+        <title id="how-it-works-title">
+          How a change moves through GitOrange
+        </title>
+        <desc id="how-it-works-desc">
+          Flowchart of a GitOrange pull request: an agent opens it, Clef picks
+          which test modules the change can affect, those modules run as
+          parallel check jobs on Cloudflare Containers, every changed file gets
+          a one-line summary, Clef answers the review questions and compares the
+          pull request with other pull requests to build a stack tree, and the
+          pull request's state then sends it back to the agent, to a person on
+          the Approvals page, keeps it waiting, or lets it land on its own.
+        </desc>
+        <defs>
+          <marker
+            id="arrow"
+            markerWidth="8"
+            markerHeight="6"
+            refX="7"
+            refY="3"
+            orient="auto"
+          >
+            <polygon points="0 0, 8 3, 0 6" fill="#4f5d75" />
+          </marker>
+          <marker
+            id="arrow-accent"
+            markerWidth="8"
+            markerHeight="6"
+            refX="7"
+            refY="3"
+            orient="auto"
+          >
+            <polygon points="0 0, 8 3, 0 6" fill="#eb6c36" />
+          </marker>
+          <marker
+            id="arrow-link"
+            markerWidth="8"
+            markerHeight="6"
+            refX="7"
+            refY="3"
+            orient="auto"
+          >
+            <polygon points="0 0, 8 3, 0 6" fill="#2e5aa8" />
+          </marker>
+        </defs>
+        <rect width="100%" height="100%" fill="#f5f5f5" />
+        <!-- Arrows (drawn first, behind nodes) -->
+        <path
+          d="M 424 128 L 424 152 Q 424 160 416 160 L 220 160 Q 212 160 212 168 L 212 184"
+          fill="none"
+          stroke="#4f5d75"
+          stroke-width="1.2"
+          marker-end="url(#arrow)"
+        />
+        <path
+          d="M 212 272 L 212 304"
+          fill="none"
+          stroke="#4f5d75"
+          stroke-width="1.2"
+          marker-end="url(#arrow)"
+        />
+        <path
+          d="M 560 128 L 560 184"
+          fill="none"
+          stroke="#4f5d75"
+          stroke-width="1.2"
+          marker-end="url(#arrow)"
+        />
+        <path
+          d="M 576 248 L 576 264 Q 576 272 568 272 L 520 272 Q 512 272 512 280 L 512 296"
+          fill="none"
+          stroke="#4f5d75"
+          stroke-width="1.2"
+          marker-end="url(#arrow)"
+        />
+        <path
+          d="M 688 248 L 688 264 Q 688 272 696 272 L 788 272 Q 796 272 796 280 L 796 296"
+          fill="none"
+          stroke="#4f5d75"
+          stroke-width="1.2"
+          marker-end="url(#arrow)"
+        />
+        <path
+          d="M 212 392 L 212 448"
+          fill="none"
+          stroke="#4f5d75"
+          stroke-width="1.2"
+          marker-end="url(#arrow)"
+        />
+        <path
+          d="M 512 384 L 512 448"
+          fill="none"
+          stroke="#4f5d75"
+          stroke-width="1.2"
+          marker-end="url(#arrow)"
+        />
+        <path
+          d="M 796 384 L 796 448"
+          fill="none"
+          stroke="#4f5d75"
+          stroke-width="1.2"
+          marker-end="url(#arrow)"
+        />
+        <path
+          d="M 88 536 L 64 536 Q 56 536 56 528 L 56 104 Q 56 96 64 96 L 368 96"
+          fill="none"
+          stroke="#eb6c36"
+          stroke-width="1.4"
+          marker-end="url(#arrow-accent)"
+        />
+        <path
+          d="M 376 576 L 376 624"
+          fill="none"
+          stroke="#4f5d75"
+          stroke-width="1.2"
+          marker-end="url(#arrow)"
+        />
+        <path
+          d="M 424 624 L 424 576"
+          fill="none"
+          stroke="#4f5d75"
+          stroke-width="1.2"
+          marker-end="url(#arrow)"
+        />
+        <path
+          d="M 816 576 L 816 624"
+          fill="none"
+          stroke="#4f5d75"
+          stroke-width="1.2"
+          marker-end="url(#arrow)"
+        />
+        <!-- Arrow labels -->
+        <rect
+          class="lbl-mask"
+          x="152"
+          y="75"
+          width="120"
+          height="12"
+          rx="2"
+          fill="#f5f5f5"
+        />
+        <text
+          x="212"
+          y="84"
+          fill="#eb6c36"
+          font-size="8"
+          font-family="'Geist Mono', monospace"
+          text-anchor="middle"
+          letter-spacing="0.06em"
+        >
+          FIX AND PUSH AGAIN
+        </text>
+        <rect
+          class="lbl-mask"
+          x="218"
+          y="283"
+          width="84"
+          height="12"
+          rx="2"
+          fill="#f5f5f5"
+        />
+        <text
+          x="224"
+          y="292"
+          fill="#7a8399"
+          font-size="8"
+          font-family="'Geist Mono', monospace"
+          text-anchor="start"
+          letter-spacing="0.06em"
+        >
+          TESTS TO RUN
+        </text>
+        <rect
+          class="lbl-mask"
+          x="218"
+          y="415"
+          width="80"
+          height="12"
+          rx="2"
+          fill="#f5f5f5"
+        />
+        <text
+          x="224"
+          y="424"
+          fill="#7a8399"
+          font-size="8"
+          font-family="'Geist Mono', monospace"
+          text-anchor="start"
+          letter-spacing="0.06em"
+        >
+          PASS / FAIL
+        </text>
+        <rect
+          class="lbl-mask"
+          x="518"
+          y="419"
+          width="104"
+          height="12"
+          rx="2"
+          fill="#f5f5f5"
+        />
+        <text
+          x="524"
+          y="428"
+          fill="#7a8399"
+          font-size="8"
+          font-family="'Geist Mono', monospace"
+          text-anchor="start"
+          letter-spacing="0.06em"
+        >
+          ANSWERS + FLAGS
+        </text>
+        <rect
+          class="lbl-mask"
+          x="802"
+          y="419"
+          width="72"
+          height="12"
+          rx="2"
+          fill="#f5f5f5"
+        />
+        <text
+          x="808"
+          y="428"
+          fill="#7a8399"
+          font-size="8"
+          font-family="'Geist Mono', monospace"
+          text-anchor="start"
+          letter-spacing="0.06em"
+        >
+          STACK TREE
+        </text>
+        <rect
+          class="lbl-mask"
+          x="326"
+          y="595"
+          width="44"
+          height="12"
+          rx="2"
+          fill="#f5f5f5"
+        />
+        <text
+          x="364"
+          y="604"
+          fill="#7a8399"
+          font-size="8"
+          font-family="'Geist Mono', monospace"
+          text-anchor="end"
+          letter-spacing="0.06em"
+        >
+          FLAGS
+        </text>
+        <rect
+          class="lbl-mask"
+          x="430"
+          y="595"
+          width="60"
+          height="12"
+          rx="2"
+          fill="#f5f5f5"
+        />
+        <text
+          x="436"
+          y="604"
+          fill="#7a8399"
+          font-size="8"
+          font-family="'Geist Mono', monospace"
+          text-anchor="start"
+          letter-spacing="0.06em"
+        >
+          APPROVED
+        </text>
+        <rect
+          class="lbl-mask"
+          x="822"
+          y="595"
+          width="44"
+          height="12"
+          rx="2"
+          fill="#f5f5f5"
+        />
+        <text
+          x="828"
+          y="604"
+          fill="#7a8399"
+          font-size="8"
+          font-family="'Geist Mono', monospace"
+          text-anchor="start"
+          letter-spacing="0.06em"
+        >
+          READY
+        </text>
+        <!-- Nodes -->
+        <g class="node" data-node="agent">
+          <rect x="368" y="64" width="224" height="64" rx="6" fill="#f5f5f5" />
+          <rect
+            class="box"
+            x="368"
+            y="64"
+            width="224"
+            height="64"
+            rx="6"
+            fill="rgba(79,93,117,0.10)"
+            stroke="#7a8399"
+            stroke-width="1"
+          />
+          <text
+            x="480"
+            y="92"
+            fill="#2d3142"
+            font-size="12"
+            font-weight="600"
+            font-family="'Geist', sans-serif"
+            text-anchor="middle"
+          >
+            An agent opens a pull request
+          </text>
+          <text
+            x="480"
+            y="108"
+            fill="#4f5d75"
+            font-size="9"
+            font-family="'Geist Mono', monospace"
+            text-anchor="middle"
+          >
+            git push + MCP, or the web UI
+          </text>
+        </g>
+        <g class="node" data-node="relevance">
+          <rect x="80" y="184" width="264" height="88" rx="6" fill="#f5f5f5" />
+          <rect
+            class="box"
+            x="80"
+            y="184"
+            width="264"
+            height="88"
+            rx="6"
+            fill="#ffffff"
+            stroke="#2d3142"
+            stroke-width="1"
+          />
+          <text
+            x="212"
+            y="212"
+            fill="#2d3142"
+            font-size="12"
+            font-weight="600"
+            font-family="'Geist', sans-serif"
+            text-anchor="middle"
+          >
+            Clef picks which tests run
+          </text>
+          <text
+            x="212"
+            y="228"
+            fill="#4f5d75"
+            font-size="9"
+            font-family="'Geist Mono', monospace"
+            text-anchor="middle"
+          >
+            gitorange/relevance@v1
+          </text>
+          <text
+            x="212"
+            y="240"
+            fill="#7a8399"
+            font-size="9"
+            font-family="'Geist Mono', monospace"
+            text-anchor="middle"
+          >
+            skips test modules a change can't affect
+          </text>
+          <text
+            x="212"
+            y="252"
+            fill="#7a8399"
+            font-size="9"
+            font-family="'Geist Mono', monospace"
+            text-anchor="middle"
+          >
+            unsure, main or shared files → run all
+          </text>
+        </g>
+        <g class="node" data-node="checks">
+          <rect x="80" y="304" width="264" height="88" rx="6" fill="#f5f5f5" />
+          <rect
+            class="box"
+            x="80"
+            y="304"
+            width="264"
+            height="88"
+            rx="6"
+            fill="#ffffff"
+            stroke="#2d3142"
+            stroke-width="1"
+          />
+          <text
+            x="212"
+            y="332"
+            fill="#2d3142"
+            font-size="12"
+            font-weight="600"
+            font-family="'Geist', sans-serif"
+            text-anchor="middle"
+          >
+            Checks run
+          </text>
+          <text
+            x="212"
+            y="348"
+            fill="#4f5d75"
+            font-size="9"
+            font-family="'Geist Mono', monospace"
+            text-anchor="middle"
+          >
+            .github/workflows/*.yml
+          </text>
+          <text
+            x="212"
+            y="360"
+            fill="#7a8399"
+            font-size="9"
+            font-family="'Geist Mono', monospace"
+            text-anchor="middle"
+          >
+            modules run as parallel jobs on Containers
+          </text>
+          <text
+            x="212"
+            y="372"
+            fill="#7a8399"
+            font-size="9"
+            font-family="'Geist Mono', monospace"
+            text-anchor="middle"
+          >
+            at most N at once, queued instance-wide
+          </text>
+        </g>
+        <g class="node" data-node="summaries">
+          <rect x="512" y="184" width="240" height="64" rx="6" fill="#f5f5f5" />
+          <rect
+            class="box"
+            x="512"
+            y="184"
+            width="240"
+            height="64"
+            rx="6"
+            fill="#ffffff"
+            stroke="#2d3142"
+            stroke-width="1"
+          />
+          <text
+            x="632"
+            y="212"
+            fill="#2d3142"
+            font-size="12"
+            font-weight="600"
+            font-family="'Geist', sans-serif"
+            text-anchor="middle"
+          >
+            A one-line summary per file
+          </text>
+          <text
+            x="632"
+            y="228"
+            fill="#4f5d75"
+            font-size="9"
+            font-family="'Geist Mono', monospace"
+            text-anchor="middle"
+          >
+            GLM-5.3-flash
+          </text>
+        </g>
+        <g class="node" data-node="review">
+          <rect x="384" y="296" width="256" height="88" rx="6" fill="#f5f5f5" />
+          <rect
+            class="box"
+            x="384"
+            y="296"
+            width="256"
+            height="88"
+            rx="6"
+            fill="#ffffff"
+            stroke="#2d3142"
+            stroke-width="1"
+          />
+          <text
+            x="512"
+            y="324"
+            fill="#2d3142"
+            font-size="12"
+            font-weight="600"
+            font-family="'Geist', sans-serif"
+            text-anchor="middle"
+          >
+            Clef answers your review questions
+          </text>
+          <text
+            x="512"
+            y="340"
+            fill="#4f5d75"
+            font-size="9"
+            font-family="'Geist Mono', monospace"
+            text-anchor="middle"
+          >
+            .gitorange/review.yml
+          </text>
+          <text
+            x="512"
+            y="352"
+            fill="#7a8399"
+            font-size="9"
+            font-family="'Geist Mono', monospace"
+            text-anchor="middle"
+          >
+            flagged → GLM-5.3 investigates:
+          </text>
+          <text
+            x="512"
+            y="364"
+            fill="#7a8399"
+            font-size="9"
+            font-family="'Geist Mono', monospace"
+            text-anchor="middle"
+          >
+            sentence · table · diagram · excerpts
+          </text>
+        </g>
+        <g class="node" data-node="stack">
+          <rect x="672" y="296" width="248" height="88" rx="6" fill="#f5f5f5" />
+          <rect
+            class="box"
+            x="672"
+            y="296"
+            width="248"
+            height="88"
+            rx="6"
+            fill="#ffffff"
+            stroke="#2d3142"
+            stroke-width="1"
+          />
+          <text
+            x="796"
+            y="324"
+            fill="#2d3142"
+            font-size="12"
+            font-weight="600"
+            font-family="'Geist', sans-serif"
+            text-anchor="middle"
+          >
+            Clef compares it with other PRs
+          </text>
+          <text
+            x="796"
+            y="340"
+            fill="#4f5d75"
+            font-size="9"
+            font-family="'Geist Mono', monospace"
+            text-anchor="middle"
+          >
+            open + recently landed → stack tree
+          </text>
+          <text
+            x="796"
+            y="352"
+            fill="#7a8399"
+            font-size="9"
+            font-family="'Geist Mono', monospace"
+            text-anchor="middle"
+          >
+            stacked on a parent (retargeted)
+          </text>
+          <text
+            x="796"
+            y="364"
+            fill="#7a8399"
+            font-size="9"
+            font-family="'Geist Mono', monospace"
+            text-anchor="middle"
+          >
+            ordered · waits on · must account for
+          </text>
+        </g>
+        <g class="node" data-node="hub">
+          <rect x="88" y="448" width="832" height="128" rx="6" fill="#f5f5f5" />
+          <rect
+            class="box"
+            x="88"
+            y="448"
+            width="832"
+            height="128"
+            rx="6"
+            fill="rgba(235,108,54,0.08)"
+            stroke="#eb6c36"
+            stroke-width="1"
+          />
+          <rect
+            x="100"
+            y="462"
+            width="64"
+            height="12"
+            rx="2"
+            fill="transparent"
+            stroke="#eb6c36"
+            stroke-opacity="0.4"
+            stroke-width="0.8"
+          />
+          <text
+            x="132"
+            y="471"
+            fill="#eb6c36"
+            font-size="7"
+            font-family="'Geist Mono', monospace"
+            text-anchor="middle"
+            letter-spacing="0.08em"
+          >
+            PR STATE
+          </text>
+          <text
+            x="176"
+            y="474"
+            fill="#2d3142"
+            font-size="12"
+            font-weight="600"
+            font-family="'Geist', sans-serif"
+          >
+            The pull request’s state decides who acts next
+          </text>
+          <text
+            x="904"
+            y="474"
+            fill="#4f5d75"
+            font-size="9"
+            font-family="'Geist Mono', monospace"
+            text-anchor="end"
+          >
+            computed on every read · most urgent wins
+          </text>
+          <line
+            x1="88"
+            y1="488"
+            x2="920"
+            y2="488"
+            stroke="#eb6c36"
+            stroke-opacity="0.35"
+            stroke-width="0.8"
+          />
+          <line
+            x1="296"
+            y1="496"
+            x2="296"
+            y2="568"
+            stroke="#eb6c36"
+            stroke-opacity="0.35"
+            stroke-width="0.8"
+          />
+          <line
+            x1="504"
+            y1="496"
+            x2="504"
+            y2="568"
+            stroke="#eb6c36"
+            stroke-opacity="0.35"
+            stroke-width="0.8"
+          />
+          <line
+            x1="712"
+            y1="496"
+            x2="712"
+            y2="568"
+            stroke="#eb6c36"
+            stroke-opacity="0.35"
+            stroke-width="0.8"
+          />
+          <g class="cell" data-cell="0" data-x0="88" data-x1="296">
+            <text
+              x="104"
+              y="512"
+              fill="#2d3142"
+              font-size="12"
+              font-weight="600"
+              font-family="'Geist', sans-serif"
+            >
+              Ready for agent follow-up
+            </text>
+            <text
+              x="104"
+              y="532"
+              fill="#4f5d75"
+              font-size="9"
+              font-family="'Geist Mono', monospace"
+            >
+              failed check · change requested
+            </text>
+            <text
+              x="104"
+              y="544"
+              fill="#4f5d75"
+              font-size="9"
+              font-family="'Geist Mono', monospace"
+            >
+              dependency to account for
+            </text>
+            <text
+              x="104"
+              y="556"
+              fill="#4f5d75"
+              font-size="9"
+              font-family="'Geist Mono', monospace"
+            >
+              rebase onto its parent
+            </text>
+          </g>
+          <g class="cell" data-cell="1" data-x0="296" data-x1="504">
+            <text
+              x="312"
+              y="512"
+              fill="#2d3142"
+              font-size="12"
+              font-weight="600"
+              font-family="'Geist', sans-serif"
+            >
+              Requires human review
+            </text>
+            <text
+              x="312"
+              y="532"
+              fill="#4f5d75"
+              font-size="9"
+              font-family="'Geist Mono', monospace"
+            >
+              review flags to approve
+            </text>
+            <text
+              x="312"
+              y="544"
+              fill="#4f5d75"
+              font-size="9"
+              font-family="'Geist Mono', monospace"
+            >
+              or a dependency cycle
+            </text>
+          </g>
+          <g class="cell" data-cell="2" data-x0="504" data-x1="712">
+            <text
+              x="520"
+              y="512"
+              fill="#2d3142"
+              font-size="12"
+              font-weight="600"
+              font-family="'Geist', sans-serif"
+            >
+              Waiting
+            </text>
+            <text
+              x="520"
+              y="532"
+              fill="#4f5d75"
+              font-size="9"
+              font-family="'Geist Mono', monospace"
+            >
+              checks, review, stack check
+            </text>
+            <text
+              x="520"
+              y="544"
+              fill="#4f5d75"
+              font-size="9"
+              font-family="'Geist Mono', monospace"
+            >
+              or conflict resolution
+            </text>
+            <text
+              x="520"
+              y="556"
+              fill="#4f5d75"
+              font-size="9"
+              font-family="'Geist Mono', monospace"
+            >
+              still running
+            </text>
+          </g>
+          <g class="cell" data-cell="3" data-x0="712" data-x1="920">
+            <text
+              x="728"
+              y="512"
+              fill="#2d3142"
+              font-size="12"
+              font-weight="600"
+              font-family="'Geist', sans-serif"
+            >
+              Ready
+            </text>
+            <text
+              x="728"
+              y="532"
+              fill="#4f5d75"
+              font-size="9"
+              font-family="'Geist Mono', monospace"
+            >
+              nothing blocks it
+            </text>
+            <text
+              x="728"
+              y="544"
+              fill="#4f5d75"
+              font-size="9"
+              font-family="'Geist Mono', monospace"
+            >
+              (may be stacked on #N)
+            </text>
+          </g>
+        </g>
+        <g class="node" data-node="approvals">
+          <rect x="304" y="624" width="192" height="64" rx="6" fill="#f5f5f5" />
+          <rect
+            class="box"
+            x="304"
+            y="624"
+            width="192"
+            height="64"
+            rx="6"
+            fill="#ffffff"
+            stroke="#2d3142"
+            stroke-width="1"
+          />
+          <text
+            x="400"
+            y="652"
+            fill="#2d3142"
+            font-size="12"
+            font-weight="600"
+            font-family="'Geist', sans-serif"
+            text-anchor="middle"
+          >
+            A person approves
+          </text>
+          <text
+            x="400"
+            y="668"
+            fill="#4f5d75"
+            font-size="9"
+            font-family="'Geist Mono', monospace"
+            text-anchor="middle"
+          >
+            on the Approvals page
+          </text>
+        </g>
+        <g class="node" data-node="lands">
+          <rect
+            x="600"
+            y="624"
+            width="320"
+            height="100"
+            rx="6"
+            fill="#f5f5f5"
+          />
+          <rect
+            class="box"
+            x="600"
+            y="624"
+            width="320"
+            height="100"
+            rx="6"
+            fill="#ffffff"
+            stroke="#2d3142"
+            stroke-width="1"
+          />
+          <text
+            x="760"
+            y="652"
+            fill="#2d3142"
+            font-size="12"
+            font-weight="600"
+            font-family="'Geist', sans-serif"
+            text-anchor="middle"
+          >
+            It lands on its own
+          </text>
+          <text
+            x="760"
+            y="668"
+            fill="#4f5d75"
+            font-size="9"
+            font-family="'Geist Mono', monospace"
+            text-anchor="middle"
+          >
+            rebase-merge onto main
+          </text>
+          <text
+            x="760"
+            y="680"
+            fill="#7a8399"
+            font-size="9"
+            font-family="'Geist Mono', monospace"
+            text-anchor="middle"
+          >
+            main moved + conflict → a Pi agent resolves it
+          </text>
+          <text
+            x="760"
+            y="692"
+            fill="#7a8399"
+            font-size="9"
+            font-family="'Geist Mono', monospace"
+            text-anchor="middle"
+          >
+            branch deleted unless an open PR builds on it
+          </text>
+          <text
+            x="760"
+            y="704"
+            fill="#7a8399"
+            font-size="9"
+            font-family="'Geist Mono', monospace"
+            text-anchor="middle"
+          >
+            stacked children move onto main
+          </text>
+        </g>
+        <!-- Legend -->
+        <line
+          x1="40"
+          y1="756"
+          x2="920"
+          y2="756"
+          stroke="rgba(45,49,66,0.10)"
+          stroke-width="0.8"
+        />
+        <text
+          x="40"
+          y="776"
+          fill="#4f5d75"
+          font-size="8"
+          font-family="'Geist Mono', monospace"
+          letter-spacing="0.14em"
+        >
+          LEGEND
+        </text>
+        <rect
+          x="112"
+          y="766"
+          width="24"
+          height="12"
+          rx="2"
+          fill="rgba(79,93,117,0.10)"
+          stroke="#7a8399"
+          stroke-width="1"
+        />
+        <text
+          x="144"
+          y="776"
+          fill="#4f5d75"
+          font-size="9"
+          font-family="'Geist', sans-serif"
+        >
+          Agent
+        </text>
+        <rect
+          x="212"
+          y="766"
+          width="24"
+          height="12"
+          rx="2"
+          fill="#ffffff"
+          stroke="#2d3142"
+          stroke-width="1"
+        />
+        <text
+          x="244"
+          y="776"
+          fill="#4f5d75"
+          font-size="9"
+          font-family="'Geist', sans-serif"
+        >
+          Step (models in mono)
+        </text>
+        <rect
+          x="392"
+          y="766"
+          width="24"
+          height="12"
+          rx="2"
+          fill="rgba(235,108,54,0.08)"
+          stroke="#eb6c36"
+          stroke-width="1"
+        />
+        <text
+          x="424"
+          y="776"
+          fill="#4f5d75"
+          font-size="9"
+          font-family="'Geist', sans-serif"
+        >
+          Pull request state (focal)
+        </text>
+        <line
+          x1="588"
+          y1="772"
+          x2="616"
+          y2="772"
+          stroke="#eb6c36"
+          stroke-width="1.4"
+          marker-end="url(#arrow-accent)"
+        />
+        <text
+          x="628"
+          y="776"
+          fill="#4f5d75"
+          font-size="9"
+          font-family="'Geist', sans-serif"
+        >
+          Feedback loop to the agent
+        </text>
+        <line
+          x1="792"
+          y1="772"
+          x2="820"
+          y2="772"
+          stroke="#4f5d75"
+          stroke-width="1.2"
+          marker-end="url(#arrow)"
+        />
+        <text
+          x="832"
+          y="776"
+          fill="#4f5d75"
+          font-size="9"
+          font-family="'Geist', sans-serif"
+        >
+          Flow
+        </text>
+      </svg>
+    </div>
+  </body>
+</html>
