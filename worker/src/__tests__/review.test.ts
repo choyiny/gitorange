@@ -538,6 +538,78 @@ describe('auto-merge review', () => {
     });
   });
 
+  it('blocks when a required job was skipped because a job it needs failed', async () => {
+    const { t, admin, repo } = await pullWith(
+      { 'src/b.ts': 'b\n' },
+      { policy: POLICY.replace('require: none', 'require: [deploy]') }
+    );
+    await runReviews(t, fakeModels().models);
+    const head = repo.refs.get('refs/heads/feature')!;
+    await t.env.DB.prepare(
+      `INSERT INTO workflow_runs (id, repository_id, run_number, workflow_path, name, event, ref, head_sha, display_title, status, conclusion, created_at)
+       SELECT 'r1', id, 1, 'ci.yml', 'CI', 'pull_request', 'x', ?, 'x', 'completed', 'failure', 0 FROM repositories`
+    )
+      .bind(head)
+      .run();
+    await t.env.DB.prepare(
+      `INSERT INTO workflow_jobs (id, run_id, job_key, name, runs_on, needs, status, conclusion) VALUES
+       ('j1', 'r1', 'test', 'test', 'ubuntu-latest', '[]', 'completed', 'failure'),
+       ('j2', 'r1', 'deploy', 'deploy', 'ubuntu-latest', '["test"]', 'completed', 'skipped')`
+    ).run();
+    expect((await review(t, admin)).review!.autoMerge).toMatchObject({
+      state: 'blocked',
+      reasons: ['The "deploy" check failed'],
+    });
+  });
+
+  it("isn't ready while a required job is skipped and its run is still going", async () => {
+    const { t, admin, repo } = await pullWith(
+      { 'src/b.ts': 'b\n' },
+      { policy: POLICY.replace('require: none', 'require: [deploy]') }
+    );
+    await runReviews(t, fakeModels().models);
+    const head = repo.refs.get('refs/heads/feature')!;
+    await t.env.DB.prepare(
+      `INSERT INTO workflow_runs (id, repository_id, run_number, workflow_path, name, event, ref, head_sha, display_title, status, conclusion, created_at)
+       SELECT 'r1', id, 1, 'ci.yml', 'CI', 'pull_request', 'x', ?, 'x', 'in_progress', NULL, 0 FROM repositories`
+    )
+      .bind(head)
+      .run();
+    await t.env.DB.prepare(
+      `INSERT INTO workflow_jobs (id, run_id, job_key, name, runs_on, needs, status, conclusion) VALUES
+       ('j1', 'r1', 'test', 'test', 'ubuntu-latest', '[]', 'completed', 'failure'),
+       ('j2', 'r1', 'deploy', 'deploy', 'ubuntu-latest', '["test"]', 'completed', 'skipped'),
+       ('j3', 'r1', 'lint', 'lint', 'ubuntu-latest', '[]', 'in_progress', NULL)`
+    ).run();
+    expect((await review(t, admin)).review!.autoMerge).toMatchObject({
+      state: 'waiting',
+      reasons: ['The "deploy" check is running'],
+    });
+    expect((await pullRow(t))!.state).toBe('open');
+  });
+
+  it('a successful re-run unblocks failed checks', async () => {
+    const { t, admin, repo } = await pullWith(
+      { 'src/b.ts': 'b\n' },
+      { policy: POLICY.replace('require: none', 'require: all') }
+    );
+    await runReviews(t, fakeModels().models);
+    const head = repo.refs.get('refs/heads/feature')!;
+    const insert = (id: string, n: number, conclusion: string) =>
+      t.env.DB.prepare(
+        `INSERT INTO workflow_runs (id, repository_id, run_number, workflow_path, name, event, ref, head_sha, display_title, status, conclusion, created_at)
+         SELECT ?, id, ?, 'ci.yml', 'CI', 'pull_request', 'x', ?, 'x', 'completed', ?, 0 FROM repositories`
+      )
+        .bind(id, n, head, conclusion)
+        .run();
+    await insert('r1', 1, 'failure');
+    expect((await review(t, admin)).review!.autoMerge).toMatchObject({
+      state: 'blocked',
+    });
+    await insert('r2', 2, 'success');
+    expect((await review(t, admin)).review!.autoMerge.state).toBe('ready');
+  });
+
   it('records an invalid review.yml as a failed review without calling a model', async () => {
     const { t, admin } = await pullWith(
       { 'src/b.ts': 'b\n' },
@@ -755,7 +827,11 @@ describe('approvals inbox', () => {
     }[];
   };
   const inbox = async (t: TestEnv, cookie: string) =>
-    (await (await call(t, '/api/approvals', { cookie })).json()) as Item[];
+    (
+      (await (await call(t, '/api/approvals', { cookie })).json()) as {
+        items: Item[];
+      }
+    ).items;
 
   it('lists unapproved flags across repositories, for people who can merge, until approved', async () => {
     const { t, admin } = await pullWith({ 'migrations/1.sql': 'x\n' });

@@ -13,6 +13,7 @@ import { getSettings } from '../lib/settings';
 import { executeStacking, type StackParams } from '../stack/discover';
 import { workersAiStackModels } from '../stack/models';
 import { recordAgentRun } from '../agent-runs/record';
+import { settleAfterPayload } from '../pulls/settle';
 
 export type MergeResolutionParams =
   | {
@@ -63,7 +64,8 @@ export class MergeResolutionWorkflow extends WorkflowEntrypoint<
     runner: StepRunner
   ) {
     const db = drizzle(this.env.DB, { schema });
-    if (event.payload.classificationId) {
+    const p = event.payload;
+    if (p.classificationId) {
       const ids = await getSettings(db, this.env, [
         'ai.summary_model',
         'ai.review_model',
@@ -71,52 +73,50 @@ export class MergeResolutionWorkflow extends WorkflowEntrypoint<
       const models = workersAiModels(
         this.env,
         { summary: ids['ai.summary_model'], review: ids['ai.review_model'] },
-        { classificationId: event.payload.classificationId }
+        { classificationId: p.classificationId }
       );
       await executeClassification(
         { env: this.env, db, step: runner, models },
-        event.payload.classificationId
+        p.classificationId
       );
-      return;
-    }
-    if (event.payload.stack) {
+    } else if (p.stack) {
       const ids = await getSettings(db, this.env, ['ai.review_model']);
-      const pr = event.payload.stack.pullRequestId;
+      const pr = p.stack.pullRequestId;
       const row = await db.query.pullRequests.findFirst({
-        where: (p, { eq }) => eq(p.id, pr),
+        where: (x, { eq }) => eq(x.id, pr),
         columns: { repositoryId: true },
       });
-      if (!row) return;
-      await executeStacking(
+      if (row)
+        await executeStacking(
+          {
+            env: this.env,
+            db,
+            step: runner,
+            models: workersAiStackModels(
+              this.env,
+              { review: ids['ai.review_model'] },
+              { repositoryId: row.repositoryId, pullRequestId: pr }
+            ),
+          },
+          p.stack
+        );
+    } else if (p.sweep) {
+      await executeSweep({ env: this.env, db, step: runner }, p.sweep);
+    } else {
+      await executeResolution(
         {
           env: this.env,
           db,
           step: runner,
-          models: workersAiStackModels(
-            this.env,
-            { review: ids['ai.review_model'] },
-            { repositoryId: row.repositoryId, pullRequestId: pr }
-          ),
+          resolver: (id) => this.env.MERGE_RESOLVER.getByName(id),
         },
-        event.payload.stack
+        p.resolutionId!
       );
-      return;
     }
-    if (event.payload.sweep) {
-      await executeSweep(
-        { env: this.env, db, step: runner },
-        event.payload.sweep
-      );
-      return;
-    }
-    await executeResolution(
-      {
-        env: this.env,
-        db,
-        step: runner,
-        resolver: (id) => this.env.MERGE_RESOLVER.getByName(id),
-      },
-      event.payload.resolutionId!
-    );
+    // Whatever ran may have moved pull requests to another state: record changes for the timeline.
+    await runner.do('states', async () => {
+      await settleAfterPayload(this.env, db, p);
+      return true;
+    });
   }
 }

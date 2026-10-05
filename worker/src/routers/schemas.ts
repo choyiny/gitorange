@@ -1,4 +1,5 @@
 import { z } from '@hono/zod-openapi';
+import { PULL_STATES, REASON_KINDS } from '../pulls/state';
 
 export const publicUserSchema = z
   .object({
@@ -78,3 +79,28 @@ export const ownerRepoParams = z.object({
   owner: z.string(),
   repo: z.string(),
 });
+
+/** One structured reason; its other fields depend on `kind` (snake_case, as agents read them). */
+export const pullReasonSchema = z
+  .object({ kind: z.enum(REASON_KINDS) })
+  .catchall(z.unknown())
+  .openapi('PullReason');
+
+export const pullStateSchema = z
+  .object({
+    state: z.enum(PULL_STATES),
+    reasons: z.array(pullReasonSchema),
+  })
+  .openapi('PullState');
+
+export const prEventSchema = z
+  .object({
+    id: z.string(),
+    kind: z.string(),
+    /** state_changed: the state it changed to. */
+    state: z.enum(PULL_STATES).nullable(),
+    data: z.record(z.string(), z.unknown()).nullable(),
+    actor: publicUserSchema.nullable(),
+    createdAt: z.string(),
+  })
+  .openapi('PullEvent');

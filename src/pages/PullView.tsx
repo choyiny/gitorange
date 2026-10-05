@@ -17,6 +17,7 @@ import {
   api,
   qk,
   type Comment,
+  type PullEvent,
   type PullDetail,
   type RepoDetail,
 } from '@/lib/uiApi';
@@ -31,6 +32,8 @@ import { Markdown } from '@/components/Markdown';
 import { ChecksBox } from '@/components/Checks';
 import { AiResolution } from '@/components/AiResolution';
 import { AutoMergeStatus, ReviewComment } from '@/components/AutoMergeReview';
+import { PullStateLabel, PullStateReasons } from '@/components/PullStateLabel';
+import { PullEventItem } from '@/components/PullEvents';
 import { Spinner } from '@/components/Spinner';
 import { StackSidebar } from '@/components/StackSidebar';
 import { NotFound } from './NotFound';
@@ -205,6 +208,14 @@ function MergeBox({
             : 'var(--borderColor-success-emphasis)',
         }}
       >
+        {d.pullState && d.pullState.state !== 'ready' && (
+          <div className="Box-row">
+            <div className="d-flex flex-items-center mb-1" style={{ gap: 8 }}>
+              <PullStateLabel state={d.pullState} />
+            </div>
+            <PullStateReasons state={d.pullState} />
+          </div>
+        )}
         <div className="Box-row d-flex flex-items-start" style={{ gap: 12 }}>
           {d.mergeable === null ? (
             <Spinner size={16} />
@@ -297,6 +308,15 @@ function Conversation({
           return at < 0 ? d.comments.length : at;
         })()
       : d.comments.length;
+  // GitOrange's events between the comments they happened between.
+  const slots: PullEvent[][] = Array.from(
+    { length: d.comments.length + 1 },
+    () => []
+  );
+  for (const e of d.events) {
+    const i = d.comments.findIndex((c) => c.createdAt > e.createdAt);
+    slots[i < 0 ? d.comments.length : i].push(e);
+  }
   const send = async (andState?: 'open' | 'closed') => {
     setBusy(true);
     setError(null);
@@ -331,6 +351,9 @@ function Conversation({
         {d.comments.map((c, i) => (
           <Fragment key={c.id}>
             {/* The auto-merge review sits in the timeline where it happened. */}
+            {slots[i].map((e) => (
+              <PullEventItem key={e.id} e={e} />
+            ))}
             {reviewAt === i && (
               <ReviewComment repo={repo} d={d} onChange={refresh} />
             )}
@@ -340,6 +363,9 @@ function Conversation({
               label={c.author.id === pr.author.id ? 'Author' : undefined}
             />
           </Fragment>
+        ))}
+        {slots[d.comments.length].map((e) => (
+          <PullEventItem key={e.id} e={e} />
         ))}
         {reviewAt === d.comments.length && (
           <ReviewComment repo={repo} d={d} onChange={refresh} />

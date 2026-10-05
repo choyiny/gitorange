@@ -54,7 +54,9 @@ Every new commit on a pull request is reviewed once (again if `review.yml` chang
 
 Everything waiting on you, across every repository you can merge in, is on the **Approvals** page (the
 shield in the header shows how many): flags to approve (or that have changes requested), failed reviews to retry, and conflicts AI couldn't
-resolve. Pages update live as reviews progress, flags are approved, and pull requests merge.
+resolve. Pages update live as reviews progress, flags are approved, and pull requests merge. The page lists the most
+recently updated pull requests first, 25 at a time (**Load more** for the rest); `GET /api/approvals?limit=&cursor=`
+returns one page as `{ items, count, nextCursor }`, where `count` covers every page.
 
 If a model can't be reached, the review fails and the pull request says so, with a button to try again; it
 doesn't merge on its own until a review succeeds. You can always merge it by hand.
@@ -139,6 +141,53 @@ worker/worker-configuration.d.ts
 # Migration snapshots (the .sql migration itself is still reviewed)
 migrations/meta/
 ```
+
+## Pull request states
+
+Every open pull request has one state that says whose move it is. It is computed when read (never stored), with the reasons behind it.
+
+| State                                       | Whose move                                                                                      |
+| ------------------------------------------- | ----------------------------------------------------------------------------------------------- |
+| `agent_followup` (Ready for agent followup) | The author's agent: push a fix for each reason.                                                 |
+| `human_review` (Requires human review)      | A person: review, approve, or decide.                                                           |
+| `waiting` (Waiting for checks)              | Nobody yet: something is still running.                                                         |
+| `ready` (Ready)                             | Nothing blocks it. Shown as "Ready, stacked on #N" when it builds on another open pull request. |
+
+When several reasons apply, the most urgent state wins: `agent_followup`, then `human_review`, then `waiting`, then `ready`. Reasons are listed in that order too.
+
+Each reason has a `kind` and its own fields:
+
+| Reason                  | State                              | Meaning                                                                                                                                                                |
+| ----------------------- | ---------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `check_failed`          | `agent_followup`                   | A required Actions check failed (`run_number`, and `check` when review.yml names it).                                                                                  |
+| `changes_requested`     | `agent_followup`                   | A reviewer requested changes on this many flags.                                                                                                                       |
+| `conflicts_unresolved`  | `agent_followup`                   | The AI resolution was rejected or failed; the conflicting `files` need a fix from the author.                                                                          |
+| `review_policy_invalid` | `agent_followup` or `human_review` | `review.yml` doesn't parse. In this pull request's own change (`where: pull_request`) it is the author's to fix; on the target branch (`where: target`) a person must. |
+| `review_failed`         | `human_review`                     | The auto-merge review failed to run.                                                                                                                                   |
+| `flags_pending`         | `human_review`                     | Review flags are waiting for approval.                                                                                                                                 |
+| `cycle`                 | `human_review`                     | This pull request is in a stack cycle with the listed pull requests.                                                                                                   |
+| `checks_running`        | `waiting`                          | Required checks are running, or haven't started (`started: false`).                                                                                                    |
+| `review_running`        | `waiting`                          | The auto-merge review hasn't finished.                                                                                                                                 |
+| `resolution_running`    | `waiting`                          | An AI conflict resolution is queued or running.                                                                                                                        |
+| `stack_checking`        | `waiting`                          | Stack discovery is still comparing it with other pull requests.                                                                                                        |
+| `must_account_for`      | none                               | Another pull request changes code this one depends on (`pr`, `landed`, `instructions`).                                                                                |
+| `stacked_on`            | none                               | This pull request builds on `pr`.                                                                                                                                      |
+| `waits_on`              | none                               | It should land after `pr`.                                                                                                                                             |
+
+`must_account_for` is shown for information: it doesn't change the state yet.
+
+Conflict reasons (`conflicts_unresolved`, `resolution_running`) come from AI conflict resolution, including conflicts it can't take on (binary files, or a file deleted on one side and changed on the other), which are `conflicts_unresolved` too. Without AI conflict resolution configured there is no conflict reason; the merge box still shows the conflicts. Likewise, without AI review configured (the `MERGE_RESOLUTION` Workflow binding), there is no `review_running` or `stack_checking` reason, since no review or stack check will ever run.
+
+Checks count the same way as for auto-merge. With a `review.yml` on the target branch, `checks.require` decides: `none` ignores checks, `all` also waits for a first run, a list waits for those jobs. Without one, any run at the head commit counts: a failed run is `check_failed`, an unfinished one is `checks_running`, and no run at all is not a reason. As on the commit's checks badge, only the latest run of each workflow and event counts (a re-run replaces the run it repeats), and only failed or cancelled runs and jobs fail; skipped ones don't, except a required job skipped in a run that failed or was cancelled (Actions skips a job when a job it needs failed), which fails; while that run is still going, such a job counts as running.
+
+States exist for every open pull request, with or without `review.yml`. Without it there is no review, so no review or flag reasons. The stack reasons (`cycle`, `stack_checking`, `must_account_for`, `stacked_on`, `waits_on`) come from [stacking](#stacking), which always runs, with or without `review.yml`.
+
+Where to see them:
+
+- The Pull requests list shows the state on each row. Filter it with `?state=agent_followup` (or `human_review`, `waiting`, `ready`) on `GET /api/repos/:owner/:repo/pulls`; each row has `pullState`. The tree, the merge box, and PR detail show it too.
+- The Approvals page lists pull requests whose latest recorded state is `human_review`.
+- Over MCP, `gitorange_list_pull_requests` returns `pull_state`, and `state: "agent_followup"` lists the open pull requests that need an agent. `gitorange_get_pull_request` returns `pull_state` and `reasons`.
+- State changes are recorded and appear on the timeline of the pull request, with the reasons at that moment.
 
 ## Stacking
 

@@ -1,4 +1,5 @@
 import { and, eq, sql } from 'drizzle-orm';
+import { settleStates } from '../pulls/settle';
 import type { DrizzleDB } from '../db/middleware';
 import {
   pullRequestComments,
@@ -164,6 +165,7 @@ export async function openPull(opts: {
     }).catch((e) => console.error('[actions] queue failed', e))
   );
   opts.after(publishChange(env, repo.id, { approvals: true }));
+  opts.after(settleStates(env, db, repo.id));
   return { ok: true, pr };
 }
 

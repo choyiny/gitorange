@@ -31,8 +31,10 @@ export const transcriptKey = (repoId: string, id: string) =>
 
 const CONFLICT_MARKER = /^(<{7}|\|{7}|={7}|>{7})( |$)/m;
 const MAX_INTENT_COMMITS = 30;
-
+/** The error a resolution gets when newer commits replace the ones it was for. */
 export const SUPERSEDED = 'Superseded by newer commits.';
+/** The model of a failed row recording conflicts AI can't resolve (binary, delete/edit): never an AI attempt. */
+export const NO_MODEL = 'none';
 
 /**
  * How long a conflict sweep waits before it checks pull requests, so a burst of landings on the

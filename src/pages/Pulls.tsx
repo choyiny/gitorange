@@ -13,6 +13,8 @@ import { timeAgo } from '@/lib/format';
 import { Spinner } from '@/components/Spinner';
 import { ChecksBadge, useCommitStatuses } from '@/components/Checks';
 import { AiResolutionBadge, ReviewLabel } from '@/components/PullBadges';
+import { PullStateLabel } from '@/components/PullStateLabel';
+import { STATE_LABEL } from '@/lib/pullState';
 import { StackTree } from '@/components/StackTree';
 import { PrStateIcon } from './PrIcons';
 
@@ -29,7 +31,16 @@ function storedView(): 'list' | 'tree' {
 export default function Pulls() {
   const repo = useOutletContext<RepoDetail>();
   const [params, setParams] = useSearchParams();
-  const state = params.get('state') === 'closed' ? 'closed' : 'open';
+  const raw = params.get('state');
+  const filters = [
+    'agent_followup',
+    'human_review',
+    'waiting',
+    'ready',
+  ] as const;
+  const pullFilter = filters.find((f) => f === raw) ?? null;
+  const state = raw === 'closed' ? 'closed' : (pullFilter ?? 'open');
+  const openish = state !== 'closed';
   const q = useQuery({
     queryKey: qk.pulls(repo.owner.username, repo.name, state),
     queryFn: () => api.pulls(repo.owner.username, repo.name, state),
@@ -70,7 +81,7 @@ export default function Pulls() {
           style={{ gap: 16 }}
         >
           <button
-            className={`btn-link d-inline-flex flex-items-center f5 ${state === 'open' ? 'text-bold color-fg-default' : 'color-fg-muted'}`}
+            className={`btn-link d-inline-flex flex-items-center f5 ${openish ? 'text-bold color-fg-default' : 'color-fg-muted'}`}
             style={{ gap: 4, textDecoration: 'none' }}
             onClick={() => setParams({})}
           >
@@ -83,8 +94,25 @@ export default function Pulls() {
           >
             <CheckIcon /> {q.data?.closedCount ?? ''} Closed
           </button>
+          {openish && (
+            <select
+              className="form-select select-sm ml-auto"
+              aria-label="Filter by state"
+              value={pullFilter ?? ''}
+              onChange={(e) =>
+                setParams(e.target.value ? { state: e.target.value } : {})
+              }
+            >
+              <option value="">All open</option>
+              {filters.map((f) => (
+                <option key={f} value={f}>
+                  {STATE_LABEL[f]}
+                </option>
+              ))}
+            </select>
+          )}
           {state === 'open' && (
-            <div className="BtnGroup ml-auto">
+            <div className="BtnGroup">
               <button
                 className={`btn btn-sm BtnGroup-item ${view === 'list' ? 'selected' : ''}`}
                 aria-pressed={view === 'list'}
@@ -110,9 +138,11 @@ export default function Pulls() {
           <div className="blankslate">
             <GitPullRequestIcon size={24} className="color-fg-muted mb-2" />
             <h3 className="blankslate-heading">
-              There aren't any {state} pull requests.
+              There aren't any{' '}
+              {pullFilter ? STATE_LABEL[pullFilter].toLowerCase() : state} pull
+              requests.
             </h3>
-            {state === 'open' && repo.permissions.write && (
+            {openish && repo.permissions.write && (
               <p>
                 Pull requests help you collaborate on code with other people.{' '}
                 <Link to={`${base}/compare`}>Create a pull request</Link>.
@@ -140,7 +170,8 @@ export default function Pulls() {
                   repo={repo}
                   checks={p.headSha ? statuses.data?.[p.headSha] : undefined}
                 />{' '}
-                <AiResolutionBadge state={p.aiResolution} />
+                <AiResolutionBadge state={p.aiResolution} />{' '}
+                <PullStateLabel state={p.pullState} showReason />
                 <div className="f6 color-fg-muted mt-1">
                   #{p.number}{' '}
                   {p.state === 'open' && (

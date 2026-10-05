@@ -1,4 +1,5 @@
 import { OpenAPIHono } from '@hono/zod-openapi';
+import { settleStates } from './pulls/settle';
 import { swaggerUI } from '@hono/swagger-ui';
 import { logger } from 'hono/logger';
 import { createAuth } from './auth';
@@ -62,12 +63,17 @@ const pingAfterChange: MiddlewareHandler<AppEnv> = async (c, next) => {
   await next();
   if (c.req.method === 'GET' || c.res.status >= 400) return;
   const repo = (c as unknown as Context<RepoEnv>).get('repo');
-  if (repo)
+  if (repo) {
     c.executionCtx.waitUntil(
       publishChange(c.env, repo.id, {
         approvals: c.req.path.includes('/pulls'),
       })
     );
+    // The change may move a pull request to another state: record it for the timeline.
+    c.executionCtx.waitUntil(
+      settleStates(c.env, (c as unknown as Context<RepoEnv>).get('db'), repo.id)
+    );
+  }
 };
 app.use('/api/repos/:owner/:repo', pingAfterChange);
 app.use('/api/repos/:owner/:repo/*', pingAfterChange);

@@ -17,7 +17,7 @@ import { signOut, useCurrentUser } from '@/lib/auth';
 import { Avatar } from './Avatar';
 import { Dropdown } from './Dropdown';
 import { Logo } from './Logo';
-import { approvalCount, useApprovals } from '@/lib/approvals';
+import { useApprovalCount } from '@/lib/approvals';
 import { useSetupChecks } from '@/lib/setupChecks';
 
 /** Site admins only: a red badge while Site admin → Setup reports errors. */
@@ -41,7 +41,7 @@ function SetupErrorsLink() {
 
 /** The global Approvals tab, with how many items wait on the user. Updates live. */
 function ApprovalsLink() {
-  const count = approvalCount(useApprovals().data);
+  const count = useApprovalCount().data ?? 0;
   return (
     <Link
       to="/approvals"

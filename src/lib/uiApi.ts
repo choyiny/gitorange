@@ -116,6 +116,8 @@ export type Pull = {
     state: 'reviewing' | 'failed' | 'review_required' | 'approved';
     flags: number;
   } | null;
+  /** Pull request lists only (open): whose move it is. */
+  pullState?: PullState | null;
   mergeCommitSha: string | null;
   mergedBy: User | null;
   /** GitOrange merged it on its own (auto-merge); mergedBy is then null. */
@@ -125,6 +127,20 @@ export type Pull = {
   createdAt: string;
   updatedAt: string;
   commentCount: number;
+};
+export type PullStateName =
+  'agent_followup' | 'human_review' | 'waiting' | 'ready';
+/** A structured reason; fields other than kind depend on it (snake_case). */
+export type PullReason = { kind: string; [key: string]: unknown };
+export type PullState = { state: PullStateName; reasons: PullReason[] };
+/** GitOrange's own timeline entry on a pull request. */
+export type PullEvent = {
+  id: string;
+  kind: string;
+  state: PullStateName | null;
+  data: Record<string, unknown> | null;
+  actor: User | null;
+  createdAt: string;
 };
 export type Comment = {
   id: string;
@@ -161,6 +177,7 @@ export type StackTree = {
       title: string;
       headRef: string;
       author: Pull['author'];
+      pullState: PullState | null;
     })[];
     landed: { number: number; title: string }[];
   }[];
@@ -186,6 +203,8 @@ export type PullDetail = {
   canMerge: boolean;
   /** How this pull request stacks with other open ones; null once it isn't open. */
   stack: StackNode | null;
+  pullState: PullState | null;
+  events: PullEvent[];
 };
 export type ClassifierAnswer =
   | { type: 'noul'; value: number }
@@ -247,6 +266,13 @@ export type ApprovalItem = {
   reviewFailed: string | null;
   resolutionFailed: string | null;
   flags: ReviewFlag[];
+  pullState: PullState | null;
+};
+/** One page of GET /api/approvals; `count` covers every page. */
+export type ApprovalsPage = {
+  items: ApprovalItem[];
+  count: number;
+  nextCursor: string | null;
 };
 export type PullReview = {
   classification: {
@@ -712,7 +738,7 @@ export const api = {
   compare: (o: string, n: string, base: string, head: string) =>
     apiFetch<Compare>(`${r(o, n)}/compare?${q({ base, head })}`),
 
-  pulls: (o: string, n: string, state: 'open' | 'closed') =>
+  pulls: (o: string, n: string, state: 'open' | 'closed' | PullStateName) =>
     apiFetch<{ pulls: Pull[]; openCount: number; closedCount: number }>(
       `${r(o, n)}/pulls?${q({ state })}`
     ),
@@ -812,7 +838,13 @@ export const api = {
     apiFetch(`${r(o, n)}/pulls/${num}/resolutions/${id}/reject`, {
       method: 'POST',
     }),
-  approvals: () => apiFetch<ApprovalItem[]>('/api/approvals'),
+  approvals: (opts: { cursor?: string; limit?: number } = {}) =>
+    apiFetch<ApprovalsPage>(
+      `/api/approvals?${q({
+        ...(opts.cursor ? { cursor: opts.cursor } : {}),
+        ...(opts.limit ? { limit: opts.limit } : {}),
+      })}`
+    ),
   usage: (month: string) =>
     apiFetch<UsageReport>(`/api/admin/usage?${q({ month })}`),
   syncUsage: () =>

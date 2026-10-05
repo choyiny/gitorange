@@ -388,6 +388,15 @@ jobs:
 });
 
 describe('Actions execution', () => {
+  it('settles pull request states when a run finishes', async () => {
+    const s = await setup();
+    await pushFiles(s, 'main', { '.github/workflows/ci.yml': CI });
+    const [queued] = (await runs(s.t, s.admin)).runs;
+    const h = harness(s.t);
+    await h.run(queued.id);
+    expect(h.stepNames).toContain('states');
+  });
+
   it('runs steps in order, checks out with a masked token, and stores logs', async () => {
     const s = await setup();
     const sha = await pushFiles(s, 'main', { '.github/workflows/ci.yml': CI });

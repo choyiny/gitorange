@@ -4,3 +4,5 @@ migrations
 worker/worker-configuration.d.ts
 .wrangler
 .claude/hooks
+.superpowers
+.claude/worktrees

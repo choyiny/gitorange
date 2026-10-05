@@ -1,4 +1,5 @@
 import { and, eq, ne, or } from 'drizzle-orm';
+import { settleStates } from '../pulls/settle';
 import { publishChange } from '../live/publish';
 import type { DrizzleDB } from '../db/middleware';
 import {
@@ -226,6 +227,7 @@ export async function landPull(opts: {
     .where(eq(repositories.id, pr.repositoryId));
   // Auto-merges happen in the background.
   opts.after(publishChange(env, pr.repositoryId, { approvals: true }));
+  opts.after(settleStates(env, db, pr.repositoryId));
   if (baseBefore) {
     const updates = [
       { ref: `refs/heads/${pr.baseRef}`, old: baseBefore, new: sha },

@@ -166,25 +166,26 @@ async function seed(t: TestEnv, cookie: string, name = 'app') {
     key: string,
     n: number,
     ago: number,
-    status: 'failed' | 'applied' | 'proposed'
+    status: 'failed' | 'applied' | 'proposed',
+    model = 'm'
   ) => ({
     id: `${repo.id}-${key}`,
     pullRequestId: id(n),
     baseSha: 'b',
     headSha: 'h',
     status,
-    model: 'm',
+    model,
     conflictedPaths: ['a.ts'],
     createdAt: at(ago),
   });
-  await db
-    .insert(mergeResolutions)
-    .values([
-      resolution('r1', 2, 5 * DAY, 'failed'),
-      resolution('r2', 2, 5 * DAY - HOUR, 'applied'),
-      resolution('r3', 5, DAY, 'proposed'),
-      resolution('r0', 6, 110 * DAY, 'failed'),
-    ]);
+  await db.insert(mergeResolutions).values([
+    resolution('r1', 2, 5 * DAY, 'failed'),
+    resolution('r2', 2, 5 * DAY - HOUR, 'applied'),
+    resolution('r3', 5, DAY, 'proposed'),
+    // Conflicts AI can't resolve (binary, delete/edit): recorded, but never an AI attempt.
+    resolution('rn', 5, 2 * DAY, 'failed', 'none'),
+    resolution('r0', 6, 110 * DAY, 'failed'),
+  ]);
   let runNumber = 1;
   const run = (
     ref: string,

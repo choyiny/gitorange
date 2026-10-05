@@ -1,4 +1,5 @@
 import { drizzle } from 'drizzle-orm/d1';
+import { settleStates } from './pulls/settle';
 import { eq } from 'drizzle-orm';
 import { publishChange } from './live/publish';
 import { instanceName } from './lib/settings';
@@ -246,4 +247,5 @@ async function afterPush(
     await autoResolveConflicts(env, repo, updates);
   }
   await publishChange(env, repoId, { approvals: true });
+  await settleStates(env, db, repoId);
 }

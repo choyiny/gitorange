@@ -418,6 +418,42 @@ export const prEdges = sqliteTable(
 );
 export type PrEdge = typeof prEdges.$inferSelect;
 
+// ── Pull request timeline ────────────────────────────────────────────────────
+// GitOrange's own timeline entries. state_changed: the PR's computed state changed (states are never stored
+// otherwise). Milestone 2b adds stacking events.
+
+export type PrEventKind = 'state_changed';
+
+export const prEvents = sqliteTable(
+  'pr_events',
+  {
+    id: text('id').primaryKey(),
+    repositoryId: text('repository_id')
+      .notNull()
+      .references(() => repositories.id, { onDelete: 'cascade' }),
+    pullRequestId: text('pull_request_id')
+      .notNull()
+      .references(() => pullRequests.id, { onDelete: 'cascade' }),
+    kind: text('kind', { enum: ['state_changed'] }).notNull(),
+    // state_changed: the state it changed to.
+    state: text('state', {
+      enum: ['agent_followup', 'human_review', 'waiting', 'ready'],
+    }),
+    data: text('data', { mode: 'json' }).$type<Record<string, unknown>>(),
+    actorId: text('actor_id').references(() => users.id, {
+      onDelete: 'set null',
+    }),
+    // state_changed: when the recorded state was computed. A computation older than the latest recorded one
+    // never records (see worker/src/pulls/events.ts).
+    computedAt: integer('computed_at', { mode: 'timestamp_ms' }),
+    createdAt: integer('created_at', { mode: 'timestamp_ms' }).notNull(),
+  },
+  (t) => [
+    index('pr_events_pr_kind_idx').on(t.pullRequestId, t.kind, t.computedAt),
+  ]
+);
+export type PrEvent = typeof prEvents.$inferSelect;
+
 // ── Actions ──────────────────────────────────────────────────────────────────
 // A workflow run: one `.github/workflows/*.yml` file triggered by one event.
 

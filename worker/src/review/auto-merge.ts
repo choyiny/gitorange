@@ -14,6 +14,7 @@ import { findRepoById, gitFor } from '../lib/repos';
 import { deleteMergedBranch, landPull } from '../merge/land';
 import { latestResolution } from '../merge/resolution';
 import { classificationFor } from './classify';
+import { checkVerdict } from './checks';
 import { parsePolicy, readPolicy, type ReviewPolicy } from './policy';
 
 /**
@@ -38,62 +39,32 @@ async function checkProblem(
   require: ReviewPolicy['checks']['require']
 ): Promise<{ kind: 'waiting' | 'blocked'; reason: string } | null> {
   if (require === 'none') return null;
-  const runs = await db
-    .select()
-    .from(workflowRuns)
-    .where(
-      and(
-        eq(workflowRuns.repositoryId, repositoryId),
-        eq(workflowRuns.headSha, sha)
-      )
-    )
-    .all();
-  if (require === 'all') {
-    if (!runs.length)
-      return {
-        kind: 'waiting',
-        reason: 'No checks have run for this commit yet',
-      };
-    if (
-      runs.some((r) => r.status === 'completed' && r.conclusion !== 'success')
-    )
-      return { kind: 'blocked', reason: 'Checks failed' };
-    if (runs.some((r) => r.status !== 'completed'))
-      return { kind: 'waiting', reason: 'Checks are running' };
-    return null;
-  }
-  const jobs = runs.length
-    ? await db
-        .select({
-          key: workflowJobs.jobKey,
-          name: workflowJobs.name,
-          status: workflowJobs.status,
-          conclusion: workflowJobs.conclusion,
-        })
-        .from(workflowJobs)
-        .innerJoin(workflowRuns, eq(workflowRuns.id, workflowJobs.runId))
-        .where(
-          and(
-            eq(workflowRuns.repositoryId, repositoryId),
-            eq(workflowRuns.headSha, sha)
-          )
-        )
-        .all()
-    : [];
-  for (const wanted of require) {
-    const matching = jobs.filter((j) => j.key === wanted || j.name === wanted);
-    if (!matching.length)
-      return { kind: 'waiting', reason: `Waiting for the "${wanted}" check` };
-    if (
-      matching.some(
-        (j) => j.status === 'completed' && j.conclusion !== 'success'
-      )
-    )
-      return { kind: 'blocked', reason: `The "${wanted}" check failed` };
-    if (matching.some((j) => j.status !== 'completed'))
-      return { kind: 'waiting', reason: `The "${wanted}" check is running` };
-  }
-  return null;
+  const at = and(
+    eq(workflowRuns.repositoryId, repositoryId),
+    eq(workflowRuns.headSha, sha)
+  );
+  const runs = await db.select().from(workflowRuns).where(at).all();
+  const jobs =
+    Array.isArray(require) && runs.length
+      ? await db
+          .select({
+            key: workflowJobs.jobKey,
+            name: workflowJobs.name,
+            status: workflowJobs.status,
+            conclusion: workflowJobs.conclusion,
+            runNumber: workflowRuns.runNumber,
+          })
+          .from(workflowJobs)
+          .innerJoin(workflowRuns, eq(workflowRuns.id, workflowJobs.runId))
+          .where(at)
+          .all()
+      : [];
+  const v = checkVerdict(runs, jobs, require);
+  if (!v) return null;
+  return {
+    kind: v.kind === 'failed' ? 'blocked' : 'waiting',
+    reason: v.reason,
+  };
 }
 
 /**

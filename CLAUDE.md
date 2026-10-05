@@ -54,6 +54,10 @@ and better-auth. Git storage is **Cloudflare Artifacts**: one Artifacts repo per
   writes never throw. Model calls land on their step via an `AsyncLocalStorage` context read by `recordAiUsage`
   (`ai_usage.agent_step_id`); decisions come from step results or `noteDecision` (short, never prompts/diffs/model text). The
   daily retention prunes them and closes runs left running over 2 h. Tests wrap executors in `recordAgentRun`.
+- PR states (`worker/src/pulls/`): `pullState` = `{ state, reasons[] }` computed on read, never stored: `state.ts`
+  (reasons → `agent_followup` > `human_review` > `waiting` > `ready`; add reason kinds only there), `signals.ts`
+  (`pullStates`, batched per repository), `settle.ts` (`settleStates` records changes as `pr_events` rows with one
+  conditional insert; called where pings happen and at the end of MERGE_RESOLUTION and Actions runs, never per step).
 - Live updates (`worker/src/live/`): one hibernating `LiveHub` DO (binding `LIVE`) relays "changed" pings over
   WebSockets (`GET /api/live[?repo=o/n]`, channels `repo:<id>` and `approvals`); pages refetch through the API. Pings
   come from a middleware after successful repo mutations, `pingingSteps` around Workflow step runners, pushes, and

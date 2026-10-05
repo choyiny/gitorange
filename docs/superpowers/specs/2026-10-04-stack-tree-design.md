@@ -135,7 +135,8 @@ After a PR's edges are `done`:
 
 - **Parent choice.** Among earlier **open** PRs with a `builds_on`/`must_account_for` edge to P, the parent is
   the one the deep dive ranked strongest (`must_account_for` > `builds_on`; ties to the higher PR number, the
-  most recent work). Other blocking edges (`conflicts`, extra `builds_on`) are **waits on**.
+  most recent work), provided its ancestor chain contains every other prerequisite of P; when no prerequisite
+  qualifies, the prerequisites are linearized first (below). Remaining blocking edges are **waits on**.
 - **Retarget.** Set P's `base_ref` to the parent's head branch (metadata only; no push). The timeline shows a
   GitOrange event: "Stacked this on #28: <reason>". The PR's diff is still only its own changes, since it's
   computed from the merge base.
@@ -152,6 +153,77 @@ After a PR's edges are `done`:
 `instructions` as a timeline comment and returns them over MCP. If the parent is still open, the instructions
 include "rebase onto `<parent branch>` first". On each new head of the later PR, a deep-dive re-check (given the
 earlier PR's diff and the later PR's new diff) answers "accounted for?"; yes sets `accounted_for_at`.
+
+### Linearizing several prerequisites
+
+History is rebase-only and a PR has one base, so a PR that depends on two or more open PRs needs them in one
+line. If #31 depends on #28 and #29, GitOrange orders them (#28 → #29 → #31) and stacks #31 on #29, the last of
+them, whose chain then contains both.
+
+- **Only when needed.** If one prerequisite's ancestor chain already contains the others, nothing is added.
+  Siblings (two PRs both stacked on #28, independent of each other) stay a branching tree; nothing is serialized
+  without a PR that needs it.
+- **How.** Per land target, take the dependency graph (blocking edges between open PRs) in topological order.
+  For each PR whose prerequisites don't lie on one path, add **ordering edges** between them until they do, then
+  choose its parent as above. An ordering edge is a `pr_edges` row of kind `ordered_after` with the PR that needed
+  it (`for_pr_id`) and a reason, e.g. "#29 lands after #28 so #31 can build on both".
+- **Choosing the order** of two prerequisites with no relationship of their own: one Clef call (choice question
+  "which should land first so the dependent PR is easiest to build on both?", given the three PRs' titles,
+  descriptions and one-liners). If Clef's confidence is below `confident_above`, a fixed rule decides: the PR
+  closer to **Ready** (section 2b) goes first, then the lower number. An existing relationship between them
+  (builds on, conflicts) always wins over both.
+- **Stability.** An ordering edge is re-decided only when one of its three PRs gets a new head, closes or lands,
+  so chains don't reshuffle on every push. Ordering edges never create cycles: an order that would is not added,
+  and the dependent PR falls back to waiting on both.
+- **Consequences for agents.** The later prerequisite (#29) must rebase onto the earlier one (#28) even though it
+  doesn't depend on it; it gets the **Ready for Agent Followup** reason `rebase_onto` ("rebase onto #28 so #31
+  can build on both"). The dependent PR gets `rebase_onto` #29 once #29 contains #28. GitOrange never pushes to
+  anyone's branch.
+- **Unwinding.** If a prerequisite closes without landing, ordering edges that existed for it are removed and the
+  chain is rebuilt; when one lands, the rest of the chain retargets as in "Parent lands".
+
+## 2b. Pull request states
+
+Every open pull request has exactly one state saying whose move it is. The state is **computed** on read from
+signals that already exist (checks, auto-merge review and flags, AI conflict resolution, stack edges), never
+stored as a second copy; only changes are recorded, for the timeline.
+
+| State                                           | When                                                                                                                                                                                                                                              | Who acts                             |
+| ----------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------ |
+| `agent_followup` (**Ready for Agent Followup**) | A required check failed · must account for #N and not accounted for · changes requested on a review flag · conflicts AI couldn't resolve · `rebase_onto` a new parent · the auto-merge review failed on an invalid `review.yml` change in this PR | The PR's author or agent: push a fix |
+| `human_review` (**Requires Human Review**)      | Review flags awaiting approval · a dependency cycle a maintainer must order · a maintainer override is needed                                                                                                                                     | A person with merge permission       |
+| `waiting` (**Waiting for Checks**)              | Actions running or queued · auto-merge review running · stack discovery still checking this PR's head · AI conflict resolution running                                                                                                            | GitOrange                            |
+| `ready` (**Ready**, optionally _stacked on #N_) | Nothing left on this PR. Stacked on an open parent: it lands after the parent (milestone 3's queue; until then, the merge button or auto-merge once the parent has landed)                                                                        | GitOrange                            |
+
+- **Priority** when several apply: `agent_followup` > `human_review` > `waiting` > `ready`. Agent work comes first
+  because a new commit resets review flags; asking a person to approve a commit about to be replaced wastes their
+  time.
+- **Reasons are structured.** `pullState(pr)` returns `{ state, reasons[] }`; each reason has a `kind` and its
+  data, e.g. `{ kind: 'check_failed', run_number }`, `{ kind: 'must_account_for', pr, instructions }`,
+  `{ kind: 'rebase_onto', pr, branch, why }`, `{ kind: 'flags_pending', count }`, `{ kind: 'stacked_on', pr }`.
+  Agents act on them without parsing prose.
+- **Surfaces.** A state label on each row of the Pull requests list and each tree node (replacing milestone 1's
+  missing chips); a banner in the merge box listing the reasons; `state` on PR detail; a `state` filter on the
+  list API and on `gitorange_list_pull_requests` (`state: "agent_followup"` is how an agent asks "what needs
+  me?"); `state` and `reasons` on `gitorange_get_pull_request`. The Approvals page lists `human_review` PRs.
+- **Timeline and live.** The middleware and Workflow hooks that already send live pings compare the PR's state
+  before and after and record a timeline event when it changes ("Ready for agent followup: check CI failed").
+  Pings as today.
+- **Only with stacking or auto-merge on?** States are computed for every open PR; reasons that need stacking
+  (`must_account_for`, `rebase_onto`, `stacked_on`) appear only when it is on.
+
+**Decided while planning (milestone 2a).** Reason kinds and whose move each makes it: `check_failed`,
+`changes_requested`, `conflicts_unresolved`, `rebase_onto` (2b), `must_account_for` (2b, while neither accounted for
+nor dismissed; informational in 2a), `review_policy_invalid` (the PR's own review.yml) → agent followup; `flags_pending`, `cycle`, `review_failed`, `review_policy_invalid` (the target's
+review.yml) → human review; `checks_running`, `review_running`, `resolution_running`, `stack_checking` → waiting;
+`stacked_on`, `waits_on` → informational. Checks follow `checks.require` exactly as auto-merge does; without
+review.yml any failed run on the head counts. Conflicts are read from AI resolution rows at the current commits
+(non-text conflicts are recorded as a failed resolution). The computed state is `pullState` on the REST API and
+`pull_state` (+ `reasons`) over MCP, since `state` already means open/closed/merged there; the `state` list filter
+also accepts the four states. Changes are recorded as `pr_events` rows (`state_changed`) by `settleStates`, called
+where pings already happen (API mutations, pushes, opening/landing PRs, flag decisions, the end of each
+MERGE_RESOLUTION and Actions Workflow run), with one conditional insert so concurrent triggers record once. The
+Approvals page reads the latest recorded state.
 
 ### Things that change because `base_ref` can be a PR branch
 
@@ -262,8 +334,11 @@ Each is mergeable and useful alone:
 
 1. **Discovery + tree view** (read-only): `pr_edges`, textual check, Clef decisions, reasoning-model explanations,
    Tree toggle, PR sidebar, MCP `stack` (without queue) and `gitorange_get_pull_tree`.
-2. **Retarget + must-account-for**: `land_target`, retargeting, instructions, re-checks, blocking in
-   `autoMergeStatus`/`landPull`/MCP, maintainer controls, Approvals entries.
+2. **Retarget, linearize, states**: `land_target`, retargeting, linearizing several prerequisites (ordering
+   edges), must-account-for instructions, re-checks and blocking in `autoMergeStatus`/`landPull`/MCP, PR states
+   (`pullState`, list filter, labels, merge-box banner, timeline), maintainer controls, Approvals entries.
+   Carried over from milestone 1: start discovery before auto-merge can land the PR; fix the claim race that can
+   leave a pair row with a stale orientation; tree-node state labels.
 3. **One at a time**: `merge_queue_entries`, build/test/land Workflow, `merged_head_sha`, Add to queue, MCP
    enqueue.
 

@@ -35,7 +35,13 @@ async function conflictingPull() {
     'Elaborate on three',
     [root]
   );
-  await commitFiles(repo, 'clean', { 'other.txt': 'x\n' }, 'Clean', [root]);
+  await commitFiles(
+    repo,
+    'clean',
+    { 'notes.txt': BASE, 'other.txt': 'x\n' },
+    'Clean',
+    [root]
+  );
   for (const head of ['feature', 'clean'])
     await call(t, '/api/repos/octocat/app/pulls', {
       cookie: admin,
@@ -77,6 +83,13 @@ describe('pull request list: AI conflict resolution', () => {
     // A discarded resolution also leaves the conflicts to a person.
     await setStatus(t, 'rejected');
     expect((await listed(t, admin))[1]).toBe('failed');
+  });
+
+  it("doesn't report conflicts AI never attempted (no model) as a failed attempt", async () => {
+    const { t, admin } = await conflictingPull();
+    await setStatus(t, 'failed', 'Resolve them locally.');
+    await t.env.DB.prepare(`UPDATE merge_resolutions SET model = 'none'`).run();
+    expect((await listed(t, admin))[1]).toBeNull();
   });
 
   it('uses only the latest attempt', async () => {

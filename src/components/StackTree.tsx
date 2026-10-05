@@ -4,6 +4,7 @@ import { AlertIcon, GitBranchIcon, GitMergeIcon } from '@primer/octicons-react';
 import { api, qk, type RepoDetail, type StackDependency } from '@/lib/uiApi';
 import { errorMessage } from '@/lib/api';
 import { treeRows } from '@/lib/stackTree';
+import { PullStateLabel } from './PullStateLabel';
 import { Spinner } from './Spinner';
 
 const KIND: Record<StackDependency['kind'], string> = {
@@ -115,6 +116,7 @@ export function StackTree({ repo }: { repo: RepoDetail }) {
                 >
                   {node.title}
                 </Link>{' '}
+                <PullStateLabel state={node.pullState} showReason />{' '}
                 <span className="color-fg-muted f6 wb-break-word">
                   #{node.number} · {node.headRef} · {node.author.username}
                 </span>
@@ -136,11 +138,6 @@ export function StackTree({ repo }: { repo: RepoDetail }) {
                     <span className="Label Label--danger mr-1">
                       <AlertIcon size={12} /> depends in a circle on{' '}
                       {node.cycleWith.map((c) => `#${c}`).join(', ')}
-                    </span>
-                  )}
-                  {node.checking && (
-                    <span className="Label Label--secondary mr-1">
-                      checking…
                     </span>
                   )}
                   {node.pending.length > 0 && (

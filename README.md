@@ -10,23 +10,185 @@
   <a href="https://developers.cloudflare.com/artifacts/"><img alt="Cloudflare Artifacts" src="https://img.shields.io/badge/git%20storage-Cloudflare%20Artifacts-F38020?logo=cloudflare&logoColor=white" /></a>
 </p>
 
-**A self-hosted GitHub for your team, with no servers to run.** GitOrange is a single-tenant git host in the spirit of GitHub Enterprise Server: the GitHub interface your team already knows, private to your organization, deployed as one Cloudflare Worker.
+**A code host where AI agents ship the code and people approve the risk.**
 
-There is no VM, no disk to back up, and no git daemon to patch. Repositories live in [Cloudflare Artifacts](https://developers.cloudflare.com/artifacts/), Cloudflare's git-compatible storage. Everything else lives in D1.
+Point a few coding agents at the same repository and the hard part stops being the code. It's the
+coordination: two agents change the same file, one adds a rule the other never follows, a person gets asked to
+review forty pull requests, and nobody knows whose move it is. GitOrange is built around that problem.
 
-**Bring your GitHub Actions workflows.** GitOrange runs the `.github/workflows/*.yml` files you already have, with the same syntax, on [Cloudflare Containers](https://developers.cloudflare.com/containers/). No runners to host. Typical build-and-test workflows (checkout, set up Node, install, test) work unchanged. Repository secrets aren't supported yet. See [what's supported](#github-actions-compatibility).
+It looks like the code host your team already uses, on purpose. Changing how a team works is hard enough
+without also changing the screens they work in. Repositories, branches, pull requests, checks, and the
+`git push` workflow are where people expect them. Underneath, it behaves differently:
 
-<img alt="A repository page in GitOrange" src="docs/screenshots/repository.jpg" />
+- **Every pull request says whose move it is.** _Ready for agent followup_, _Requires human review_, _Waiting
+  for checks_, or _Ready_, with machine-readable reasons. Agents pull their next task from that queue.
+- **Decisions are made by a fast decision model, not a chatbot.** [Clef](https://developers.cloudflare.com/workers-ai/models/)
+  answers yes/no, choice, and score questions with calibrated confidence: does this change touch stored data?
+  Does pull request #29 depend on #28? Larger models write the explanations a person or an agent reads, and
+  decide only when Clef isn't sure.
+- **Agents coordinate through the host, not through chat.** When several pull requests are open at once,
+  GitOrange works out which builds on which, which must change because of another, and which conflict, and
+  tells each agent what to do about it.
+- **Conflicts are resolved by an agent, not left in the queue.** A durable [Pi](https://pi.dev) agent
+  resolves text conflicts in a sandboxed workspace, told what each side was trying to do.
+- **People only see what needs a person.** Auto-merge lands everything else. The **Approvals** page holds the
+  few changes your rules say a human must read, each with an explanation, a diagram, and the lines that matter.
 
-## Who this is for
+It's single-tenant and runs entirely on your own Cloudflare account, as one Worker. There are no servers, VMs,
+or runners to operate.
 
-Small teams that want their code on infrastructure they control, with GitHub's familiar UI, and don't want to operate a GitHub Enterprise Server or GitLab instance. If you have a Cloudflare account on the Workers Paid plan, you can run GitOrange for a few dollars a month.
+<img alt="A pull request in GitOrange: checks, the auto-merge review, and AI conflict resolution" src="docs/screenshots/pull-request.jpg" />
+
+## How a change moves through GitOrange
+
+```mermaid
+flowchart LR
+  A[Agent pushes a branch<br/>and opens a pull request] --> B[Actions run your<br/>.github/workflows]
+  A --> C[One-line summary<br/>of every changed file]
+  C --> D{Clef answers your<br/>review questions}
+  C --> E{Clef: how does this PR<br/>relate to other open PRs?}
+  D -- nothing flagged --> F[Auto-merge]
+  D -- flagged --> G[Reasoning model explains<br/>with a diagram and excerpts]
+  G --> H[A person approves<br/>on the Approvals page]
+  H --> F
+  E -- must change because of #28 --> I[Instructions go to<br/>the PR's agent]
+  I --> A
+  B -- failed --> I
+  F -- conflicts with main --> J[Durable Pi agent<br/>resolves them]
+  J --> F
+```
+
+1. **An agent opens a pull request**, through `git push` and the [Model Context Protocol (MCP) server](#built-for-agents) or the web UI.
+2. **Checks run.** Your existing `.github/workflows/*.yml` files run unchanged on Cloudflare Containers.
+3. **Every changed file gets a one-line summary**, written by GLM-5.3-flash. These summaries are what the
+   decision model reads, so review never truncates a large pull request.
+4. **Clef answers the questions in your `.gitorange/review.yml`**, from those summaries: "does this change how
+   data is stored?", "does it touch authentication?", "how risky is it?". Each answer has a probability, and
+   your thresholds decide what is flagged.
+5. **Clef also compares the pull request with every other open one** into the same branch, and with ones that
+   landed since it branched. Related pairs get a closer read of the real diffs.
+6. **The pull request's state tells the next actor what to do.** An agent with a failed check, a requested
+   change, or a dependency to account for sees exactly that, with the run number or the instructions. A person
+   sees only flags that need approval.
+7. **It merges on its own** once its checks pass and every flag is approved, and its branch is deleted unless
+   another open pull request builds on it. If `main` moved and the change now conflicts, a Pi agent resolves the
+   conflict first.
+
+## Built for many agents at once
+
+**Concurrency.** Every merge is a compare-and-swap push onto the target branch's tip, so two agents racing to
+land never overwrite each other. The loser re-plans against the new tip. Reviews, conflict resolutions, and
+discovery runs are durable [Workflows](https://developers.cloudflare.com/workflows/), deduplicated by commit, so a
+retried or duplicated trigger for the same commits never does the work twice. A pull request's state history is recorded with an
+atomic compare-and-insert, so concurrent updates never record a change twice or let an older result overwrite a
+newer one.
+
+**Coordination.** GitOrange always builds a tree of the open pull requests, with or without a
+`.gitorange/review.yml`:
+
+| Relationship         | Example                                                                                  | What happens                                                     |
+| -------------------- | ---------------------------------------------------------------------------------------- | ---------------------------------------------------------------- |
+| **Builds on**        | #32 calls a helper that #31 adds                                                         | #32 is drawn under #31 in the tree                               |
+| **Must account for** | #28 adds a setup check for every configuration variable; #29 adds a variable without one | #29's agent gets instructions: rebase onto #28 and add the check |
+| **Conflicts**        | #40 and #41 rewrite the same function                                                    | The tree shows the order: the later one waits on the earlier     |
+| **Independent**      | A docs change and an unrelated bug fix                                                   | Recorded, so the pair is never checked again at the same commits |
+
+Clef decides the relationship from the one-line summaries. GLM-5.3 reads the actual diffs only for related
+pairs, to write the reason and the instructions, and decides only when Clef's confidence is low. That keeps the
+tree stable from one push to the next.
+
+**Context preservation.** Nothing an agent needs lives only in a chat transcript. Each relationship stores its
+reason and instructions. Each review flag stores its explanation, a before/after table, a Mermaid diagram, and
+excerpts cut from the real diff. Each conflict resolution stores what it changed and why. Every state change is
+on the pull request's timeline. An agent picking up the work later reads all of it from
+`gitorange_get_pull_request`.
+
+**Agent runs.** Every piece of AI work (reviews, conflict resolutions, stack discovery, conflict sweeps) shows
+in the Actions tab under **Agent**, step by step: how long each step took, which model it called, the tokens and
+estimated cost, and what it decided. Prompts and diffs are never kept.
+
+**Review.** You write the rules as plain questions in `.gitorange/review.yml`, on the target branch, so a pull
+request can't loosen its own rules. People approve or request changes per flag. Auto-merge waits, and an agent
+merging over MCP is refused, while any flag is waiting; a maintainer can still merge by hand. See
+[Auto-merge](docs/auto-merge.md).
+
+**Conflict handling.** Files are first merged line by line, so only truly overlapping edits reach a model.
+Those go to a Pi agent running in a [Cloudflare Computer](https://github.com/cloudflare/computer) workspace,
+told what each side was trying to do. When the target branch moves again, a still-valid resolution is carried
+forward without another model call; attempts for commits that moved on are cancelled at once, and a burst of
+landings ends in one attempt per pull request. Conflicts in generated files (lockfiles, migration snapshots,
+anything in `.orangeignore`) are left to the pull request's author or agent to regenerate. Collisions between
+open pull requests are found before either lands.
+
+## Built for agents
+
+- **MCP server with OAuth.** Connect Claude Code, Claude.ai, Cursor, Codex, or any MCP client to
+  `https://your-host/mcp`. The client signs in through GitOrange (OAuth 2.1 with PKCE and dynamic client
+  registration), the user approves it on a consent page, and there's no token to paste. Each connected app can
+  be disconnected instantly from **Settings → MCP server**.
+- **A work queue.** `gitorange_list_pull_requests` with `state: "agent_followup"` returns the pull requests
+  waiting on an agent, each with structured reasons: `check_failed` with the run number,
+  `must_account_for` with instructions, `changes_requested`, `conflicts_unresolved`.
+- **Everything else an agent needs:** create repositories, open and comment on pull requests, read Actions step
+  logs to see why a check failed, read the stack tree (`gitorange_get_pull_tree`), and merge. Approving a review
+  flag needs the user's explicit request, and merging is refused while flags wait, so an agent can't route
+  around a person.
+- **A ready-made prompt** on every repository (**Code → AI agent**) sets up a teammate who doesn't use git,
+  with Git LFS, branches, and pull requests, through their own coding agent. A second prompt imports an
+  existing GitHub repository and can keep it in sync.
+
+<img alt="MCP server settings: setup per client, available tools, connected apps" src="docs/screenshots/mcp.jpg" />
+
+## Easy to adopt
+
+- **Familiar on day one.** Repositories, file browsing, history, diffs, pull requests, and checks look the way
+  your team expects. `git clone`, `git push`, and Git LFS work as usual.
+- **Your CI keeps working.** Existing `.github/workflows` files run as they are. See
+  [what's supported](#github-actions-compatibility).
+- **One command to deploy.** In [Claude Code](https://claude.com/claude-code), run `/gitorange-onboarding` and
+  it creates the database and buckets, fills in your configuration, sets secrets, runs migrations, and deploys.
+- **Live pages.** Pull requests, reviews, Actions runs, the tree, and the Approvals page update over a WebSocket
+  as things happen.
+- **One place for people.** The **Approvals** page lists everything waiting on you across repositories, and the
+  header shows how many.
+- **Opt in gradually.** Without a `.gitorange/review.yml`, GitOrange behaves like an ordinary code host with
+  checks, conflict resolution, and the stack tree. Add review questions when you want auto-merge, and a
+  `stacking:` section to tune how pull requests are compared.
+
+## Built on Cloudflare
+
+GitOrange is one Worker that uses these Cloudflare products:
+
+| Product                                                                                 | What GitOrange uses it for                                                                      |
+| --------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------- |
+| [Workers](https://developers.cloudflare.com/workers/)                                   | The API, the web app, the git smart-HTTP endpoint, and the MCP server, on one origin            |
+| [Artifacts](https://developers.cloudflare.com/artifacts/)                               | Git storage: one repository per GitOrange repository; merges are pushed as ordinary git objects |
+| [Workers AI](https://developers.cloudflare.com/workers-ai/)                             | Clef (decisions), GLM-5.3-flash (summaries), GLM-5.3 (explanations and the conflict agent)      |
+| [AI Gateway](https://developers.cloudflare.com/ai-gateway/)                             | Every model call, tagged by feature, for logs and cost                                          |
+| [Agents SDK](https://developers.cloudflare.com/agents/)                                 | The Pi agent harness that resolves conflicts, durable across restarts                           |
+| [Cloudflare Computer](https://github.com/cloudflare/computer)                           | The sandboxed filesystem the conflict agent works in                                            |
+| [Durable Objects](https://developers.cloudflare.com/durable-objects/)                   | The conflict agent, one runner per Actions job, and a hibernating WebSocket hub for live pages  |
+| [Workflows](https://developers.cloudflare.com/workflows/)                               | Reviews, conflict resolution, stack discovery, and Actions runs, as durable steps               |
+| [Containers](https://developers.cloudflare.com/containers/)                             | A Linux container per Actions job                                                               |
+| [D1](https://developers.cloudflare.com/d1/)                                             | Users, pull requests, reviews, relationships, and state history                                 |
+| [R2](https://developers.cloudflare.com/r2/)                                             | Git LFS objects, Actions logs, and the Actions cache, moved through pre-signed URLs             |
+| [Email Sending](https://developers.cloudflare.com/email-service/)                       | Invitations and email verification                                                              |
+| [Cron Triggers](https://developers.cloudflare.com/workers/configuration/cron-triggers/) | Actions history retention and the daily usage sync                                              |
+| [GraphQL Analytics API](https://developers.cloudflare.com/analytics/graphql-api/)       | **Site admin → Usage & cost**: what the instance costs, by product and feature                  |
+
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/diagrams/architecture-dark.png">
+  <img alt="Browsers, git clients, and AI agents talk to one GitOrange Cloudflare Worker, which serves the API, the web app, the git endpoint, and the MCP server. The Worker keeps metadata in D1, stores every repository in Cloudflare Artifacts, runs Actions jobs in Cloudflare Containers through Workflows, and keeps logs and LFS objects in R2, all inside your Cloudflare account." src="docs/diagrams/architecture.png">
+</picture>
+
+See [Architecture](docs/architecture.md) for the full breakdown.
 
 ## Quickstart
 
-**Prerequisites:** a Cloudflare account on the **Workers Paid** plan (required for [Artifacts](https://developers.cloudflare.com/artifacts/), currently in open beta), a domain onboarded to [Cloudflare Email Sending](https://developers.cloudflare.com/email-service/) for invitation emails, and [Node.js](https://nodejs.org/) v20+ with yarn.
-
-The fastest path is the Claude Code onboarding skill. It checks your account, creates the D1 database, fills in your config, sets secrets, runs migrations, and deploys:
+**Prerequisites:** a Cloudflare account on the **Workers Paid** plan (required for
+[Artifacts](https://developers.cloudflare.com/artifacts/), currently in open beta), a domain onboarded to
+[Email Sending](https://developers.cloudflare.com/email-service/) for invitations, and
+[Node.js](https://nodejs.org/) 20+ with yarn.
 
 ```bash
 git clone https://github.com/choyiny/gitorange.git
@@ -34,91 +196,60 @@ cd gitorange
 claude   # then run /gitorange-onboarding
 ```
 
-**First successful result:** your worker is live, and the first visit asks you to create the admin account. Create a repository, then `git push` to it with a personal access token.
+The first visit asks you to create the admin account. Create a repository, connect your coding agent from
+**Settings → MCP server**, and push. Prefer to set it up by hand? See [Setup](docs/setup.md) (about seven
+steps).
 
-Prefer to set it up by hand? See [Setup](docs/setup.md) (~7 steps).
+To turn on auto-merge, commit a `.gitorange/review.yml` to your default branch:
 
-## Documentation
+```yaml
+model: clef
+checks:
+  require: all
+human_review:
+  questions:
+    data_model:
+      ask: Does this change alter how data is stored?
+      above: 0.3
+    security:
+      ask: Does this change touch authentication, authorization, or secrets?
+      above: 0.2
+```
 
-Full docs live in **[docs/](docs/README.md)**: [Setup](docs/setup.md) · [Configuration](docs/configuration.md) · [Architecture](docs/architecture.md) · [Local development](docs/development.md) · [Auto-merge](docs/auto-merge.md)
+Full reference: [Auto-merge](docs/auto-merge.md).
 
 ## Screenshots
 
-**Pull requests** — a conversation with Markdown comments, CI checks from Actions, merge conflicts resolved by AI, and one-button rebase and merge.
+| Pull request                                                    | Files changed                                           |
+| --------------------------------------------------------------- | ------------------------------------------------------- |
+| ![Pull request conversation](docs/screenshots/pull-request.jpg) | ![Files changed](docs/screenshots/files-changed.jpg)    |
+| **Actions**                                                     | **Job logs**                                            |
+| ![Actions workflow runs](docs/screenshots/actions.jpg)          | ![An Actions job log](docs/screenshots/actions-run.jpg) |
+| **Repository**                                                  | **First run**                                           |
+| ![A repository](docs/screenshots/repository.jpg)                | ![First-run setup](docs/screenshots/setup.jpg)          |
 
-![Pull request conversation](docs/screenshots/pull-request.jpg)
+## Everything else a code host needs
 
-**Files changed** — per-file unified diffs with diffstats.
+- **Git over HTTPS** with personal access tokens, and **Git LFS** stored in R2 (files up to 5 GB, transferred
+  directly between `git lfs` and R2).
+- **Pull requests** with Markdown comments, commits and files-changed views, and **rebase and merge** only, so
+  history stays linear.
+- **Personal and team repositories.** Personal repositories are private by default (owner, collaborators,
+  site admins) and can be made internal. Team repositories are visible to every member.
+- **Invitations** by email, single use, expiring in seven days. The first visitor creates the site admin, and
+  sign-up is closed after that.
+- **Syntax highlighting** for 35+ languages in light and dark mode.
+- **Site admin settings** (instance name, invitation sender, AI models, Actions retention) without a deploy.
+- **Usage & cost**: an estimate of what the instance costs on Cloudflare this month, with a projection to month
+  end, at list price and with the plan's included allowances.
 
-![Files changed](docs/screenshots/files-changed.jpg)
+### GitHub Actions compatibility
 
-**Actions** — every push and pull request runs your `.github/workflows` files.
+Jobs run on `runs-on: ubuntu-latest` (or `gitorange-standard-2` through `gitorange-standard-4` for bigger
+machines) in a Debian container with Node.js 24, git, Python, and build tools.
 
-![Actions workflow runs](docs/screenshots/actions.jpg)
-
-**Job logs** — step-by-step logs, live while a job runs.
-
-![An Actions job log](docs/screenshots/actions-run.jpg)
-
-**MCP server** — set up Claude, Cursor, or another AI client, see the tools it gets, and manage connected apps.
-
-![MCP server settings](docs/screenshots/mcp.jpg)
-
-**First run** — the first visitor creates the administrator; everyone after that joins by invitation.
-
-![First-run setup](docs/screenshots/setup.jpg)
-
-## Features
-
-- **First-run setup** — the first visitor creates the site admin. After that, sign-up is closed.
-- **Email invitations** — admins invite teammates by email (or copy the link); invites are single-use and expire in 7 days.
-- **Unlimited repositories** — create empty or with a README; browse files, Markdown READMEs, history, and per-commit diffs.
-- **Syntax highlighting** — GitHub's color scheme for 35+ languages in file views and diffs, in light and dark mode.
-- **Work with an AI agent** — every repository offers a ready-made prompt (on an empty repo's setup page, and under **Code → AI agent**) that people who don't use git can paste into Claude Code or another coding agent. The agent sets up the repository and Git LFS on their computer, then makes changes on branches and links them to open pull requests. Their access token never passes through the agent. A second prompt imports an existing GitHub repository (every branch, tag, and Git LFS file) and can keep it in sync with GitHub.
-- **Git over HTTPS** — `git clone https://your-host/<owner>/<repo>.git` with a personal access token as the password.
-- **Git LFS** — large files are stored in Cloudflare R2 and transferred directly between `git lfs` and R2 through short-lived signed URLs (up to 5 GB per file). The web UI shows, previews, and downloads LFS files.
-- **Pull requests** — open, comment, close, and reopen; view commits and files changed; delete the branch after merging. Every merge is **rebase and merge**: the pull request is squashed into one commit on top of the latest target branch, so history stays linear.
-- **AI merge-conflict resolution** — when a pull request conflicts with its target branch, an agent resolves it on its own: no button to press. Files are first merged line by line, so only truly overlapping edits reach the model; then a [pi](https://pi.dev) agent on Workers AI (GLM-5.3 by default) combines both sides in a sandboxed filesystem ([Cloudflare Computer](https://github.com/cloudflare/computer)), told what each side was trying to do. The pull request shows its explanation and the resolved files, and merging lands them. When the target branch moves, still-valid resolutions are carried forward without another model call; attempts for commits that moved on are cancelled at once, and a burst of landings is coalesced into one attempt. Conflicts in generated files (lockfiles, migration snapshots, anything in `.orangeignore`) are left to the pull request's author or agent to regenerate. Otherwise a person is needed only when the model fails to produce an answer.
-- **Auto-merge** — add a [`.gitorange/review.yml`](docs/auto-merge.md) and pull requests merge on their own once their checks pass, unless the change needs a person. GLM-5.3-flash writes a one-line summary of each changed file; [Clef](https://developers.cloudflare.com/workers-ai/models/) answers your questions about those summaries ("does this change how data is stored?"). Each flag comes with GLM-5.3's explanation, a Mermaid diagram of the change (an ER diagram for data-model changes), and expandable excerpts of the relevant code; the pull request merges once someone approves every flag, and its branch is deleted unless another open pull request builds on it. Everything waiting on you, across repositories, is on the **Approvals** page.
-- **Stack tree** — when several agents open pull requests at once, GitOrange works out how they relate: which builds on which, which must change because of another (with instructions for its author), and which conflict. The **Tree** view on the Pull requests tab shows it, and agents read it over MCP (`gitorange_get_pull_tree`). Always on; tune it in [`.gitorange/review.yml`](docs/auto-merge.md#stacking).
-- **Agent runs** — every piece of AI work (reviews, conflict resolutions, stack discovery, conflict sweeps) shows in the Actions tab under **Agent**, step by step: how long each step took, which model it called, the tokens and estimated cost, and what it decided. Prompts and diffs are never kept.
-- **Live pages** — pull requests, reviews, Actions runs, and the Approvals page update as things happen, over a WebSocket, with no reload.
-- **Personal and team repositories** — personal repositories (`/<you>/<repo>`) are private by default: only you, collaborators you add, and site admins can see them, and you can make one internal so every member can read it. Repositories under the shared team (`/<team>/<repo>`, created by a site admin) are visible to every member.
-- **GitHub Actions workflows** — your existing `.github/workflows/*.yml` files run as-is on pushes and pull requests. Each job gets its own Linux container on Cloudflare Containers, with live logs, re-runs, cancel, and a checks box on pull requests. See [GitHub Actions compatibility](#github-actions-compatibility).
-- **MCP server** — connect Claude Code, Claude.ai, Cursor, Codex, or any MCP client to `https://your-host/mcp`. The client signs in through GitOrange with OAuth 2.1 (PKCE and dynamic client registration, no token to paste), the user approves it on a consent page, and it can then work as that user: list, inspect, and create repositories, and open, follow (checks, auto-merge review), comment on, and merge pull requests, approve or request changes on review flags when the user asks, and read Actions step logs to see why a check failed. Merging is refused while review flags wait for a person, so an agent can't get around them. **Settings → MCP server** shows the setup steps for each client, the available tools, and the connected apps, each of which can be disconnected instantly.
-- **Site admin settings** — the instance name, invitation sender, AI models, and how long Actions history is kept are set in **Site admin → Settings**, without a deploy. A daily cleanup deletes Actions runs past their retention (90 days by default).
-- **Usage & cost** — **Site admin → Usage & cost** estimates what your instance costs on Cloudflare this month, with a projection to month end. It covers Actions runner minutes by repository, Workers AI cost by feature (review, conflict resolution), and Workers, Durable Objects, Workflows, D1, R2, and Artifacts usage from Cloudflare's analytics, filtered to this deployment's own resources. Each product is shown at list price and as if your instance had the account's included allowances to itself.
-- **Access control** — the owner (or a team repository's creator), site admins, and collaborators added in repository settings can push and merge; other members can read what they can see and comment.
-
-Intentionally not here yet: issues, forks, code review comments, and search. See the [roadmap](#roadmap).
-
-## Architecture at a glance
-
-<picture>
-  <source media="(prefers-color-scheme: dark)" srcset="docs/diagrams/architecture-dark.png">
-  <img alt="Browsers and git clients talk to one GitOrange Cloudflare Worker, which serves the API, the web app, and the git endpoint. The Worker keeps metadata in D1, stores every repository in Cloudflare Artifacts, and sends invitations through Email Sending. Pushes queue GitOrange Actions runs on Cloudflare Workflows, which run each job in its own Cloudflare Container and keep step logs in R2 — all inside your Cloudflare account." src="docs/diagrams/architecture.png">
-</picture>
-
-Everything runs as a single Cloudflare Worker — no git server to operate. Git LFS files live in R2 and never pass through the Worker. Git traffic is authenticated with a personal access token, then streamed to Artifacts with a short-lived token scoped to that one repository; merges are computed inside the Worker and pushed back as ordinary git objects. See [Architecture](docs/architecture.md) for the full breakdown.
-
-## Known limitations
-
-GitOrange is young. Before you rely on it, know that:
-
-- **Auto-merge tests the pull request's commit, not the rebased result.** If the target branch moved since the checks ran, the merged result was never tested as a whole. Questions are answered from one-line summaries of each file, so a summary that leaves something out can't be flagged.
-- **Stacking only shows relationships.** It doesn't retarget, block, or order merges yet. A pull request can also auto-merge before its own discovery runs; the pair is still found from the other pull request's run.
-- **AI resolves text conflicts only.** Binary files, a file deleted on one side but changed on the other, and generated files (lockfiles, migration snapshots, `.orangeignore`d paths) still have to be resolved locally. AI resolutions aren't reviewed line by line before merging; read the explanation and the resolved files on the pull request if it matters. There's no in-browser conflict editor.
-- **Large diffs are truncated.** A diff shows at most 300 files, and files over ~512 KB (or binary files) are listed without their contents. File views skip highlighting above 300 KB and stop rendering above 1 MB (use **Raw**).
-- **Very long histories are approximated.** Merge bases and pull request commit lists walk up to ~2,000 commits, which can mislabel commits on repositories with deep histories between branches.
-- **LFS files are capped at 5 GB, and there's no file locking.** `git lfs lock` reports that locking isn't supported. LFS objects stay in R2 until their repository is deleted, even if no commit references them anymore.
-- **No Actions secrets yet**, and not every GitHub Actions feature runs. See [GitHub Actions compatibility](#github-actions-compatibility).
-- **No forks.** Pull requests are between branches of the same repository; contributors need to be collaborators.
-- **The first visitor becomes the admin.** Until the admin account exists, anyone who can reach the URL can claim it. Complete setup right after deploying, before sharing the URL.
-- **Artifacts is in beta.** It's open to every Workers Paid account, but its APIs may still change.
-
-## GitHub Actions compatibility
-
-GitOrange reads the same workflow syntax as GitHub Actions. Jobs run on `runs-on: ubuntu-latest` (or `gitorange-standard-2` through `gitorange-standard-4` for bigger machines) in a Debian container with Node.js 24, git, Python, and build tools preinstalled.
+<details>
+<summary>What works today, and what doesn't yet</summary>
 
 | Works today                                                                                                                                                                                                   | Not yet                                                                                                      |
 | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------ |
@@ -129,27 +260,64 @@ GitOrange reads the same workflow syntax as GitHub Actions. Jobs run on `runs-on
 | Matrix builds, `${{ }}` expressions, `env` at every level                                                                                                                                                     | Windows and macOS runners                                                                                    |
 | Step and job outputs, `GITHUB_ENV`, `GITHUB_OUTPUT`, `GITHUB_PATH`                                                                                                                                            | Concurrency limits, caching, and artifacts                                                                   |
 
-A workflow that uses something unsupported fails with a message saying what to change, rather than silently doing the wrong thing.
+A workflow that uses something unsupported fails with a message saying what to change, rather than silently
+doing the wrong thing.
+
+</details>
 
 ## How much does it cost?
 
-**$5/month** for the Cloudflare Workers Paid plan, which Artifacts requires. Included each month: 10,000 Artifacts operations (a clone, fetch, push, or repo creation) and 1 GB of repository storage. Beyond that, Artifacts bills $0.15 per 1,000 operations and $0.50 per GB-month ([pricing](https://developers.cloudflare.com/artifacts/platform/pricing/)). Git LFS storage is R2: the first 10 GB-month is free, then $0.015 per GB-month, and downloads are free ([pricing](https://developers.cloudflare.com/r2/pricing/)). Actions jobs bill as Cloudflare Containers while they run: the default `standard-2` runner (1 vCPU, 6 GiB, 12 GB disk) costs about $0.0024 per minute after the plan's included 375 vCPU-minutes and 25 GiB-hours ([pricing](https://developers.cloudflare.com/containers/pricing/)). The Actions cache is R2 storage, at most 10 GB per repository, and entries expire after 7 days. AI conflict resolution and auto-merge review use [Workers AI](https://developers.cloudflare.com/workers-ai/platform/pricing/), billed per token; a typical resolution is one short agent run, and at most 5 run at once per repository. D1 and Email Sending usage for a small team stays within the plan's included amounts.
+**$5/month** for the Cloudflare Workers Paid plan, which Artifacts requires, plus usage beyond its included
+amounts:
 
-## Roadmap
+- **Artifacts:** 10,000 operations and 1 GB of storage included; then $0.15 per 1,000 operations and $0.50 per
+  GB-month ([pricing](https://developers.cloudflare.com/artifacts/platform/pricing/)).
+- **Actions:** jobs bill as Containers while they run. The default runner costs about $0.0024 per minute after
+  the plan's included 375 vCPU-minutes and 25 GiB-hours
+  ([pricing](https://developers.cloudflare.com/containers/pricing/)).
+- **AI:** Clef calls, summaries, explanations, and conflict resolution bill per token on
+  [Workers AI](https://developers.cloudflare.com/workers-ai/platform/pricing/). A typical small pull request is
+  one summary per file and one Clef call; reasoning models run only when something is flagged or related.
+- **Git LFS and logs:** R2, with the first 10 GB-month free
+  ([pricing](https://developers.cloudflare.com/r2/pricing/)).
 
-- Issues
-- Line comments and reviews on pull requests
-- Code search
-- Organizations and teams
+D1 and Email Sending usage for a small team stays within the plan. **Site admin → Usage & cost** shows your
+actual numbers.
+
+## Known limitations
+
+- **Stacking shows and explains relationships, but doesn't yet retarget or order landings.** Retargeting a
+  pull request onto the one it builds on, putting several prerequisites in one line, and blocking until a
+  "must account for" is handled are in progress.
+- **Auto-merge tests the pull request's own commit, not the rebased result.** If the target moved since the
+  checks ran, the merged result as a whole wasn't tested. Landing one at a time on tested commits is planned.
+- **Review reads one-line summaries.** A summary that leaves something out can't be flagged; ask about what
+  must never slip through in plain terms.
+- **AI resolves text conflicts only.** Binary files, a file deleted on one side but changed on the other, and
+  generated files (lockfiles, migration snapshots, `.orangeignore`d paths) are left to the pull request's
+  agent to resolve or regenerate locally.
+- **No Actions secrets, no forks, no issues, and no line-level review comments yet.**
+- **Large diffs are truncated** (300 files; files over ~512 KB listed without contents), and very long
+  histories are walked up to ~2,000 commits.
+- **The first visitor becomes the admin.** Complete setup right after deploying.
+- **Artifacts is in beta.** It's open to every Workers Paid account, but its APIs may still change.
+
+## Documentation
+
+[Setup](docs/setup.md) · [Configuration](docs/configuration.md) · [Architecture](docs/architecture.md) ·
+[Local development](docs/development.md) · [Auto-merge, states, and stacking](docs/auto-merge.md)
 
 ## Contributing
 
 See [CONTRIBUTING.md](CONTRIBUTING.md). Security issues: see [SECURITY.md](SECURITY.md).
 
-This repo ships a `CLAUDE.md` and Claude Code skills and hooks under `.claude/` that the maintainer uses when pairing with [Claude Code](https://claude.com/claude-code). They're harmless to ignore if you don't use Claude Code.
+GitOrange is developed with coding agents, on GitOrange. The repository ships a `CLAUDE.md` and Claude Code
+skills and hooks under `.claude/`; they're harmless to ignore if you don't use Claude Code.
 
 ## License
 
 [Apache License 2.0](LICENSE)
 
-GitOrange is not affiliated with or endorsed by GitHub. "GitHub" is a trademark of GitHub, Inc. If you run a fork as a branded product, please rename it and replace the logo so users aren't confused about which project they're installing.
+GitOrange is not affiliated with or endorsed by GitHub. "GitHub" is a trademark of GitHub, Inc. If you run a
+fork as a branded product, please rename it and replace the logo so users aren't confused about which project
+they're installing.

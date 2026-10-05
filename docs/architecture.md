@@ -98,6 +98,15 @@ Always on when AI is configured; the optional `stacking:` section of `.gitorange
 - **`buildTree`** (pure) turns the edges into parents, waits-on, must-account-for, and cycles. `view.ts` ignores closed-unmerged pull requests; PR detail computes only its own branch.
 - **Surfaces:** `GET /api/repos/:owner/:repo/pulls/tree`, `stack` on PR detail, `POST .../pulls/:n/stack/retry`, and the MCP tools `gitorange_get_pull_tree` and `gitorange_get_pull_request` (with `stack`).
 
+### Pull request states
+
+Code: [`worker/src/pulls/`](../worker/src/pulls/). The state of an open pull request (`{ state, reasons[] }`) is computed on read and never stored.
+
+- **`state.ts`** holds the rules: the `Reason` kinds, which state each one calls for (`reasonState`), and `decideState`, which takes the most urgent (`agent_followup` > `human_review` > `waiting` > `ready`). `stackReasons` turns a stack-tree node into reasons. A new reason kind is added here only.
+- **`signals.ts`**: `pullStates` computes many pull requests of one repository at once, in a fixed number of queries (one ref listing, one `review.yml` read per target tip, chunked D1 reads of reviews, flags, runs, jobs and resolutions, and the stack view). `pullStateFor` is the single-PR form. The list, tree, PR detail and MCP tools call it.
+- **`events.ts` and `settle.ts`**: `settleStates` recomputes a repository's open pull requests and `recordStates` writes each change to `pr_events` (`kind = 'state_changed'`, with the reasons) in one D1 batch per 50 pull requests. Each write is a pair of statements: a bump that, when the latest recorded state is unchanged, advances that row's `computed_at` to this computation's time (its "last settled at"), then a conditional insert that records nothing if the latest state is unchanged or a newer computation is already recorded. The bump lets an older computation that finishes later see a newer one even when the newer one recorded nothing, so it never overwrites it. `settleStates` runs where changes already ping live pages (the repo-mutation middleware, pushes, `landPull`, PR open and reopen, flag approval), and once at the end of a `MERGE_RESOLUTION` Workflow run (only the payload pull request's target branch; the whole repository after a sweep) and an Actions run, never per step. It never throws.
+- **Reads of recorded state:** the timeline is `eventsFor`; the Approvals inbox (`review/inbox.ts`) uses `latestStates`, the latest recorded state per pull request.
+
 ## Agent runs
 
 Every `MERGE_RESOLUTION` Workflow (an auto-merge review, an AI conflict resolution, a stack discovery run, or a conflict sweep) shows in the repository's Actions tab under **Agent**, as a run with steps: status, duration, attempts, the models each step called, their tokens and list-price cost, and a short decision (Clef's answers with probabilities, the flags raised, a relationship's kind and reason, a resolution's headline). Prompts, diffs, and model output beyond those decisions are never stored.

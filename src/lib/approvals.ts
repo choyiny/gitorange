@@ -1,19 +1,23 @@
-import { useQuery } from '@tanstack/react-query';
-import { api, qk, type ApprovalItem } from './uiApi';
+import { useInfiniteQuery, useQuery } from '@tanstack/react-query';
+import { api, qk } from './uiApi';
 
-/** Everything waiting on the current user; shared by the header's count and the Approvals page. */
-export function useApprovals() {
-  return useQuery({ queryKey: qk.approvals, queryFn: api.approvals });
+/** How many things wait on the current user, for the header's badge (a one-item page carries `count`). */
+export function useApprovalCount() {
+  return useQuery({
+    queryKey: [...qk.approvals, 'count'],
+    queryFn: () => api.approvals({ limit: 1 }),
+    select: (page) => page.count,
+  });
 }
 
-/** How many things wait on the user: unapproved flags, failed reviews, failed resolutions. */
-export function approvalCount(items: ApprovalItem[] | undefined) {
-  return (items ?? []).reduce(
-    (n, i) =>
-      n +
-      i.flags.length +
-      (i.reviewFailed ? 1 : 0) +
-      (i.resolutionFailed ? 1 : 0),
-    0
-  );
+/** Every page, loaded one at a time, for the Approvals page. Under the same `qk.approvals` prefix,
+ * so live updates and actions refresh it. */
+export function useApprovalPages() {
+  return useInfiniteQuery({
+    queryKey: [...qk.approvals, 'pages'],
+    queryFn: ({ pageParam }) =>
+      api.approvals({ cursor: pageParam ?? undefined }),
+    initialPageParam: null as string | null,
+    getNextPageParam: (last) => last.nextCursor,
+  });
 }

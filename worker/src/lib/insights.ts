@@ -6,6 +6,7 @@ import {
   type Repository,
 } from '../db/app.schema';
 import { decoder } from '../git/bytes';
+import { NO_MODEL } from '../merge/resolution';
 import type { GitService } from '../git/service';
 import { parsePolicy, type ReviewPolicy } from '../review/policy';
 import { flagTitle } from '../review/view';
@@ -186,7 +187,8 @@ export async function repoInsights(
           COUNT(DISTINCT r.pull_request_id) AS pulls
         FROM merge_resolutions r
         JOIN pull_requests p ON p.id = r.pull_request_id
-        WHERE p.repository_id = ${repoId} AND r.created_at >= ${since}`),
+        WHERE p.repository_id = ${repoId} AND r.created_at >= ${since}
+          AND r.model <> ${NO_MODEL}`),
     db.all<Row>(sql`
         SELECT
           COUNT(*) AS runs,

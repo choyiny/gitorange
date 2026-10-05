@@ -545,6 +545,105 @@ describe('MCP pull request tools', () => {
     return { t, admin, token: access_token, repo };
   }
 
+  it('says whose move it is, and lists what needs the agent', async () => {
+    const { t, token, repo } = await repoWithBranch();
+    await tool(t, token, 'gitorange_create_pull_request', {
+      repository: 'octocat/app',
+      head: 'feature',
+      title: 'Add a',
+    });
+    const head = repo.refs.get('refs/heads/feature')!;
+    await t.env.DB.prepare(
+      `INSERT INTO workflow_runs (id, repository_id, run_number, workflow_path, name, event, ref, head_sha, display_title, status, conclusion, created_at)
+       SELECT 'r1', id, 9, 'ci.yml', 'CI', 'pull_request', 'x', ?, 'x', 'completed', 'failure', 0 FROM repositories`
+    )
+      .bind(head)
+      .run();
+    const got = JSON.parse(
+      (
+        await tool(t, token, 'gitorange_get_pull_request', {
+          repository: 'octocat/app',
+          number: 1,
+        })
+      ).content[0].text
+    );
+    expect(got).toMatchObject({
+      state: 'open',
+      pull_state: 'agent_followup',
+      reasons: [{ kind: 'check_failed', run_number: 9 }],
+    });
+    const mine = JSON.parse(
+      (
+        await tool(t, token, 'gitorange_list_pull_requests', {
+          repository: 'octocat/app',
+          state: 'agent_followup',
+        })
+      ).content[0].text
+    );
+    expect(mine).toMatchObject([
+      { number: 1, state: 'open', pull_state: 'agent_followup' },
+    ]);
+    const ready = JSON.parse(
+      (
+        await tool(t, token, 'gitorange_list_pull_requests', {
+          repository: 'octocat/app',
+          state: 'ready',
+        })
+      ).content[0].text
+    );
+    expect(ready).toEqual([]);
+    const bad = await tool(t, token, 'gitorange_list_pull_requests', {
+      repository: 'octocat/app',
+      state: 'sleepy',
+    });
+    expect(bad.isError).toBe(true);
+  });
+
+  it('still lists closed, merged, and all pull requests by their state', async () => {
+    const { t, admin, token, repo } = await repoWithBranch();
+    for (const head of ['feature', 'two', 'three']) {
+      if (head !== 'feature') {
+        repo.refs.set(`refs/heads/${head}`, repo.refs.get('refs/heads/main')!);
+        await commitPaths(repo, head, { [`${head}.txt`]: `${head}\n` }, head);
+      }
+      await tool(t, token, 'gitorange_create_pull_request', {
+        repository: 'octocat/app',
+        head,
+        title: head,
+      });
+    }
+    await settle(t);
+    await call(t, '/api/repos/octocat/app/pulls/2', {
+      cookie: admin,
+      method: 'PATCH',
+      json: { state: 'closed' },
+    });
+    await t.env.DB.prepare(
+      "UPDATE pull_requests SET state = 'merged', merged_at = 0 WHERE number = 3"
+    ).run();
+    const list = async (state?: string) =>
+      (
+        JSON.parse(
+          (
+            await tool(t, token, 'gitorange_list_pull_requests', {
+              repository: 'octocat/app',
+              ...(state ? { state } : {}),
+            })
+          ).content[0].text
+        ) as { number: number; state: string; pull_state: string | null }[]
+      )
+        .map((p) => [p.number, p.state, p.pull_state])
+        .sort((a, b) => Number(a[0]) - Number(b[0]));
+    expect(await list('closed')).toEqual([[2, 'closed', null]]);
+    expect(await list('merged')).toEqual([[3, 'merged', null]]);
+    expect(await list()).toEqual([[1, 'open', 'ready']]);
+    expect(await list('all')).toEqual([
+      [1, 'open', 'ready'],
+      [2, 'closed', null],
+      [3, 'merged', null],
+    ]);
+  });
+
   it('opens, inspects, comments on, and merges a pull request', async () => {
     const { t, token, repo } = await repoWithBranch();
     const opened = await tool(t, token, 'gitorange_create_pull_request', {

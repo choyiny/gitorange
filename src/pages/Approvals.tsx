@@ -10,9 +10,10 @@ import { api, qk, type ApprovalItem } from '@/lib/uiApi';
 import { errorMessage } from '@/lib/api';
 import { timeAgo } from '@/lib/format';
 import { Header } from '@/components/Header';
+import { PullStateLabel, PullStateReasons } from '@/components/PullStateLabel';
 import { Spinner } from '@/components/Spinner';
 import { Flag, serverChangesRequester } from '@/components/AutoMergeReview';
-import { approvalCount, useApprovals } from '@/lib/approvals';
+import { useApprovalPages } from '@/lib/approvals';
 
 function Item({ item }: { item: ApprovalItem }) {
   const qc = useQueryClient();
@@ -61,6 +62,18 @@ function Item({ item }: { item: ApprovalItem }) {
       </div>
       <div className="Box-body">
         {error && <div className="flash flash-error mb-2">{error}</div>}
+        {item.pullState?.state === 'human_review' &&
+          !item.flags.length &&
+          !item.reviewFailed &&
+          !item.resolutionFailed && (
+            <div className="flash flash-warn mb-2">
+              <PullStateLabel state={item.pullState} />
+              <PullStateReasons state={item.pullState} />
+              <Link to={prUrl} className="btn btn-sm mt-2">
+                Decide on the pull request
+              </Link>
+            </div>
+          )}
         {item.reviewFailed && (
           <div
             className="flash flash-error mb-2 d-flex flex-items-center"
@@ -133,8 +146,17 @@ function Item({ item }: { item: ApprovalItem }) {
 
 /** Open pull requests waiting on the user: flags, failed reviews, failed conflict resolutions. */
 export default function Approvals() {
-  const q = useApprovals();
-  const count = approvalCount(q.data);
+  const q = useApprovalPages();
+  const count = q.data?.pages[0]?.count ?? 0;
+  // A pull request updated between pages can come back on a later one: show it once.
+  const items = [
+    ...new Map(
+      (q.data?.pages.flatMap((p) => p.items) ?? []).map((i) => [
+        `${i.repo.fullName}#${i.pull.number}`,
+        i,
+      ])
+    ).values(),
+  ];
   return (
     <>
       <Header />
@@ -157,22 +179,36 @@ export default function Approvals() {
           <Spinner />
         ) : q.error ? (
           <div className="flash flash-error">{errorMessage(q.error)}</div>
-        ) : !q.data.length ? (
+        ) : !items.length ? (
           <div className="blankslate border rounded-2">
             <CheckCircleIcon size={24} className="color-fg-success mb-2" />
             <h3 className="blankslate-heading">Nothing is waiting on you</h3>
             <p>
-              Flags from auto-merge reviews, failed reviews, and conflicts AI
-              couldn&apos;t resolve show up here.
+              Flags from auto-merge reviews, failed reviews, conflicts AI
+              couldn&apos;t resolve, and pull requests that need a person&apos;s
+              decision show up here.
             </p>
           </div>
         ) : (
-          q.data.map((item) => (
-            <Item
-              key={`${item.repo.fullName}#${item.pull.number}`}
-              item={item}
-            />
-          ))
+          <>
+            {items.map((item) => (
+              <Item
+                key={`${item.repo.fullName}#${item.pull.number}`}
+                item={item}
+              />
+            ))}
+            {q.hasNextPage && (
+              <div className="text-center">
+                <button
+                  className="btn"
+                  disabled={q.isFetchingNextPage}
+                  onClick={() => void q.fetchNextPage()}
+                >
+                  {q.isFetchingNextPage ? 'Loading…' : 'Load more'}
+                </button>
+              </div>
+            )}
+          </>
         )}
       </div>
     </>

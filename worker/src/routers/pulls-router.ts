@@ -14,6 +14,8 @@ import {
   latestResolution,
   resolutionConfigured,
   startResolution,
+  NO_MODEL,
+  SUPERSEDED,
 } from '../merge/resolution';
 import { generatedConflicts } from '../merge/generated';
 import { loadRepo, type RepoEnv } from '../lib/repos';
@@ -32,20 +34,29 @@ import {
   commitSchema,
   fileDiffSchema,
   ownerRepoParams,
+  prEventSchema,
   publicUserSchema,
+  pullStateSchema,
 } from './schemas';
 import { compareShas } from './repos-router';
 import { attributeCommits } from '../lib/commit-authors';
 import { ensureResolution } from '../merge/auto';
 import { landPull, pullRef } from '../merge/land';
 import { addComment, openPull, pullShas } from '../lib/pulls';
-import { ensureClassification, retryClassification } from '../review/classify';
+import {
+  ensureClassification,
+  retryClassification,
+  reviewConfigured,
+} from '../review/classify';
 import { maybeAutoMerge, type ReviewProgress } from '../review/auto-merge';
 import { reviewProgressFor } from '../review/list';
 import { CHANGES_NOTE_MAX, decideFlag } from '../review/flags';
 import { reviewView } from '../review/view';
 import { stackTreeView, stackViewFor } from '../stack/view';
 import { retryFailedPairs } from '../stack/discover';
+import { PULL_STATES, type PullState } from '../pulls/state';
+import { pullStates, pullStateFor } from '../pulls/signals';
+import { eventsFor } from '../pulls/events';
 
 export const pullsRouter = new OpenAPIHono<RepoEnv>({
   defaultHook: validationHook,
@@ -138,7 +149,11 @@ const listRoute = createRoute({
   tags: ['Pull requests'],
   request: {
     params: ownerRepoParams,
-    query: z.object({ state: z.enum(['open', 'closed']).default('open') }),
+    query: z.object({
+      state: z
+        .enum(['open', 'closed', ...PULL_STATES] as const)
+        .default('open'),
+    }),
   },
   responses: {
     ...json200Response(
@@ -164,6 +179,8 @@ const listRoute = createRoute({
                 flags: z.number(),
               })
               .nullable(),
+            /** Open PRs: whose move it is, and why. */
+            pullState: pullStateSchema.nullable(),
           })
         ),
         openCount: z.number(),
@@ -177,6 +194,8 @@ pullsRouter.openapi(listRoute, async (c) => {
   const db = c.get('db');
   const repo = c.get('repo');
   const { state } = c.req.valid('query');
+  const openList = state !== 'closed';
+  const byPullState = (PULL_STATES as readonly string[]).includes(state);
   const counts = await db
     .select({ state: pullRequests.state, n: sql<number>`COUNT(*)` })
     .from(pullRequests)
@@ -194,7 +213,7 @@ pullsRouter.openapi(listRoute, async (c) => {
     .where(
       and(
         eq(pullRequests.repositoryId, repo.id),
-        state === 'open'
+        openList
           ? eq(pullRequests.state, 'open')
           : sql`${pullRequests.state} != 'open'`
       )
@@ -220,9 +239,12 @@ pullsRouter.openapi(listRoute, async (c) => {
   // Latest resolution of every open PR in one query.
   const resolutions = new Map<
     string,
-    Pick<MergeResolution, 'status' | 'baseSha' | 'headSha' | 'errorMessage'>
+    Pick<
+      MergeResolution,
+      'status' | 'baseSha' | 'headSha' | 'errorMessage' | 'model'
+    >
   >();
-  if (state === 'open' && rows.length)
+  if (openList && rows.length)
     for (const r of await db
       .select({
         pullRequestId: mergeResolutions.pullRequestId,
@@ -230,6 +252,7 @@ pullsRouter.openapi(listRoute, async (c) => {
         baseSha: mergeResolutions.baseSha,
         headSha: mergeResolutions.headSha,
         errorMessage: mergeResolutions.errorMessage,
+        model: mergeResolutions.model,
       })
       .from(mergeResolutions)
       .innerJoin(
@@ -245,16 +268,27 @@ pullsRouter.openapi(listRoute, async (c) => {
       )
       .all())
       resolutions.set(r.pullRequestId, r);
-  const reviews =
-    state === 'open'
-      ? await reviewProgressFor(
-          db,
-          c.get('git'),
-          repo.id,
-          rows.map((r) => r.pr),
-          refs
-        )
-      : new Map<string, ReviewProgress>();
+  const reviews = openList
+    ? await reviewProgressFor(
+        db,
+        c.get('git'),
+        repo.id,
+        rows.map((r) => r.pr),
+        refs
+      )
+    : new Map<string, ReviewProgress>();
+  const states = openList
+    ? await pullStates(
+        db,
+        c.get('git'),
+        repo.id,
+        rows.map((r) => r.pr),
+        { refs, reviewConfigured: reviewConfigured(c.env) }
+      )
+    : new Map<string, PullState>();
+  const shown = byPullState
+    ? rows.filter((r) => states.get(r.pr.id)?.state === state)
+    : rows;
   const review = (pr: PullRequest) => {
     const p = reviews.get(pr.id);
     return p
@@ -269,21 +303,20 @@ pullsRouter.openapi(listRoute, async (c) => {
       r.headSha !== refs.get(`refs/heads/${pr.headRef}`)
     )
       return null;
+    // Conflicts AI can't resolve (NO_MODEL) were never an AI attempt.
+    if (r.model === NO_MODEL) return null;
     if (r.status === 'rejected') return 'failed';
-    if (
-      r.status === 'applied' ||
-      r.errorMessage === 'Superseded by newer commits.'
-    )
-      return null;
+    if (r.status === 'applied' || r.errorMessage === SUPERSEDED) return null;
     return r.status;
   };
   return c.json(
     {
-      pulls: rows.map((r) => ({
+      pulls: shown.map((r) => ({
         ...serializePull(r.pr, people, Number(r.comments)),
         headSha: headSha(r.pr),
         aiResolution: aiResolution(r.pr),
         review: review(r.pr),
+        pullState: states.get(r.pr.id) ?? null,
       })),
       openCount: count('open'),
       closedCount: count('closed') + count('merged'),
@@ -330,6 +363,7 @@ const treeRoute = createRoute({
                 title: z.string(),
                 headRef: z.string(),
                 author: publicUserSchema,
+                pullState: pullStateSchema.nullable(),
               })
             ),
             landed: z.array(
@@ -344,9 +378,39 @@ const treeRoute = createRoute({
   },
 });
 pullsRouter.openapi(treeRoute, async (c) => {
+  const db = c.get('db');
   const repo = c.get('repo');
-  const view = await stackTreeView(c.get('db'), c.get('git'), repo.id);
-  return c.json(view, 200);
+  const view = await stackTreeView(db, c.get('git'), repo.id);
+  const open = view.targets.length
+    ? await db
+        .select()
+        .from(pullRequests)
+        .where(
+          and(
+            eq(pullRequests.repositoryId, repo.id),
+            eq(pullRequests.state, 'open')
+          )
+        )
+        .all()
+    : [];
+  const states = await pullStates(db, c.get('git'), repo.id, open, {
+    tree: view,
+    reviewConfigured: reviewConfigured(c.env),
+  });
+  const idOf = new Map(open.map((p) => [p.number, p.id]));
+  return c.json(
+    {
+      ...view,
+      targets: view.targets.map((t) => ({
+        ...t,
+        nodes: t.nodes.map((n) => ({
+          ...n,
+          pullState: states.get(idOf.get(n.number) ?? '') ?? null,
+        })),
+      })),
+    },
+    200
+  );
 });
 
 const createPullRoute = createRoute({
@@ -567,6 +631,10 @@ const getPullRoute = createRoute({
         canMerge: z.boolean(),
         /** Place in the target's stack tree; null when the PR isn't open. */
         stack: stackNodeSchema.nullable(),
+        /** Whose move it is, and why; null unless the PR is open with both branches. */
+        pullState: pullStateSchema.nullable(),
+        /** GitOrange's timeline entries (state changes), oldest first. */
+        events: z.array(prEventSchema),
       }),
       'Pull request'
     ),
@@ -584,10 +652,12 @@ pullsRouter.openapi(getPullRoute, async (c) => {
     .where(eq(pullRequestComments.pullRequestId, pr.id))
     .orderBy(asc(pullRequestComments.createdAt))
     .all();
+  const events = await eventsFor(db, pr.id);
   const people = await usersById(db, [
     pr.authorId,
     pr.mergedById ?? '',
     ...comments.map((x) => x.authorId),
+    ...events.map((e) => e.actorId ?? ''),
   ]);
   const [shas, headLive] = await Promise.all([
     pullShas(git, pr),
@@ -647,6 +717,10 @@ pullsRouter.openapi(getPullRoute, async (c) => {
       )
     );
   const stack = await stackViewFor(db, git, pr);
+  const pullState = await pullStateFor(db, git, pr, {
+    shas,
+    reviewConfigured: reviewConfigured(c.env),
+  });
   return c.json(
     {
       pull: serializePull(pr, people, comments.length),
@@ -670,6 +744,15 @@ pullsRouter.openapi(getPullRoute, async (c) => {
       review,
       canMerge: c.get('perms').write,
       stack,
+      pullState,
+      events: events.map((e) => ({
+        id: e.id,
+        kind: e.kind,
+        state: e.state,
+        data: e.data ?? null,
+        actor: e.actorId ? (people.get(e.actorId) ?? ghost) : null,
+        createdAt: e.createdAt.toISOString(),
+      })),
     },
     200
   );

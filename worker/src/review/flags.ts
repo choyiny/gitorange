@@ -1,4 +1,5 @@
 import { and, eq, isNull } from 'drizzle-orm';
+import { settleStates } from '../pulls/settle';
 import type { DrizzleDB } from '../db/middleware';
 import {
   prClassifications,
@@ -97,5 +98,6 @@ export async function decideFlag(
       console.error('[review] auto-merge failed', e)
     )
   );
+  after(settleStates(env, db, pr.repositoryId));
   return { ok: true };
 }

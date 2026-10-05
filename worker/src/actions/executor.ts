@@ -1,4 +1,5 @@
 import type { WorkflowStepConfig } from 'cloudflare:workers';
+import { settleStates } from '../pulls/settle';
 import { and, eq, inArray } from 'drizzle-orm';
 import { pingingSteps } from '../live/publish';
 import { autoMergeForCommit } from '../review/auto-merge';
@@ -196,6 +197,10 @@ export async function executeRun(
       );
       return true;
     });
+    await step.do('states', async () => {
+      await settleStates(env, db, ctx.repoId);
+      return true;
+    });
     return 'failure';
   }
 
@@ -274,6 +279,10 @@ export async function executeRun(
       );
       return true;
     });
+  await step.do('states', async () => {
+    await settleStates(env, db, ctx.repoId);
+    return true;
+  });
   return conclusion;
 }
 
