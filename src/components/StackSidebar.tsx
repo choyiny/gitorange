@@ -3,6 +3,7 @@ import { Link } from 'react-router-dom';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { errorMessage } from '@/lib/api';
 import { api, type RepoDetail, type StackNode } from '@/lib/uiApi';
+import { AgentRunLink } from './AgentRunLink';
 
 /** Links separated by commas, so adjacent ones don't run together. */
 function joined(items: ReactNode[]) {
@@ -45,7 +46,10 @@ export function StackSidebar({
     !stack.pending.length;
   return (
     <div className="border-bottom pb-3 mb-3">
-      <div className="text-bold color-fg-muted mb-2">Stack</div>
+      <div className="d-flex flex-items-center flex-justify-between mb-2">
+        <span className="text-bold color-fg-muted">Stack</span>
+        <AgentRunLink repo={repo} number={number} kind="stack_discovery" />
+      </div>
       {empty && stack.checking && (
         <div className="color-fg-muted">
           Checking against other open pull requests…

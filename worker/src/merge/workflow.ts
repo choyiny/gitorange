@@ -12,6 +12,7 @@ import { workersAiModels } from '../review/models';
 import { getSettings } from '../lib/settings';
 import { executeStacking, type StackParams } from '../stack/discover';
 import { workersAiStackModels } from '../stack/models';
+import { recordAgentRun } from '../agent-runs/record';
 
 export type MergeResolutionParams =
   | {
@@ -46,8 +47,22 @@ export class MergeResolutionWorkflow extends WorkflowEntrypoint<
 > {
   async run(event: WorkflowEvent<MergeResolutionParams>, step: WorkflowStep) {
     const db = drizzle(this.env.DB, { schema });
-    // The executors' results are plain JSON; adapt to WorkflowStep's Serializable typing.
-    const runner = step as unknown as StepRunner;
+    // Every run shows in the Actions tab under Agent, step by step (agent-runs/record.ts).
+    await recordAgentRun(
+      this.env,
+      db,
+      event,
+      // The executors' results are plain JSON; adapt to WorkflowStep's Serializable typing.
+      step as unknown as StepRunner,
+      (runner) => this.execute(event, runner)
+    );
+  }
+
+  private async execute(
+    event: WorkflowEvent<MergeResolutionParams>,
+    runner: StepRunner
+  ) {
+    const db = drizzle(this.env.DB, { schema });
     if (event.payload.classificationId) {
       const ids = await getSettings(db, this.env, [
         'ai.summary_model',

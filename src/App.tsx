@@ -35,6 +35,7 @@ import { useDocumentTitle } from './lib/appName';
 import SettingsMcp from './pages/SettingsMcp';
 import OAuthConsent from './pages/OAuthConsent';
 import RunView from './pages/RunView';
+import AgentRunView from './pages/AgentRuns';
 import SettingsTokens from './pages/SettingsTokens';
 import SettingsEmails, { VerifyEmail } from './pages/SettingsEmails';
 import Admin from './pages/Admin';
@@ -134,6 +135,7 @@ const App = () => (
                   <Route path="pull/:number/:tab" element={<PullView />} />
                   <Route path="actions" element={<RepoActions />} />
                   <Route path="actions/runs/:number" element={<RunView />} />
+                  <Route path="actions/agent/:id" element={<AgentRunView />} />
                   <Route
                     path="actions/runs/:number/job/:jobId"
                     element={<RunView />}

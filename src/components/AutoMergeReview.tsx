@@ -24,6 +24,7 @@ import { fullDate, timeAgo } from '@/lib/format';
 import { Avatar } from './Avatar';
 import { Markdown } from './Markdown';
 import { Spinner } from './Spinner';
+import { AgentRunLink } from './AgentRunLink';
 
 /** The timeline comment's anchor, linked from the merge box. */
 export const REVIEW_ANCHOR = 'auto-merge-review';
@@ -579,6 +580,12 @@ export function ReviewComment({
             <span>is reviewing this pull request</span>
           )}
           <span className="flex-1" />
+          <AgentRunLink
+            repo={repo}
+            number={d.pull.number}
+            kind="review"
+            className="f6 mr-2"
+          />
           <span className="Label">bot</span>
         </div>
         <div className="p-2 p-sm-3">

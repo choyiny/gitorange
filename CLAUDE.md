@@ -49,6 +49,11 @@ and better-auth. Git storage is **Cloudflare Artifacts**: one Artifacts repo per
   people (`pr_classifications`, `pr_review_flags`). `.orangeignore` (target branch, gitignore syntax, plus lockfiles) keeps generated files out of model calls. `maybeAutoMerge` lands via `landPull` (shared with the merge
   button) when `autoMergeStatus` is ready. `GET /api/approvals` (`review/inbox.ts`) feeds the global Approvals page.
   Tests drive `executeClassification` with fake models.
+- Agent runs (`worker/src/agent-runs/`): every `MERGE_RESOLUTION` Workflow is recorded as `agent_runs` + `agent_steps` (Actions
+  tab → Agent) by one wrapper at the entrypoint (`recordAgentRun`): ids are the instance id and `<run>:<step name>` (replay-safe),
+  writes never throw. Model calls land on their step via an `AsyncLocalStorage` context read by `recordAiUsage`
+  (`ai_usage.agent_step_id`); decisions come from step results or `noteDecision` (short, never prompts/diffs/model text). The
+  daily retention prunes them and closes runs left running over 2 h. Tests wrap executors in `recordAgentRun`.
 - Live updates (`worker/src/live/`): one hibernating `LiveHub` DO (binding `LIVE`) relays "changed" pings over
   WebSockets (`GET /api/live[?repo=o/n]`, channels `repo:<id>` and `approvals`); pages refetch through the API. Pings
   come from a middleware after successful repo mutations, `pingingSteps` around Workflow step runners, pushes, and

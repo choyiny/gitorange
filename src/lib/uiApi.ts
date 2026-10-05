@@ -382,6 +382,44 @@ export type WorkflowJob = {
   completedAt: string | null;
   steps: WorkflowStep[];
 };
+/** AI processing recorded as a run (Actions tab → Agent). */
+export type AgentRunKind =
+  'review' | 'conflict_resolution' | 'stack_discovery' | 'sweep';
+export type AgentRunStatus = 'running' | 'succeeded' | 'failed';
+export type AgentRun = {
+  id: string;
+  kind: AgentRunKind;
+  status: AgentRunStatus;
+  title: string;
+  pullRequest: { number: number; title: string } | null;
+  startedAt: string;
+  finishedAt: string | null;
+  error: string | null;
+};
+export type AgentStep = {
+  id: string;
+  name: string;
+  displayName: string;
+  status: AgentRunStatus;
+  startedAt: string | null;
+  finishedAt: string | null;
+  attempts: number;
+  model: string | null;
+  tokensIn: number | null;
+  tokensOut: number | null;
+  costEstimate: number | null;
+  decision: string | null;
+  error: string | null;
+};
+export type AgentRunDetail = {
+  run: AgentRun & {
+    tokensIn: number;
+    tokensOut: number;
+    costEstimate: number | null;
+  };
+  steps: AgentStep[];
+};
+
 export type CommitRuns = {
   state: 'success' | 'failure' | 'pending' | null;
   runs: WorkflowRun[];
@@ -741,6 +779,25 @@ export const api = {
     apiFetch<{ runNumber: number }>(`${r(o, n)}/actions/runs/${num}/rerun`, {
       method: 'POST',
     }),
+  agentRuns: (
+    o: string,
+    n: string,
+    opts: {
+      kind?: AgentRunKind;
+      pull?: number;
+      cursor?: string;
+      limit?: number;
+    }
+  ) =>
+    apiFetch<{ runs: AgentRun[]; nextCursor: string | null }>(
+      `${r(o, n)}/agent-runs?${q(
+        Object.fromEntries(
+          Object.entries(opts).filter(([, v]) => v !== undefined)
+        ) as Record<string, string | number>
+      )}`
+    ),
+  agentRun: (o: string, n: string, id: string) =>
+    apiFetch<AgentRunDetail>(`${r(o, n)}/agent-runs/${encodeURIComponent(id)}`),
   commitRuns: (o: string, n: string, sha: string) =>
     apiFetch<CommitRuns>(`${r(o, n)}/commits/${sha}/runs`),
   commitStatuses: (o: string, n: string, shas: string[]) =>
@@ -841,6 +898,12 @@ export const qk = {
     ['repo', o, n, 'run', num] as const,
   stepLog: (o: string, n: string, num: number, jobId: string, step: number) =>
     ['repo', o, n, 'run', num, 'log', jobId, step] as const,
+  agentRuns: (o: string, n: string, kind: string, cursor: string) =>
+    ['repo', o, n, 'agent-runs', kind, cursor] as const,
+  pullAgentRun: (o: string, n: string, num: number, kind: string) =>
+    ['repo', o, n, 'agent-runs', 'pull', num, kind] as const,
+  agentRun: (o: string, n: string, id: string) =>
+    ['repo', o, n, 'agent-run', id] as const,
   commitRuns: (o: string, n: string, sha: string) =>
     ['repo', o, n, 'commit-runs', sha] as const,
   commitStatuses: (o: string, n: string, shas: string) =>

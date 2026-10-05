@@ -565,8 +565,92 @@ export const aiUsage = sqliteTable(
     tokensIn: integer('tokens_in'),
     tokensOut: integer('tokens_out'),
     tokensCached: integer('tokens_cached'),
+    /** The agent run step that made the call (agent_steps.id), when it ran in one. Not a foreign key: usage outlives pruned runs. */
+    agentStepId: text('agent_step_id'),
   },
-  (t) => [index('ai_usage_created_idx').on(t.createdAt)]
+  (t) => [
+    index('ai_usage_created_idx').on(t.createdAt),
+    index('ai_usage_agent_step_idx').on(t.agentStepId),
+  ]
+);
+
+/**
+ * Agent runs: every MERGE_RESOLUTION Workflow (review, conflict resolution, stack discovery, sweep),
+ * recorded step by step for the Actions tab. Metadata and short decisions only: never prompts,
+ * diffs, or model text. The id is the Workflow instance id, so a replayed run finds its row.
+ */
+export const agentRunKinds = [
+  'review',
+  'conflict_resolution',
+  'stack_discovery',
+  'sweep',
+] as const;
+export type AgentRunKind = (typeof agentRunKinds)[number];
+export const agentRunStatuses = ['running', 'succeeded', 'failed'] as const;
+export type AgentRunStatus = (typeof agentRunStatuses)[number];
+
+export const agentRuns = sqliteTable(
+  'agent_runs',
+  {
+    id: text('id').primaryKey(),
+    repositoryId: text('repository_id')
+      .notNull()
+      .references(() => repositories.id, { onDelete: 'cascade' }),
+    pullRequestId: text('pull_request_id').references(() => pullRequests.id, {
+      onDelete: 'set null',
+    }),
+    kind: text('kind').$type<AgentRunKind>().notNull(),
+    status: text('status', { enum: agentRunStatuses }).notNull(),
+    title: text('title').notNull(),
+    workflowInstanceId: text('workflow_instance_id').notNull(),
+    startedAt: integer('started_at', { mode: 'timestamp_ms' }).notNull(),
+    finishedAt: integer('finished_at', { mode: 'timestamp_ms' }),
+    /** Short, for a failed run. */
+    error: text('error'),
+  },
+  (t) => [
+    // The Actions tab: a repository's runs (of one kind), newest first.
+    index('agent_runs_repo_started_idx').on(t.repositoryId, t.startedAt),
+    index('agent_runs_repo_kind_started_idx').on(
+      t.repositoryId,
+      t.kind,
+      t.startedAt
+    ),
+    // A pull request's latest runs.
+    index('agent_runs_pr_started_idx').on(t.pullRequestId, t.startedAt),
+    // Retention: runs older than the cutoff.
+    index('agent_runs_started_idx').on(t.startedAt),
+  ]
+);
+
+export const agentSteps = sqliteTable(
+  'agent_steps',
+  {
+    /** `<run id>:<step name>`: Workflow step names are unique within an instance. */
+    id: text('id').primaryKey(),
+    runId: text('run_id')
+      .notNull()
+      .references(() => agentRuns.id, { onDelete: 'cascade' }),
+    /** Order the executor reached the step in (deterministic, so stable across replays). */
+    position: integer('position').notNull(),
+    /** The Workflow step name, e.g. `summary:3`; humanized for display. */
+    name: text('name').notNull(),
+    status: text('status', { enum: agentRunStatuses }).notNull(),
+    startedAt: integer('started_at', { mode: 'timestamp_ms' }),
+    finishedAt: integer('finished_at', { mode: 'timestamp_ms' }),
+    attempts: integer('attempts').notNull().default(0),
+    /** Models called in this step (comma-separated when several), from ai_usage. */
+    model: text('model'),
+    tokensIn: integer('tokens_in'),
+    tokensOut: integer('tokens_out'),
+    /** Dollars at list price (usage/pricing.ts) when the step's calls were made. */
+    costEstimate: real('cost_estimate'),
+    /** A short decision summary (≤ 1 KB). */
+    decision: text('decision'),
+    /** Short, for a failed step. */
+    error: text('error'),
+  },
+  (t) => [index('agent_steps_run_position_idx').on(t.runId, t.position)]
 );
 
 /**
@@ -618,3 +702,5 @@ export type MergeResolution = typeof mergeResolutions.$inferSelect;
 export type PrClassification = typeof prClassifications.$inferSelect;
 export type PrReviewFlag = typeof prReviewFlags.$inferSelect;
 export type UserEmail = typeof userEmails.$inferSelect;
+export type AgentRun = typeof agentRuns.$inferSelect;
+export type AgentStep = typeof agentSteps.$inferSelect;

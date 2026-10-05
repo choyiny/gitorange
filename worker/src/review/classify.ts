@@ -35,6 +35,7 @@ import {
 import { maybeAutoMerge } from './auto-merge';
 import { IGNORE_PATH, ignoreMatcher, isLockfile, readIgnore } from './ignore';
 import { ensureStacking } from '../stack/discover';
+import { clip, noteDecision } from '../agent-runs/context';
 
 /** Shared with AI conflict resolution. */
 export const reviewConfigured = resolutionConfigured;
@@ -679,6 +680,11 @@ export async function executeClassification(deps: ReviewDeps, id: string) {
       approvedAt: null,
       createdAt: now,
     }));
+    await noteDecision(
+      flags.length
+        ? `Flagged for a person: ${flags.map((f) => f.key).join(', ')}`
+        : 'No flags: may merge automatically'
+    );
     if (rows.length)
       await db.insert(prReviewFlags).values(rows).onConflictDoNothing();
     await db
@@ -737,6 +743,9 @@ export async function executeClassification(deps: ReviewDeps, id: string) {
             ),
             paths: focus,
           });
+          // The sentence only (a parse fallback can hold raw model text).
+          const headline = clip(out.detail.trim().split('\n')[0] ?? '', 300);
+          if (headline) await noteDecision(`${f.key}: ${headline}`);
           const changed = new Set(changes.map((c) => c.path));
           await db
             .update(prReviewFlags)

@@ -98,6 +98,14 @@ Always on when AI is configured; the optional `stacking:` section of `.gitorange
 - **`buildTree`** (pure) turns the edges into parents, waits-on, must-account-for, and cycles. `view.ts` ignores closed-unmerged pull requests; PR detail computes only its own branch.
 - **Surfaces:** `GET /api/repos/:owner/:repo/pulls/tree`, `stack` on PR detail, `POST .../pulls/:n/stack/retry`, and the MCP tools `gitorange_get_pull_tree` and `gitorange_get_pull_request` (with `stack`).
 
+## Agent runs
+
+Every `MERGE_RESOLUTION` Workflow (an auto-merge review, an AI conflict resolution, a stack discovery run, or a conflict sweep) shows in the repository's Actions tab under **Agent**, as a run with steps: status, duration, attempts, the models each step called, their tokens and list-price cost, and a short decision (Clef's answers with probabilities, the flags raised, a relationship's kind and reason, a resolution's headline). Prompts, diffs, and model output beyond those decisions are never stored.
+
+- **Recording** ([`worker/src/agent-runs/`](../worker/src/agent-runs/)) is one wrapper at the Workflow entrypoint (`recordAgentRun`) around the step runner every executor receives. The run's id is the Workflow instance id and each step's is `<run>:<step name>`, so a replayed Workflow finds its rows (upserts; a step's first finish wins). Each step's callback runs inside an `AsyncLocalStorage` context: `recordAiUsage` tags the `ai_usage` row with `agent_step_id` and recomputes the step's models, tokens, and cost, and `noteDecision` writes a decision where a step's result isn't one. Recording errors are logged, never thrown. A review or resolution that ends failed, a step of a stack run or sweep that fails, or a throwing Workflow marks the run failed; a superseded resolution closes its run when its Workflow is terminated.
+- **Storage:** `agent_runs` and `agent_steps` (D1), deleted with the repository, and by the daily Actions retention (same setting) once they started longer ago; the same daily job closes runs still marked running 2 hours after they started (a terminated or dead Workflow) as failed, with their unfinished steps (the API already shows such a run as not finished, and a late real finish still overrides the close). A replayed step only repairs a finish write that was lost.
+- **API:** `GET /api/repos/:owner/:repo/agent-runs?kind=&pull=&cursor=&limit=` (newest first, keyset cursor) and `.../agent-runs/:id` (the run with its steps, named for display). Pull requests link their review, resolution, and Stack sections to their latest run.
+
 ## Usage & cost
 
 Site admin → Usage & cost (`GET /api/admin/usage?month=`, the `gitorange_get_usage` MCP tool; [`worker/src/usage/`](../worker/src/usage/)) estimates what this deployment costs on Cloudflare. It has two sources:

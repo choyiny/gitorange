@@ -15,6 +15,7 @@ import {
 import { productOf } from './pricing';
 import type { DrizzleDB } from '../db/middleware';
 import type { AiFeature } from '../lib/ai-gateway';
+import { currentAgentStep, refreshStepUsage } from '../agent-runs/context';
 
 export interface TokenUsage {
   tokensIn: number | null;
@@ -84,6 +85,8 @@ export async function recordAiUsage(
   env: Pick<CloudflareBindings, 'DB'>,
   r: AiUsageRecord
 ): Promise<void> {
+  // Inside an agent run step (the MERGE_RESOLUTION Workflow), the call also lands on that step.
+  const step = currentAgentStep();
   try {
     const db = drizzle(env.DB, { schema });
     const values = {
@@ -99,6 +102,7 @@ export async function recordAiUsage(
       tokensIn: r.tokensIn,
       tokensOut: r.tokensOut,
       tokensCached: r.tokensCached,
+      agentStepId: step?.stepId ?? null,
     };
     const { id: _, createdAt: __, ...update } = values;
     await db
@@ -108,6 +112,7 @@ export async function recordAiUsage(
   } catch (e) {
     console.warn('[usage] could not record AI usage', r.feature, e);
   }
+  if (step) await refreshStepUsage(step.db, step.stepId);
 }
 
 /** The pull request and repository an auto-merge review belongs to. */

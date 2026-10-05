@@ -20,6 +20,7 @@ import { maybeAutoMerge } from '../review/auto-merge';
 import { type ConflictResolverApi, type ResolveRequest } from './resolver';
 import { generatedConflicts } from './generated';
 import { recordAiUsage, usageFromTranscript } from '../usage/record';
+import { closeAgentRun } from '../agent-runs/record';
 
 /** Where a proposed resolution's commit waits until it is applied. */
 export const resolutionRef = (id: string) => `refs/resolutions/${id}`;
@@ -318,6 +319,8 @@ async function supersede(
       await env.MERGE_RESOLUTION.get(r.id)
         .then((instance) => instance.terminate())
         .catch(() => {}); // already finished, or never started
+    // A terminated Workflow never closes its agent run itself.
+    await closeAgentRun(db, r.id, SUPERSEDED).catch(() => {});
     await fail(db, r.id, SUPERSEDED, ['queued', 'running']);
     cancelled++;
   }

@@ -11,6 +11,7 @@ import { api, qk, type PullDetail, type RepoDetail } from '@/lib/uiApi';
 import { errorMessage } from '@/lib/api';
 import { DiffView } from './DiffView';
 import { Spinner } from './Spinner';
+import { AgentRunLink } from './AgentRunLink';
 
 /** The resolved files: the proposal's commit against the base tip, conflicted files only. */
 function ResolvedFiles({
@@ -94,7 +95,12 @@ export function AiResolution({
           <div className="text-bold">Resolving conflicts with AI…</div>
           <div className="f6 color-fg-muted">
             An agent is combining both sides of these files. This usually takes
-            under a minute.
+            under a minute.{' '}
+            <AgentRunLink
+              repo={repo}
+              number={d.pull.number}
+              kind="conflict_resolution"
+            />
           </div>
           <FileList paths={current.conflictedPaths} />
         </div>
@@ -119,6 +125,11 @@ export function AiResolution({
                   ? ` · ${Math.round(current.durationMs / 1000)}s`
                   : ''}
             </span>
+            <AgentRunLink
+              repo={repo}
+              number={d.pull.number}
+              kind="conflict_resolution"
+            />
           </div>
           {current.explanation && <p className="mb-2">{current.explanation}</p>}
           {current.touchedExtraPaths.length > 0 && (
@@ -183,7 +194,12 @@ export function AiResolution({
       {current.status === 'failed' && (
         <div className="flash flash-error mb-2 f6">
           AI couldn&apos;t resolve these conflicts:{' '}
-          {current.errorMessage ?? 'unknown error'}
+          {current.errorMessage ?? 'unknown error'}{' '}
+          <AgentRunLink
+            repo={repo}
+            number={d.pull.number}
+            kind="conflict_resolution"
+          />
         </div>
       )}
       {current.status === 'rejected' && (

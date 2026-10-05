@@ -11,6 +11,7 @@ import { duration, shortSha, timeAgo } from '@/lib/format';
 import { Spinner } from '@/components/Spinner';
 import { CopyButton } from '@/components/CopyButton';
 import { RunStatusIcon } from '@/components/RunStatusIcon';
+import { AGENT_KINDS, AgentRunList, isAgentKind } from './AgentRuns';
 
 const STARTER = `name: CI
 
@@ -52,14 +53,17 @@ export default function RepoActions() {
   const repo = useOutletContext<RepoDetail>();
   const [params, setParams] = useSearchParams();
   const workflow = params.get('workflow') ?? '';
+  const agentParam = params.get('agent');
+  const agent = isAgentKind(agentParam) ? agentParam : null;
   const page = Math.max(1, Number(params.get('page') ?? 1) || 1);
   const o = repo.owner.username;
   const q = useQuery({
     queryKey: qk.runs(o, repo.name, page, workflow),
     queryFn: () => api.runs(o, repo.name, page, workflow || undefined),
     // Poll while anything on the page is still running.
+    // Not while an Agent kind is shown (the workflow list is hidden).
     refetchInterval: (query) =>
-      query.state.data?.runs.some((r) => r.status !== 'completed')
+      !agent && query.state.data?.runs.some((r) => r.status !== 'completed')
         ? 3000
         : false,
   });
@@ -77,7 +81,7 @@ export default function RepoActions() {
         <h2 className="f4 mb-2">Actions</h2>
         <div className="ActionList">
           <button
-            className={`ActionListItem width-full text-left border-0 rounded-2 px-2 py-1 d-flex flex-items-center ${!workflow ? 'color-bg-subtle text-bold' : 'color-bg-default'}`}
+            className={`ActionListItem width-full text-left border-0 rounded-2 px-2 py-1 d-flex flex-items-center ${!workflow && !agent ? 'color-bg-subtle text-bold' : 'color-bg-default'}`}
             style={{ gap: 8 }}
             onClick={() => setParams({})}
           >
@@ -100,10 +104,33 @@ export default function RepoActions() {
               <span className="css-truncate css-truncate-target">{w.name}</span>
             </button>
           ))}
+          <div className="f6 color-fg-muted text-bold px-2 mt-3 mb-1">
+            Agent
+          </div>
+          {AGENT_KINDS.map(({ kind, label, icon: Icon }) => (
+            <button
+              key={kind}
+              className={`ActionListItem width-full text-left border-0 rounded-2 px-2 py-1 d-flex flex-items-center ${agent === kind ? 'color-bg-subtle text-bold' : 'color-bg-default'}`}
+              style={{ gap: 8 }}
+              onClick={() => setParams({ agent: kind })}
+            >
+              <Icon className="color-fg-muted" />
+              <span className="css-truncate css-truncate-target">{label}</span>
+            </button>
+          ))}
         </div>
       </nav>
 
-      <div className="flex-1" style={{ minWidth: 0 }}>
+      {agent && (
+        <div className="flex-1" style={{ minWidth: 0 }}>
+          <AgentRunList repo={repo} kind={agent} />
+        </div>
+      )}
+      {/* Workflow runs; hidden (not unmounted) while an Agent kind is selected. */}
+      <div
+        className={`flex-1 ${agent ? 'd-none' : ''}`}
+        style={{ minWidth: 0 }}
+      >
         <div className="d-flex flex-items-baseline mb-3" style={{ gap: 8 }}>
           <h2 className="f3 text-normal">{current?.name ?? 'All workflows'}</h2>
           {current && (

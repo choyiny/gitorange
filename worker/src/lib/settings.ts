@@ -70,7 +70,7 @@ export const SETTINGS = {
   'actions.retention_days': {
     label: 'Keep Actions runs for',
     description:
-      'Finished workflow runs, with their jobs, steps, and logs, are deleted this many days after they finish. Empty keeps them forever.',
+      'Finished workflow runs, with their jobs, steps, and logs, are deleted this many days after they finish, and agent runs this many days after they start. Empty keeps them forever.',
     group: 'Actions',
     schema: z.number().int().min(1).max(400).nullable(),
     default: () => 90,
