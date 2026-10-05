@@ -47,6 +47,12 @@ migrations/          Generated D1 migrations
 
 API docs are served at `/api/swagger-ui` while running.
 
+## CI
+
+[`.github/workflows/ci.yml`](../.github/workflows/ci.yml) builds and typechecks once (`build`), then runs the tests in one job per module (`test-stacking`; `test-review`, which also covers merging and agent runs; `test-actions`, which also covers the git endpoint and LFS; `test-core`, which also covers MCP and the client-side libraries), in parallel, from the build's cache. Modules are few and balanced by runtime, because each job pays to restore the build and start vitest. On GitOrange, `build` and the test jobs run on `gitorange-standard-4` (`runs-on` is an expression that picks `ubuntu-latest` on GitHub). On GitOrange a `gate` job asks [`gitorange/relevance@v1`](ci-relevance.md) which modules a change can affect and skips the rest; on GitHub the gate is skipped and every module runs.
+
+Every test file belongs to exactly one module. When you add a test file, add it to the `yarn test` line of its module's job; `worker/src/__tests__/ci-workflow.test.ts`, which `build` always runs, fails until you do. A new module needs a `test-<name>` job, a line in the gate's `modules`, and a `run-<name>` gate output. Tests get 30 s each when `CI` is set (GitOrange Actions and GitHub both set it), 5 s locally.
+
 ## Dev server memory watchdog
 
 `yarn dev` runs Vite through [`scripts/dev.mjs`](../scripts/dev.mjs), which adds up the memory of the whole dev

@@ -1,5 +1,17 @@
 # Verification only — this workflow never deploys. Humans deploy.
 # Formatting is checked in format.yml, security in codeql.yml.
+#
+# build installs, builds, and typechecks once, and caches node_modules and dist/ by commit for the
+# test jobs. On GitOrange, gate asks gitorange/relevance@v1 (docs/ci-relevance.md) which modules a
+# change can affect; on GitHub it is skipped and every module runs. Each module job (test-<module>)
+# restores the build and runs its own test files. Modules are few and balanced by runtime: each job
+# pays for restoring the build and starting vitest, so fewer, larger jobs finish sooner.
+#
+# build and the test jobs run on gitorange-standard-4 on GitOrange (runs-on is an expression; the
+# label means nothing on GitHub, which gets ubuntu-latest).
+#
+# Every test file belongs to exactly one module. Adding a test file? Add it to its module's
+# `yarn test` line below; worker/src/__tests__/ci-workflow.test.ts (run by build) fails otherwise.
 name: CI
 
 on:
@@ -15,8 +27,8 @@ permissions:
   contents: read
 
 jobs:
-  test:
-    runs-on: ubuntu-latest
+  build:
+    runs-on: ${{ github.server_url == 'https://github.com' && 'ubuntu-latest' || 'gitorange-standard-4' }}
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@v7
@@ -25,6 +37,15 @@ jobs:
         with:
           node-version: 22
           cache: yarn
+
+      # Saved after the job succeeds (a Post step), for this commit's test jobs.
+      - name: Cache the build for this commit
+        uses: actions/cache@v4
+        with:
+          path: |
+            node_modules
+            dist
+          key: build-${{ github.sha }}
 
       - name: Install dependencies
         run: yarn install --frozen-lockfile
@@ -44,5 +65,182 @@ jobs:
       - name: Typecheck
         run: yarn typecheck
 
+      # Here, not in a module: the gate must never skip the check that every test file runs somewhere.
+      - name: Check every test file is in a module
+        run: yarn test worker/src/__tests__/ci-workflow.test.ts
+
+  gate:
+    name: Relevance
+    # gitorange/ actions exist only on GitOrange; on GitHub this job is skipped and every module runs.
+    if: github.server_url != 'https://github.com'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      run-stacking: ${{ steps.relevance.outputs.run-stacking }}
+      run-review: ${{ steps.relevance.outputs.run-review }}
+      run-actions: ${{ steps.relevance.outputs.run-actions }}
+      run-core: ${{ steps.relevance.outputs.run-core }}
+    steps:
+      - id: relevance
+        uses: gitorange/relevance@v1
+        with:
+          skip-below: 0.2
+          # Shared test setup and the schema every test runs against (added to the defaults).
+          always-run-paths: |
+            worker/src/__tests__/helpers/**
+            worker/test/**
+            worker/src/db/**
+            migrations/**
+          modules: |
+            stacking: Stacked pull requests: stack discovery and pair edges, the stack tree, reconcile and retargeting, stack gates on landing, and land targets (worker/src/stack/, pull_requests.land_target)
+            review: Reviewing and merging pull requests: the auto-merge review (worker/src/review/: per-file one-liners, Clef classification against .gitorange/review.yml, review flags, investigations and diagrams, .orangeignore, auto-merge), the Approvals inbox, pull request states (worker/src/pulls/: state reasons, signals, settle, pr_events), merging and landing (worker/src/merge/, landPull), three-way tree merges and diff3 conflicts (worker/src/git/service.ts), AI conflict resolution (MergeResolver, MERGE_RESOLUTION attempts and sweeps), generated-file matching, squash commit credits, and agent runs (worker/src/agent-runs/: how the review, conflict resolution, sweep, and stack discovery Workflows record their steps, decisions, and AI usage, and agent run retention)
+            actions: GitOrange Actions (worker/src/actions/: workflow syntax and expressions, triggers, job planning and runner sizes, the executor and JobRunner containers, the job queue, the cache, log retention, the gitorange/relevance action), the Cron Triggers (worker/src/cron.ts), and git transport and storage: the git smart-HTTP endpoint (worker/src/git-http.ts), git objects, packfiles and pkt-lines (worker/src/git/), Git LFS (worker/src/lfs-http.ts, worker/src/lib/lfs.ts), and raw file serving
+            core: The API outside the modules above (worker/src/routers/, worker/src/lib/, worker/src/auth/, worker/src/index.ts): repositories and pull requests, access and visibility (worker/src/lib/repos.ts), setup and invitations, teams, Site admin and instance settings, commit emails and attribution, live updates (worker/src/live/), usage and cost (worker/src/usage/), insights, the AI Gateway, API smoke tests; the MCP server (worker/src/mcp/: JSON-RPC tools) and its OAuth sign-in (better-auth OAuth provider, JWT access tokens, consent); and the web app's client-side libraries in src/lib (agent prompts, syntax highlighting, repository URLs, the stack tree and pull request state display)
+
+  test-stacking:
+    name: Test (stacking)
+    needs: [build, gate]
+    if: always() && needs.build.result == 'success' && (needs.gate.result == 'skipped' || needs.gate.outputs.run-stacking == 'true')
+    runs-on: ${{ github.server_url == 'https://github.com' && 'ubuntu-latest' || 'gitorange-standard-4' }}
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+      - id: build-cache
+        name: Restore the build for this commit
+        uses: actions/cache@v4
+        with:
+          path: |
+            node_modules
+            dist
+          key: build-${{ github.sha }}
+      - name: Stage config
+        run: cp wrangler.jsonc.ci wrangler.jsonc && cp .dev.vars.example .dev.vars
+      - name: Install and build (cache miss)
+        if: steps.build-cache.outputs.cache-hit != 'true'
+        run: yarn install --frozen-lockfile && yarn build
       - name: Test
-        run: yarn test
+        run: >-
+          yarn test
+          worker/src/__tests__/stacking-discovery.test.ts
+          worker/src/__tests__/stacking-landing.test.ts
+          worker/src/__tests__/stack-tree.test.ts
+          worker/src/__tests__/land-target.test.ts
+
+  test-review:
+    name: Test (review and merge)
+    needs: [build, gate]
+    if: always() && needs.build.result == 'success' && (needs.gate.result == 'skipped' || needs.gate.outputs.run-review == 'true')
+    runs-on: ${{ github.server_url == 'https://github.com' && 'ubuntu-latest' || 'gitorange-standard-4' }}
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+      - id: build-cache
+        name: Restore the build for this commit
+        uses: actions/cache@v4
+        with:
+          path: |
+            node_modules
+            dist
+          key: build-${{ github.sha }}
+      - name: Stage config
+        run: cp wrangler.jsonc.ci wrangler.jsonc && cp .dev.vars.example .dev.vars
+      - name: Install and build (cache miss)
+        if: steps.build-cache.outputs.cache-hit != 'true'
+        run: yarn install --frozen-lockfile && yarn build
+      - name: Test
+        run: >-
+          yarn test
+          worker/src/__tests__/review.test.ts
+          worker/src/__tests__/review-diagram.test.ts
+          worker/src/__tests__/approvals.test.ts
+          worker/src/__tests__/pull-states.test.ts
+          worker/src/__tests__/merge-resolution.test.ts
+          worker/src/__tests__/pulls-ai-resolution.test.ts
+          worker/src/__tests__/git-merge.test.ts
+          worker/src/__tests__/merge-generated.test.ts
+          worker/src/__tests__/squash-credits.test.ts
+          worker/src/__tests__/agent-runs.test.ts
+
+  test-actions:
+    name: Test (actions and git)
+    needs: [build, gate]
+    if: always() && needs.build.result == 'success' && (needs.gate.result == 'skipped' || needs.gate.outputs.run-actions == 'true')
+    runs-on: ${{ github.server_url == 'https://github.com' && 'ubuntu-latest' || 'gitorange-standard-4' }}
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+      - id: build-cache
+        name: Restore the build for this commit
+        uses: actions/cache@v4
+        with:
+          path: |
+            node_modules
+            dist
+          key: build-${{ github.sha }}
+      - name: Stage config
+        run: cp wrangler.jsonc.ci wrangler.jsonc && cp .dev.vars.example .dev.vars
+      - name: Install and build (cache miss)
+        if: steps.build-cache.outputs.cache-hit != 'true'
+        run: yarn install --frozen-lockfile && yarn build
+      - name: Test
+        run: >-
+          yarn test
+          worker/src/__tests__/actions.test.ts
+          worker/src/__tests__/actions-syntax.test.ts
+          worker/src/__tests__/actions-queue.test.ts
+          worker/src/__tests__/actions-relevance.test.ts
+          worker/src/__tests__/cron.test.ts
+          worker/src/__tests__/git-http.test.ts
+          worker/src/__tests__/git-objects.test.ts
+          worker/src/__tests__/lfs.test.ts
+          worker/src/__tests__/raw-files.test.ts
+
+  test-core:
+    name: Test (core, mcp, ui)
+    needs: [build, gate]
+    if: always() && needs.build.result == 'success' && (needs.gate.result == 'skipped' || needs.gate.outputs.run-core == 'true')
+    runs-on: ${{ github.server_url == 'https://github.com' && 'ubuntu-latest' || 'gitorange-standard-4' }}
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+      - id: build-cache
+        name: Restore the build for this commit
+        uses: actions/cache@v4
+        with:
+          path: |
+            node_modules
+            dist
+          key: build-${{ github.sha }}
+      - name: Stage config
+        run: cp wrangler.jsonc.ci wrangler.jsonc && cp .dev.vars.example .dev.vars
+      - name: Install and build (cache miss)
+        if: steps.build-cache.outputs.cache-hit != 'true'
+        run: yarn install --frozen-lockfile && yarn build
+      - name: Test
+        run: >-
+          yarn test
+          worker/src/__tests__/repos-pulls.test.ts
+          worker/src/__tests__/setup-invites.test.ts
+          worker/src/__tests__/teams-visibility.test.ts
+          worker/src/__tests__/admin-setup.test.ts
+          worker/src/__tests__/settings.test.ts
+          worker/src/__tests__/commit-emails.test.ts
+          worker/src/__tests__/smoke.test.ts
+          worker/src/__tests__/live.test.ts
+          worker/src/__tests__/usage.test.ts
+          worker/src/__tests__/insights.test.ts
+          worker/src/__tests__/ai-gateway.test.ts
+          worker/src/__tests__/mcp.test.ts
+          src/lib/

@@ -26,5 +26,8 @@ export default defineConfig({
     // Plus DOM-free SPA modules.
     include: ['worker/src/__tests__/**/*.test.ts', 'src/lib/**/*.test.ts'],
     setupFiles: ['./worker/test/setup.ts'],
+    // CI containers (GitOrange Actions standard-2, GitHub runners; both set CI=true) run these
+    // tests about ten times slower than a laptop, so the heavier stacking tests pass 5 s there.
+    ...(process.env.CI ? { testTimeout: 30_000 } : {}),
   },
 });

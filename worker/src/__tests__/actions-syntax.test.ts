@@ -219,6 +219,42 @@ jobs:
     );
     expect(() => planJobs(big, {})).toThrow(/expands to 25 jobs/);
   });
+  it('evaluates runs-on expressions with the github and matrix contexts', () => {
+    const wf = parseWorkflow(
+      [
+        'on: push',
+        'jobs:',
+        '  a:',
+        "    runs-on: ${{ github.server_url == 'https://github.com' && 'ubuntu-latest' || 'gitorange-standard-4' }}",
+        '    steps:',
+        '      - run: x',
+        '  b:',
+        '    runs-on: ${{ matrix.size }}',
+        '    strategy:',
+        '      matrix:',
+        '        size: [standard-1, standard-3]',
+        '    steps:',
+        '      - run: x',
+      ].join('\n')
+    );
+    const here = planJobs(wf, { server_url: 'https://git.example.com' });
+    expect(here.map((j) => j.runsOn)).toEqual([
+      'gitorange-standard-4',
+      'standard-1',
+      'standard-3',
+    ]);
+    expect(here.map((j) => instanceTypeFor(j.runsOn))).toEqual([
+      'standard-4',
+      'standard-1',
+      'standard-3',
+    ]);
+    const gh = planJobs(wf, { server_url: 'https://github.com' });
+    expect(gh[0].runsOn).toBe('ubuntu-latest');
+    const mac = parseWorkflow(
+      "on: push\njobs:\n  a:\n    runs-on: ${{ 'macos-latest' }}\n    steps:\n      - run: x"
+    );
+    expect(() => planJobs(mac, {})).toThrow(/Linux jobs only/);
+  });
 });
 
 describe('trigger filters', () => {

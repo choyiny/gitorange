@@ -169,7 +169,6 @@ export function planJobs(
 ): PlannedJob[] {
   const out: PlannedJob[] = [];
   for (const job of wf.jobs) {
-    instanceTypeFor(job.runsOn);
     const combos = job.matrix ? expandMatrix(job.matrix) : [null];
     if (combos.length > MAX_MATRIX_JOBS)
       throw new WorkflowFileError(
@@ -196,6 +195,17 @@ function planJob(
     combo && !(job.name && job.name.includes('${{'))
       ? `${base} (${Object.values(combo).map(String).join(', ')})`
       : base;
+  // `runs-on` may be an expression (github and matrix contexts, as on GitHub); the evaluated
+  // labels are stored, so the executor sizes the runner from them.
+  let runsOn: string;
+  try {
+    runsOn = interpolate(job.runsOn, ctx);
+  } catch (e) {
+    throw new WorkflowFileError(
+      `jobs.${job.key}.runs-on: ${e instanceof Error ? e.message : String(e)}`
+    );
+  }
+  instanceTypeFor(runsOn);
   const posts = postStepIndexes(job.steps);
   const steps: PlannedStep[] = [
     { number: 1, name: 'Set up job' },
@@ -212,7 +222,7 @@ function planJob(
   return {
     key: job.key,
     name,
-    runsOn: job.runsOn,
+    runsOn,
     needs: job.needs,
     matrix: combo,
     steps,
