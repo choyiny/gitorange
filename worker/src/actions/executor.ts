@@ -54,6 +54,18 @@ import {
 const POST_STEP_MINUTES = 30;
 import { githubContext, readWorkflowFiles } from './trigger';
 import {
+  decideRelevance,
+  defaultRelevance,
+  parseRelevanceInputs,
+  RELEVANCE_ACTION,
+  RELEVANCE_VERSION,
+  RelevanceInputError,
+  relevanceContext,
+  relevanceScript,
+  type RelevanceInputs,
+  type RelevanceModelFor,
+} from './relevance';
+import {
   parseWorkflow,
   stepDisplayName,
   type JobDef,
@@ -86,6 +98,8 @@ export interface ExecutorDeps {
   runner: (jobId: string) => JobRunnerApi;
   /** Wait before restarting an interrupted job, times the attempt that failed. Default 15s. */
   restartDelayMs?: number;
+  /** Clef for `gitorange/relevance`; defaults to Workers AI when the AI binding exists. */
+  relevance?: RelevanceModelFor;
 }
 
 const DEFAULT_PATH =
@@ -897,6 +911,8 @@ async function runAttempt(
               envAdds,
               pathAdds,
               remainingMs: deadline - Date.now(),
+              db,
+              relevance: deps.relevance ?? defaultRelevance(env),
             });
             if ('error' in cmd) log = `Error: ${cmd.error}`;
             else {
@@ -1035,6 +1051,8 @@ async function buildCommand(
     envAdds: Record<string, string>;
     pathAdds: string[];
     remainingMs: number;
+    db: Db;
+    relevance: RelevanceModelFor;
   }
 ): Promise<
   | { request: StepRequest; preamble?: string; cache?: CacheState }
@@ -1236,8 +1254,41 @@ async function buildCommand(
       };
     }
 
+    if (action === RELEVANCE_ACTION) {
+      if (uses !== `${RELEVANCE_ACTION}@${RELEVANCE_VERSION}`)
+        return { error: `Use ${RELEVANCE_ACTION}@${RELEVANCE_VERSION}.` };
+      let inputs: RelevanceInputs;
+      try {
+        inputs = parseRelevanceInputs(withArgs);
+      } catch (e) {
+        if (e instanceof RelevanceInputError)
+          return { error: `${RELEVANCE_ACTION}: ${e.message}` };
+        throw e;
+      }
+      // Decided here, in the Worker (the change, the review, Clef); the runner prints it.
+      const rc = await relevanceContext(env, state.db, ctx);
+      const decision = await decideRelevance(
+        inputs,
+        rc,
+        state.relevance({
+          repositoryId: ctx.repoId,
+          pullRequestId: rc.pullRequestId,
+        })
+      );
+      return {
+        request: {
+          number: state.number,
+          argv: [...SHELLS.bash, relevanceScript(decision)],
+          cwd: WORKSPACE,
+          env: stepEnv,
+          timeoutMs,
+          masks: [],
+        },
+      };
+    }
+
     return {
-      error: `GitOrange Actions doesn't run \`uses: ${uses}\` yet. Supported actions: actions/checkout, actions/setup-node, and actions/cache. Use a \`run:\` step instead.`,
+      error: `GitOrange Actions doesn't run \`uses: ${uses}\` yet. Supported actions: actions/checkout, actions/setup-node, actions/cache, and ${RELEVANCE_ACTION}@${RELEVANCE_VERSION}. Use a \`run:\` step instead.`,
     };
   } catch (e) {
     if (e instanceof ExpressionError) return { error: e.message };

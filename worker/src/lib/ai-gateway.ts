@@ -9,7 +9,8 @@ export type AiFeature =
   | 'review-investigate'
   | 'merge-resolution'
   | 'stack-decide'
-  | 'stack-explain';
+  | 'stack-explain'
+  | 'ci-relevance';
 
 export function aiGateway(
   env: Pick<CloudflareBindings, 'AI_GATEWAY' | 'BASE_URL'>,

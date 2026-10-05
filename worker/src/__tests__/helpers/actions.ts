@@ -11,6 +11,7 @@ import type {
   StepRequest,
   StepResult,
 } from '../../actions/job-runner';
+import type { RelevanceModelFor } from '../../actions/relevance';
 import { bootstrapAdmin, call, makeEnv, settle, type TestEnv } from './app';
 import { commitPaths } from './seed';
 
@@ -162,7 +163,11 @@ export function harness(
   onStep: (
     req: StepRequest
   ) => Partial<StepResult> | Promise<Partial<StepResult>> = () => ({}),
-  opts: { loseEvents?: boolean; retrySteps?: boolean } = {}
+  opts: {
+    loseEvents?: boolean;
+    retrySteps?: boolean;
+    relevance?: RelevanceModelFor;
+  } = {}
 ) {
   const requests: StepRequest[] = [];
   const destroyed: string[] = [];
@@ -232,6 +237,7 @@ export function harness(
         step,
         runner,
         restartDelayMs: 0,
+        relevance: opts.relevance,
       },
       runId
     );
@@ -239,3 +245,20 @@ export function harness(
 }
 
 export const script = (r: StepRequest) => r.argv[r.argv.length - 1];
+
+/** The outputs a gitorange/relevance step writes to $GITHUB_OUTPUT, as the real runner reports them. */
+export function scriptOutputs(r: StepRequest): Record<string, string> {
+  const out: Record<string, string> = {};
+  for (const m of script(r).matchAll(
+    /^echo '([A-Za-z0-9_-]+)=(true|false)' >> "\$GITHUB_OUTPUT"$/gm
+  ))
+    out[m[1]] = m[2];
+  return out;
+}
+
+/** What a gitorange/relevance step prints: its `echo '…'` lines, as the real runner logs them. */
+export function scriptLog(r: StepRequest): string {
+  return [...script(r).matchAll(/^echo '((?:[^']|'\\'')*)'$/gm)]
+    .map((m) => m[1].replace(/'\\''/g, "'"))
+    .join('\n');
+}

@@ -3,6 +3,7 @@ import {
   evaluate,
   evaluateCondition,
   interpolate,
+  type Value,
 } from '../actions/expressions';
 import { mask, parseKeyValueFile } from '../actions/commands';
 import {
@@ -83,6 +84,35 @@ describe('expressions', () => {
         status: 'cancelled',
       })
     ).toBe(true);
+  });
+
+  it('lets a job-level if: read a gate job: hyphenated outputs, its result, and always()', () => {
+    const cond =
+      "always() && needs.build.result == 'success' && (needs.gate.result == 'skipped' || needs.gate.outputs.run-merge-queue == 'true')";
+    const needs = (gate: Value, build = 'success') => ({
+      needs: { build: { result: build, outputs: {} }, gate },
+    });
+    const ran = { result: 'success', outputs: { 'run-merge-queue': 'true' } };
+    const skipped = {
+      result: 'success',
+      outputs: { 'run-merge-queue': 'false' },
+    };
+    expect(evaluateCondition(cond, needs(ran), { status: 'success' })).toBe(
+      true
+    );
+    expect(evaluateCondition(cond, needs(skipped), { status: 'success' })).toBe(
+      false
+    );
+    // On GitHub the gate itself is skipped (no outputs): every module runs.
+    expect(
+      evaluateCondition(cond, needs({ result: 'skipped', outputs: {} }), {
+        status: 'cancelled',
+      })
+    ).toBe(true);
+    // A failed build skips the tests even though always() is there.
+    expect(
+      evaluateCondition(cond, needs(ran, 'failure'), { status: 'failure' })
+    ).toBe(false);
   });
 });
 
