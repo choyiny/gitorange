@@ -45,6 +45,7 @@ export function connectLive(
 /** The `do` of a Workflow step runner, as the executors use it. */
 interface Steps {
   do<T>(name: string, ...args: unknown[]): Promise<T>;
+  sleep?(name: string, duration: number): Promise<void>;
 }
 
 /** Wraps a Workflow step runner so each completed step pings the repository. */
@@ -61,6 +62,8 @@ export function pingingSteps<S>(
       await publishChange(env, repositoryId, opts);
       return result;
     },
+    // Sleeping changes nothing anyone sees: no ping.
+    sleep: (name, duration) => inner.sleep!(name, duration),
   };
   return wrapped as unknown as S;
 }

@@ -3,11 +3,18 @@ import { drizzle } from 'drizzle-orm/d1';
 import { schema } from '../db/schema';
 import {
   executeResolution,
+  MAX_CONCURRENT_PER_REPO,
   resolutionRef,
+  startNext,
   type StepRunner,
 } from '../merge/resolution';
 import type { ResolveRequest, ResolveResult } from '../merge/resolver';
-import { executeSweep, type SweepParams } from '../merge/auto';
+import {
+  ensureResolution,
+  executeSweep,
+  type SweepParams,
+} from '../merge/auto';
+import { findRepoById, gitFor } from '../lib/repos';
 import { handleGitRequest } from '../git-http';
 import { concat } from '../git/bytes';
 import { FLUSH, pktLine } from '../git/pktline';
@@ -93,12 +100,19 @@ async function detail(t: TestEnv, cookie: string) {
 async function runResolution(
   t: TestEnv,
   id: string,
-  resolve: (req: ResolveRequest) => Partial<ResolveResult>
+  resolve: (
+    req: ResolveRequest
+  ) => Partial<ResolveResult> | Promise<Partial<ResolveResult>>,
+  /** `steps` records step names (sleeps as `sleep:<name>`). */
+  opts: { steps?: string[] } = {}
 ) {
   const requests: ResolveRequest[] = [];
   const step = {
-    do: async (_name: string, a: unknown, b?: unknown) =>
-      ((b ?? a) as () => Promise<unknown>)(),
+    do: async (name: string, a: unknown, b?: unknown) => {
+      opts.steps?.push(name);
+      return ((b ?? a) as () => Promise<unknown>)();
+    },
+    sleep: async (name: string) => void opts.steps?.push(`sleep:${name}`),
   } as unknown as StepRunner;
   await executeResolution(
     {
@@ -113,7 +127,7 @@ async function runResolution(
             explanation: 'Kept both.',
             files: {},
             transcript: '[]',
-            ...resolve(req),
+            ...(await resolve(req)),
           };
         },
       }),
@@ -131,6 +145,7 @@ async function runSweeps(t: TestEnv) {
   const step = {
     do: async (_name: string, a: unknown, b?: unknown) =>
       ((b ?? a) as () => Promise<unknown>)(),
+    sleep: async () => {},
   } as unknown as StepRunner;
   for (const s of t.actions.resolutions) {
     const params = s.params as { sweep?: SweepParams };
@@ -766,5 +781,469 @@ describe('many open PRs while main moves', () => {
       { status: 'proposed', n: 1 },
       { status: 'running', n: 5 },
     ]);
+  });
+});
+
+describe('faster AI conflict resolution', () => {
+  const plainStep = {
+    do: async (_name: string, a: unknown, b?: unknown) =>
+      ((b ?? a) as () => Promise<unknown>)(),
+    sleep: async () => {},
+  } as unknown as StepRunner;
+
+  /** The PR, its repository's git, and a db, to drive ensureResolution directly. */
+  async function handles(t: TestEnv) {
+    const db = drizzle(t.env.DB, { schema });
+    const pr = (await db.query.pullRequests.findFirst())!;
+    const found = (await findRepoById(db, pr.repositoryId))!;
+    return { db, pr, git: gitFor(t.env, found.repo) };
+  }
+
+  const row = (t: TestEnv, id: string) =>
+    t.env.DB.prepare(
+      'SELECT status, error_message FROM merge_resolutions WHERE id = ?'
+    )
+      .bind(id)
+      .first<{ status: string; error_message: string | null }>();
+
+  const count = async (t: TestEnv) =>
+    (
+      await t.env.DB.prepare(
+        'SELECT COUNT(*) AS n FROM merge_resolutions'
+      ).first<{ n: number }>()
+    )?.n ?? 0;
+
+  const resolutionStarts = (t: TestEnv) =>
+    t.actions.resolutions.filter(
+      (r) => (r.params as { resolutionId?: string }).resolutionId
+    );
+
+  it('cancels an attempt as soon as its target moves, and gives its slot to a queued one', async () => {
+    const t = makeEnv({ actions: true });
+    const admin = await bootstrapAdmin(t);
+    await call(t, '/api/repos', {
+      cookie: admin,
+      json: { name: 'app', visibility: 'internal' },
+    });
+    const repo = [...t.fake.repos.values()][0];
+    const root = await commitFiles(repo, 'main', { 'notes.txt': BASE }, 'base');
+    await commitFiles(
+      repo,
+      'main',
+      { 'notes.txt': BASE.replace('three', 'THREE') },
+      'main'
+    );
+    await commitFiles(
+      repo,
+      'release',
+      { 'notes.txt': BASE.replace('three', 'THREE') },
+      'release',
+      [root]
+    );
+    for (let i = 1; i <= 6; i++) {
+      await commitFiles(
+        repo,
+        `f${i}`,
+        { 'notes.txt': BASE.replace('three', `three (${i})`) },
+        `feature ${i}`,
+        [root]
+      );
+      await call(t, '/api/repos/octocat/app/pulls', {
+        cookie: admin,
+        json: {
+          title: `PR ${i}`,
+          base: i === 1 ? 'release' : 'main',
+          head: `f${i}`,
+        },
+      });
+      await settle(t);
+    }
+    const byPr = async (n: number) =>
+      (await t.env.DB.prepare(
+        `SELECT m.id, m.status FROM merge_resolutions m
+           JOIN pull_requests p ON p.id = m.pull_request_id WHERE p.number = ?`
+      )
+        .bind(n)
+        .first<{ id: string; status: string }>())!;
+    const first = await byPr(1);
+    const queued = await byPr(6);
+    expect(first.status).toBe('running');
+    expect(queued.status).toBe('queued');
+
+    // release takes PR 1's line: its conflict is gone, so no new attempt starts for it.
+    await commitFiles(
+      repo,
+      'release',
+      { 'notes.txt': BASE.replace('three', 'three (1)') },
+      'Take #1'
+    );
+    const repositoryId = (await t.env.DB.prepare(
+      'SELECT id FROM repositories'
+    ).first<{ id: string }>())!.id;
+    await executeSweep(
+      { env: t.env, db: drizzle(t.env.DB, { schema }), step: plainStep },
+      { repositoryId, branches: ['release'] }
+    );
+
+    expect(t.actions.terminatedResolutions).toContain(first.id);
+    expect(await row(t, first.id)).toEqual({
+      status: 'failed',
+      error_message: 'Superseded by newer commits.',
+    });
+    expect((await byPr(6)).status).toBe('running');
+    expect(resolutionStarts(t).map((r) => r.id)).toContain(queued.id);
+  });
+
+  it('stops without calling the model when the commits moved before it ran', async () => {
+    const { t, admin, repo } = await conflictingPull();
+    const id = (await detail(t, admin)).resolution!.id;
+    await commitFiles(
+      repo,
+      'main',
+      { 'notes.txt': BASE.replace('three', 'THREE!!! (main again)') },
+      'Change line three again'
+    );
+    const requests = await runResolution(t, id, () => ({
+      files: { 'notes.txt': 'resolved\n' },
+    }));
+    expect(requests).toHaveLength(0);
+    expect(await row(t, id)).toEqual({
+      status: 'failed',
+      error_message: 'Superseded by newer commits.',
+    });
+  });
+
+  it('starts one attempt when two triggers race for the same commits', async () => {
+    const t = makeEnv({ actions: true });
+    const admin = await bootstrapAdmin(t);
+    await call(t, '/api/repos', {
+      cookie: admin,
+      json: { name: 'app', visibility: 'internal' },
+    });
+    const repo = [...t.fake.repos.values()][0];
+    const root = await commitFiles(repo, 'main', { 'notes.txt': BASE }, 'base');
+    const head = await commitFiles(
+      repo,
+      'feature',
+      { 'notes.txt': BASE.replace('three', 'three, and a half') },
+      'Elaborate',
+      [root]
+    );
+    await call(t, '/api/repos/octocat/app/pulls', {
+      cookie: admin,
+      json: { title: 'Elaborate', base: 'main', head: 'feature' },
+    });
+    await settle(t);
+    // main gains a conflicting commit without a push event.
+    const base = await commitFiles(
+      repo,
+      'main',
+      { 'notes.txt': BASE.replace('three', 'THREE') },
+      'Shout'
+    );
+    const db = drizzle(t.env.DB, { schema });
+    const pr = (await db.query.pullRequests.findFirst())!;
+    const found = (await findRepoById(db, pr.repositoryId))!;
+    const git = gitFor(t.env, found.repo);
+    const started = await Promise.all([
+      ensureResolution(t.env, db, git, pr, { base, head }),
+      ensureResolution(t.env, db, git, pr, { base, head }),
+    ]);
+    expect(started.filter(Boolean)).toHaveLength(1);
+    expect(await count(t)).toBe(1);
+    expect(resolutionStarts(t)).toHaveLength(1);
+  });
+
+  it('reviews at once, then lets a burst of landings settle before one attempt', async () => {
+    const t = makeEnv({ actions: true });
+    const admin = await bootstrapAdmin(t);
+    await call(t, '/api/repos', {
+      cookie: admin,
+      json: { name: 'app', visibility: 'internal' },
+    });
+    const repo = [...t.fake.repos.values()][0];
+    const root = await commitFiles(repo, 'main', { 'notes.txt': BASE }, 'base');
+    await commitFiles(
+      repo,
+      'feature',
+      { 'notes.txt': BASE.replace('three', 'three, and a half') },
+      'Elaborate',
+      [root]
+    );
+    await call(t, '/api/repos/octocat/app/pulls', {
+      cookie: admin,
+      json: { title: 'Elaborate', base: 'main', head: 'feature' },
+    });
+    await settle(t);
+    // Two landings in a row; each would start a sweep.
+    await commitFiles(
+      repo,
+      'main',
+      { 'notes.txt': BASE.replace('three', 'THREE') },
+      'First'
+    );
+    const tip = await commitFiles(
+      repo,
+      'main',
+      { 'notes.txt': BASE.replace('three', 'THREE!') },
+      'Second'
+    );
+    const repositoryId = (await t.env.DB.prepare(
+      'SELECT id FROM repositories'
+    ).first<{ id: string }>())!.id;
+    const prId = (await t.env.DB.prepare('SELECT id FROM pull_requests').first<{
+      id: string;
+    }>())!.id;
+    const stacks = () =>
+      t.actions.resolutions.filter(
+        (r) => (r.params as { stack?: unknown }).stack
+      ).length;
+    for (let i = 0; i < 2; i++) {
+      const steps: string[] = [];
+      const atSleep = { stacks: 0, attempts: 0 };
+      const stacksBefore = stacks();
+      const step = {
+        do: async (name: string, a: unknown, b?: unknown) => {
+          steps.push(name);
+          return ((b ?? a) as () => Promise<unknown>)();
+        },
+        sleep: async (name: string) => {
+          steps.push(`sleep:${name}`);
+          atSleep.stacks = stacks() - stacksBefore;
+          atSleep.attempts = await count(t);
+        },
+      } as unknown as StepRunner;
+      await executeSweep(
+        { env: t.env, db: drizzle(t.env.DB, { schema }), step },
+        { repositoryId, branches: ['main'] }
+      );
+      // Review and stack discovery start at once; resolution waits for the burst to settle.
+      expect(steps).toEqual([
+        'repo',
+        'targets',
+        `pr:${prId}`,
+        'sleep:settle',
+        `resolve:${prId}`,
+      ]);
+      if (i === 0) expect(atSleep).toEqual({ stacks: 1, attempts: 0 });
+    }
+    const rows = await t.env.DB.prepare(
+      'SELECT base_sha, status FROM merge_resolutions'
+    ).all<{ base_sha: string; status: string }>();
+    expect(rows.results).toEqual([{ base_sha: tip, status: 'running' }]);
+    expect(resolutionStarts(t)).toHaveLength(1);
+  });
+
+  it('runs an attempt without waiting, and drops it if the commits move during the model run', async () => {
+    const { t, admin, repo } = await conflictingPull();
+    const id = (await detail(t, admin)).resolution!.id;
+    const steps: string[] = [];
+    const requests = await runResolution(
+      t,
+      id,
+      async () => {
+        await commitFiles(
+          repo,
+          'main',
+          { 'notes.txt': BASE.replace('three', 'THREE, again') },
+          'Another landing'
+        );
+        return { files: { 'notes.txt': 'resolved\n' } };
+      },
+      { steps }
+    );
+    expect(requests).toHaveLength(1);
+    expect(steps.some((s) => s.startsWith('sleep:'))).toBe(false);
+    expect(await row(t, id)).toEqual({
+      status: 'failed',
+      error_message: 'Superseded by newer commits.',
+    });
+    expect(repo.refs.has(resolutionRef(id))).toBe(false);
+  });
+
+  it('never cancels the current attempt on a caller holding old commits', async () => {
+    const { t, repo } = await conflictingPull();
+    const { db, pr, git } = await handles(t);
+    const head = repo.refs.get('refs/heads/feature')!;
+    const oldBase = repo.refs.get('refs/heads/main')!;
+    const newBase = await commitFiles(
+      repo,
+      'main',
+      { 'notes.txt': BASE.replace('three', 'THREE!!! (main again)') },
+      'Change line three again'
+    );
+    expect(
+      await ensureResolution(t.env, db, git, pr, { base: newBase, head })
+    ).toBe(true);
+    // A slow PR view resolved the refs before main moved.
+    expect(
+      await ensureResolution(t.env, db, git, pr, { base: oldBase, head })
+    ).toBe(false);
+    const running = await t.env.DB.prepare(
+      "SELECT base_sha FROM merge_resolutions WHERE status = 'running'"
+    ).all<{ base_sha: string }>();
+    expect(running.results).toEqual([{ base_sha: newBase }]);
+  });
+
+  it('tries again when the target moves away and back (A, B, A)', async () => {
+    const { t, repo } = await conflictingPull();
+    const { db, pr, git } = await handles(t);
+    const head = repo.refs.get('refs/heads/feature')!;
+    const a = repo.refs.get('refs/heads/main')!;
+    const b = await commitFiles(
+      repo,
+      'main',
+      { 'notes.txt': BASE.replace('three', 'THREE!!! (main again)') },
+      'B'
+    );
+    await ensureResolution(t.env, db, git, pr, { base: b, head });
+    repo.refs.set('refs/heads/main', a); // B is reverted
+    expect(await ensureResolution(t.env, db, git, pr, { base: a, head })).toBe(
+      true
+    );
+    const running = await t.env.DB.prepare(
+      "SELECT base_sha FROM merge_resolutions WHERE status = 'running'"
+    ).all<{ base_sha: string }>();
+    expect(running.results).toEqual([{ base_sha: a }]);
+  });
+
+  it('never runs more than the cap when two workers fill free slots at once', async () => {
+    const t = makeEnv({ actions: true });
+    const admin = await bootstrapAdmin(t);
+    await call(t, '/api/repos', {
+      cookie: admin,
+      json: { name: 'app', visibility: 'internal' },
+    });
+    const repo = [...t.fake.repos.values()][0];
+    const root = await commitFiles(repo, 'main', { 'notes.txt': BASE }, 'base');
+    await commitFiles(
+      repo,
+      'main',
+      { 'notes.txt': BASE.replace('three', 'THREE') },
+      'main'
+    );
+    for (let i = 1; i <= MAX_CONCURRENT_PER_REPO + 3; i++) {
+      await commitFiles(
+        repo,
+        `f${i}`,
+        { 'notes.txt': BASE.replace('three', `three (${i})`) },
+        `feature ${i}`,
+        [root]
+      );
+      await call(t, '/api/repos/octocat/app/pulls', {
+        cookie: admin,
+        json: { title: `PR ${i}`, base: 'main', head: `f${i}` },
+      });
+      await settle(t);
+    }
+    // One slot frees up without anyone filling it yet.
+    await t.env.DB.prepare(
+      `UPDATE merge_resolutions SET status = 'failed' WHERE id =
+         (SELECT id FROM merge_resolutions WHERE status = 'running' LIMIT 1)`
+    ).run();
+    const repositoryId = (await t.env.DB.prepare(
+      'SELECT id FROM repositories'
+    ).first<{ id: string }>())!.id;
+    const db = drizzle(t.env.DB, { schema });
+    await Promise.all([
+      startNext(t.env, db, repositoryId),
+      startNext(t.env, db, repositoryId),
+      startNext(t.env, db, repositoryId),
+    ]);
+    const running = await t.env.DB.prepare(
+      "SELECT COUNT(*) AS n FROM merge_resolutions WHERE status = 'running'"
+    ).first<{ n: number }>();
+    expect(running?.n).toBe(MAX_CONCURRENT_PER_REPO);
+  });
+
+  it('starts a resolve someone asked for without waiting', async () => {
+    const { t, admin } = await conflictingPull();
+    await t.env.DB.prepare(
+      "UPDATE merge_resolutions SET status = 'failed'"
+    ).run();
+    const { id } = (await (
+      await call(t, '/api/repos/octocat/app/pulls/1/resolutions', {
+        cookie: admin,
+        method: 'POST',
+      })
+    ).json()) as { id: string };
+    const steps: string[] = [];
+    const requests = await runResolution(
+      t,
+      id,
+      () => ({ files: { 'notes.txt': 'resolved\n' } }),
+      { steps }
+    );
+    expect(requests).toHaveLength(1);
+    expect(steps).not.toContain('sleep:settle');
+  });
+
+  /** main and feature both change line 3 of `path`; `.orangeignore` on main lists `generated/`. */
+  async function conflictIn(path: string) {
+    const t = makeEnv({ actions: true });
+    const admin = await bootstrapAdmin(t);
+    await call(t, '/api/repos', {
+      cookie: admin,
+      json: { name: 'app', visibility: 'internal' },
+    });
+    const repo = [...t.fake.repos.values()][0];
+    const ignore = { '.orangeignore': 'generated/\n' };
+    const root = await commitFiles(
+      repo,
+      'main',
+      { [path]: BASE, ...ignore },
+      'base'
+    );
+    await commitFiles(
+      repo,
+      'main',
+      { [path]: BASE.replace('three', 'THREE (main)'), ...ignore },
+      'Shout line three'
+    );
+    await commitFiles(
+      repo,
+      'feature',
+      { [path]: BASE.replace('three', 'three, and a half'), ...ignore },
+      'Elaborate on three',
+      [root]
+    );
+    await call(t, '/api/repos/octocat/app/pulls', {
+      cookie: admin,
+      json: { title: 'Elaborate', base: 'main', head: 'feature' },
+    });
+    await settle(t);
+    return { t, admin };
+  }
+
+  for (const path of [
+    'generated/api.ts',
+    'yarn.lock',
+    'migrations/meta/0008_snapshot.json',
+  ])
+    it(`leaves a conflict in a generated file (${path}) to a person`, async () => {
+      const { t, admin } = await conflictIn(path);
+      expect(await count(t)).toBe(0);
+      expect(resolutionStarts(t)).toHaveLength(0);
+      const d = await detail(t, admin);
+      expect(d).toMatchObject({
+        conflicts: [path],
+        conflictsResolvable: false,
+        resolution: null,
+      });
+      await settle(t); // the PR view's backstop doesn't start one either
+      expect(await count(t)).toBe(0);
+      const res = await call(t, '/api/repos/octocat/app/pulls/1/resolutions', {
+        cookie: admin,
+        method: 'POST',
+      });
+      expect(res.status).toBe(400);
+      expect(((await res.json()) as { error: string }).error).toContain(path);
+    });
+
+  it('still resolves a normal text conflict next to an .orangeignore', async () => {
+    const { t, admin } = await conflictIn('src/api.ts');
+    expect(await count(t)).toBe(1);
+    expect(resolutionStarts(t)).toHaveLength(1);
+    expect((await detail(t, admin)).conflictsResolvable).toBe(true);
   });
 });

@@ -18,6 +18,7 @@ import { findRepoById, gitFor } from '../lib/repos';
 import { getSetting } from '../lib/settings';
 import { maybeAutoMerge } from '../review/auto-merge';
 import { type ConflictResolverApi, type ResolveRequest } from './resolver';
+import { generatedConflicts } from './generated';
 import { recordAiUsage, usageFromTranscript } from '../usage/record';
 
 /** Where a proposed resolution's commit waits until it is applied. */
@@ -29,6 +30,24 @@ export const transcriptKey = (repoId: string, id: string) =>
 
 const CONFLICT_MARKER = /^(<{7}|\|{7}|={7}|>{7})( |$)/m;
 const MAX_INTENT_COMMITS = 30;
+
+export const SUPERSEDED = 'Superseded by newer commits.';
+
+/**
+ * How long a conflict sweep waits before it checks pull requests, so a burst of landings on the
+ * target wakes to the same tip and ends in one attempt per PR instead of one per landing.
+ */
+export const SETTLE_MS = 45_000;
+
+/** Running attempts in a repository, as a subquery for atomic cap checks. */
+const runningIn = (repositoryId: string) =>
+  sql`(SELECT COUNT(*) FROM merge_resolutions m
+       JOIN pull_requests p ON p.id = m.pull_request_id
+       WHERE p.repository_id = ${repositoryId} AND m.status = 'running')`;
+
+/** A row cancelled because its commits moved on: it doesn't count as having tried them. */
+export const notSuperseded = sql`NOT (${mergeResolutions.status} = 'failed'
+  AND COALESCE(${mergeResolutions.errorMessage}, '') = ${SUPERSEDED})`;
 
 /** The model conflict resolution uses: Site admin's setting, else `RESOLVER_MODEL`. */
 export const resolverModel = (db: DrizzleDB, env: CloudflareBindings) =>
@@ -92,25 +111,26 @@ export async function startResolution(
       status: 400,
       error: `These conflicts can't be resolved automatically (binary files, or a file deleted on one side and changed on the other): ${other.join(', ')}. Resolve them locally.`,
     };
+  const generated = await generatedConflicts(git, shas.base, plan.conflicts);
+  if (generated.length)
+    return {
+      ok: false,
+      status: 400,
+      error: `These conflicts are in generated files, which aren't sent to the model: ${generated.join(', ')}. Regenerate them on the branch.`,
+    };
 
-  const existing = await latestResolution(db, pr.id);
-  if (
-    existing &&
-    (existing.status === 'running' || existing.status === 'queued') &&
-    existing.baseSha === shas.base &&
-    existing.headSha === shas.head
-  )
-    return { ok: true, resolution: existing };
+  const active = () => activeFor(db, pr.id, shas);
+  const existing = await active();
+  if (existing) return { ok: true, resolution: existing };
   await supersede(env, db, pr.id, shas);
 
   // Cap concurrent runs per repository to avoid rate limits; the rest queue for startNext.
-  const busy = await activeCount(db, pr.repositoryId);
   const row: MergeResolution = {
     id: crypto.randomUUID(),
     pullRequestId: pr.id,
     baseSha: shas.base,
     headSha: shas.head,
-    status: busy >= MAX_CONCURRENT_PER_REPO ? 'queued' : 'running',
+    status: 'running',
     model: await resolverModel(db, env),
     conflictedPaths: plan.conflicts,
     touchedExtraPaths: null,
@@ -123,7 +143,21 @@ export async function startResolution(
     createdAt: new Date(),
     decidedAt: null,
   };
-  await db.insert(mergeResolutions).values(row);
+  // A person may retry after a failure; on its own, an attempt runs once per pair of commits.
+  const status = await insertOnce(db, row, pr.repositoryId, {
+    onlyActive: userId !== null,
+  });
+  if (!status) {
+    // Another trigger created the attempt for these commits first.
+    const winner = userId !== null ? await active() : undefined;
+    if (winner) return { ok: true, resolution: winner };
+    return {
+      ok: false,
+      status: 409,
+      error: 'An attempt for these commits already exists.',
+    };
+  }
+  row.status = status;
   if (row.status === 'queued') return { ok: true, resolution: row };
   if (!(await launch(env, db, row.id)))
     return {
@@ -136,6 +170,69 @@ export async function startResolution(
 
 /** Concurrent AI resolutions per repository; more wait in `queued`. */
 export const MAX_CONCURRENT_PER_REPO = 5;
+
+/** The queued or running attempt for exactly these commits, if any. */
+async function activeFor(
+  db: DrizzleDB,
+  pullRequestId: string,
+  shas: { base: string; head: string }
+) {
+  return db
+    .select()
+    .from(mergeResolutions)
+    .where(
+      and(
+        eq(mergeResolutions.pullRequestId, pullRequestId),
+        eq(mergeResolutions.baseSha, shas.base),
+        eq(mergeResolutions.headSha, shas.head),
+        inArray(mergeResolutions.status, ['queued', 'running'])
+      )
+    )
+    .orderBy(desc(mergeResolutions.createdAt))
+    .get();
+}
+
+/**
+ * Inserts an attempt unless one already exists for the same PR and commits (any status, or only
+ * queued/running ones with `onlyActive`), as one statement so racing triggers can't both insert.
+ * A `running` row becomes `queued` when the repository's slots are full. Returns the stored
+ * status, or null when another attempt won.
+ */
+async function insertOnce(
+  db: DrizzleDB,
+  row: MergeResolution,
+  repositoryId: string,
+  opts: { onlyActive: boolean }
+): Promise<MergeResolution['status'] | null> {
+  const status =
+    row.status === 'running'
+      ? sql`CASE WHEN ${runningIn(repositoryId)} >= ${MAX_CONCURRENT_PER_REPO}
+            THEN 'queued' ELSE 'running' END`
+      : sql`${row.status}`;
+  const json = (v: string[] | null) => (v ? JSON.stringify(v) : null);
+  const seconds = (d: Date | null) =>
+    d ? Math.floor(d.getTime() / 1000) : null;
+  const rows = await db.all<{ status: MergeResolution['status'] }>(sql`
+    INSERT INTO merge_resolutions (id, pull_request_id, base_sha, head_sha, status, model,
+      conflicted_paths, touched_extra_paths, explanation, error_message, result_sha,
+      transcript_r2_key, duration_ms, created_by_id, created_at, decided_at)
+    SELECT ${row.id}, ${row.pullRequestId}, ${row.baseSha}, ${row.headSha}, ${status},
+      ${row.model}, ${json(row.conflictedPaths)}, ${json(row.touchedExtraPaths)},
+      ${row.explanation}, ${row.errorMessage}, ${row.resultSha}, ${row.transcriptR2Key},
+      ${row.durationMs}, ${row.createdById}, ${seconds(row.createdAt)}, ${seconds(row.decidedAt)}
+    WHERE NOT EXISTS (
+      SELECT 1 FROM merge_resolutions
+      WHERE pull_request_id = ${row.pullRequestId} AND base_sha = ${row.baseSha}
+        AND head_sha = ${row.headSha}
+        ${
+          opts.onlyActive
+            ? sql`AND status IN ('queued', 'running')`
+            : sql`AND NOT (status = 'failed' AND COALESCE(error_message, '') = ${SUPERSEDED})`
+        }
+    )
+    RETURNING status`);
+  return rows[0]?.status ?? null;
+}
 
 async function activeCount(db: DrizzleDB, repositoryId: string) {
   const row = await db
@@ -167,13 +264,38 @@ async function launch(env: CloudflareBindings, db: DrizzleDB, id: string) {
   }
 }
 
+/**
+ * Cancels a PR's queued or running attempts for commits other than its branches' tips right now,
+ * then fills the freed slots from the queue. Run whenever a PR's branches may have moved, whether
+ * or not a new attempt follows. The tips are resolved here, not trusted from the caller: when
+ * `seen` (what the caller resolved earlier) is already behind them, it does nothing and returns
+ * `stale`, so a slow caller can't cancel the attempt for the newest commits.
+ */
+export async function cancelStale(
+  env: CloudflareBindings,
+  db: DrizzleDB,
+  git: GitService,
+  pr: Pick<PullRequest, 'id' | 'repositoryId' | 'baseRef' | 'headRef'>,
+  seen: { base: string; head: string }
+): Promise<{ stale: boolean; cancelled: number }> {
+  // Straight from the remote: a request's GitService caches the refs it saw when it began.
+  const { refs } = await git.client.listRefs();
+  const tip = (name: string) =>
+    refs.get(`refs/heads/${name}`) ?? refs.get(name) ?? null;
+  if (tip(pr.baseRef) !== seen.base || tip(pr.headRef) !== seen.head)
+    return { stale: true, cancelled: 0 };
+  const cancelled = await supersede(env, db, pr.id, seen);
+  if (cancelled) await startNext(env, db, pr.repositoryId);
+  return { stale: false, cancelled };
+}
+
 /** Terminates attempts for a PR's older commits and marks them superseded. */
 async function supersede(
   env: CloudflareBindings,
   db: DrizzleDB,
   pullRequestId: string,
   current: { base: string; head: string }
-) {
+): Promise<number> {
   const open = await db
     .select({
       id: mergeResolutions.id,
@@ -189,14 +311,17 @@ async function supersede(
       )
     )
     .all();
+  let cancelled = 0;
   for (const r of open) {
     if (r.baseSha === current.base && r.headSha === current.head) continue;
     if (r.status === 'running')
       await env.MERGE_RESOLUTION.get(r.id)
         .then((instance) => instance.terminate())
         .catch(() => {}); // already finished, or never started
-    await fail(db, r.id, 'Superseded by newer commits.', ['queued', 'running']);
+    await fail(db, r.id, SUPERSEDED, ['queued', 'running']);
+    cancelled++;
   }
+  return cancelled;
 }
 
 /** Starts the oldest queued attempts into free slots, skipping any whose commits moved. */
@@ -237,21 +362,32 @@ export async function startNext(
       base !== next.row.baseSha ||
       head !== next.row.headSha
     ) {
-      await fail(db, next.row.id, 'Superseded by newer commits.', ['queued']);
+      await fail(db, next.row.id, SUPERSEDED, ['queued']);
       continue;
     }
-    // Claim it; a concurrent worker may have claimed it first.
+    // Claim it if a slot is still free; a concurrent worker may have claimed it, or the slot.
     const claimed = await db
       .update(mergeResolutions)
       .set({ status: 'running' })
       .where(
         and(
           eq(mergeResolutions.id, next.row.id),
-          eq(mergeResolutions.status, 'queued')
+          eq(mergeResolutions.status, 'queued'),
+          sql`${runningIn(repositoryId)} < ${MAX_CONCURRENT_PER_REPO}`
         )
       )
       .returning({ id: mergeResolutions.id });
     if (claimed.length) await launch(env, db, next.row.id);
+    else if (
+      (
+        await db
+          .select({ status: mergeResolutions.status })
+          .from(mergeResolutions)
+          .where(eq(mergeResolutions.id, next.row.id))
+          .get()
+      )?.status === 'queued'
+    )
+      return; // the slots filled up meanwhile
   }
 }
 
@@ -342,7 +478,18 @@ export async function carryForward(
     [{ ref: resolutionRef(row.id), old: ZERO_SHA, new: commit.sha }],
     [...merged.objects, commit]
   );
-  await db.insert(mergeResolutions).values(row);
+  // A racing trigger carried it forward first: theirs stands, and our ref goes.
+  if (!(await insertOnce(db, row, pr.repositoryId, { onlyActive: false }))) {
+    await git.client
+      .push(
+        [{ ref: resolutionRef(row.id), old: commit.sha, new: ZERO_SHA }],
+        []
+      )
+      .catch((e) =>
+        console.error('[merge] could not delete resolution ref', row.id, e)
+      );
+    return null;
+  }
   return row;
 }
 
@@ -368,6 +515,8 @@ export interface StepRunner {
     config: WorkflowStepConfig,
     fn: () => Promise<T>
   ): Promise<T>;
+  /** A durable sleep (milliseconds). */
+  sleep(name: string, duration: number): Promise<void>;
 }
 
 export interface ResolutionDeps {
@@ -441,6 +590,13 @@ export async function executeResolution(deps: ResolutionDeps, id: string) {
     const { row, pr, repo, author } = job;
     step = pingingSteps(env, step, pr.repositoryId, { approvals: true });
     const labels = { a: pr.baseRef, o: 'base', b: pr.headRef };
+    const current = (when: string) =>
+      step.do(`current:${when}`, () =>
+        outcome(() => ensureCurrent(env, db, row, repo as Repository))
+      );
+
+    const fresh = await current('before-resolve');
+    if (fresh.error !== undefined) throw new ResolutionError(fresh.error);
 
     const prepared = await step.do('prepare', ONCE, () =>
       outcome(() =>
@@ -491,6 +647,9 @@ export async function executeResolution(deps: ResolutionDeps, id: string) {
         return rest;
       }
     );
+
+    const still = await current('before-commit');
+    if (still.error !== undefined) throw new ResolutionError(still.error);
 
     const committed = await step.do('commit', ONCE, () =>
       outcome(async () => {
@@ -576,6 +735,39 @@ export async function executeResolution(deps: ResolutionDeps, id: string) {
       await startNext(env, db, job!.pr.repositoryId);
       return true;
     });
+}
+
+/**
+ * Throws when the attempt no longer applies: its PR closed, its branches moved on, or it was
+ * cancelled meanwhile. The model is never asked about commits nobody will merge.
+ */
+async function ensureCurrent(
+  env: CloudflareBindings,
+  db: DrizzleDB,
+  row: MergeResolution,
+  repo: Repository
+): Promise<true> {
+  const now = await db
+    .select({ status: mergeResolutions.status })
+    .from(mergeResolutions)
+    .where(eq(mergeResolutions.id, row.id))
+    .get();
+  if (now?.status !== 'running') throw new ResolutionError(SUPERSEDED);
+  const pr = await db
+    .select()
+    .from(pullRequests)
+    .where(eq(pullRequests.id, row.pullRequestId))
+    .get();
+  // Superseded, not failed: reopening the PR may try these commits again.
+  if (pr?.state !== 'open') throw new ResolutionError(SUPERSEDED);
+  const git = gitFor(env, repo);
+  const [base, head] = await Promise.all([
+    git.resolve(pr.baseRef),
+    git.resolve(pr.headRef),
+  ]);
+  if (base !== row.baseSha || head !== row.headSha)
+    throw new ResolutionError(SUPERSEDED);
+  return true;
 }
 
 /** Rebuilds the conflicted files and describes what each side was trying to do. */

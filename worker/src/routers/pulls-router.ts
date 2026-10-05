@@ -10,10 +10,12 @@ import {
 } from '../db/app.schema';
 import type { GitService } from '../git/service';
 import {
+  cancelStale,
   latestResolution,
   resolutionConfigured,
   startResolution,
 } from '../merge/resolution';
+import { generatedConflicts } from '../merge/generated';
 import { loadRepo, type RepoEnv } from '../lib/repos';
 import { usersById, type PublicUser } from '../lib/users';
 import {
@@ -611,15 +613,27 @@ pullsRouter.openapi(getPullRoute, async (c) => {
         resolution.baseSha === shas.base &&
         resolution.headSha === shas.head;
       mergeable = !plan.upToDate && (conflicts.length === 0 || resolvedByAi);
+      // Text conflicts outside generated files (those are regenerated, not merged by the model).
       conflictsResolvable =
         !plan.upToDate &&
         plan.conflicts.length > 0 &&
-        plan.conflictFiles.length === plan.conflicts.length;
-      // Backstop for missed triggers: unresolved text conflicts get a resolution attempt.
+        plan.conflictFiles.length === plan.conflicts.length &&
+        !(await generatedConflicts(git, shas.base, plan.conflicts)).length;
+      // Backstop for missed triggers: unresolved text conflicts get a resolution attempt, and an
+      // attempt for commits the branches moved past is cancelled.
       if (conflictsResolvable && !resolvedByAi)
         c.executionCtx.waitUntil(
           ensureResolution(c.env, db, git, pr, shas).catch((e) =>
             console.error('[merge] auto-resolve failed', e)
+          )
+        );
+      else if (
+        (resolution?.status === 'running' || resolution?.status === 'queued') &&
+        (resolution.baseSha !== shas.base || resolution.headSha !== shas.head)
+      )
+        c.executionCtx.waitUntil(
+          cancelStale(c.env, db, git, pr, shas).catch((e) =>
+            console.error('[merge] cancel stale failed', e)
           )
         );
     }

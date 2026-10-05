@@ -120,6 +120,8 @@ async function pullWith(
 const step = {
   do: async (_name: string, a: unknown, b?: unknown) =>
     ((b ?? a) as () => Promise<unknown>)(),
+  // Durable sleeps (the conflict resolver's settle delay) pass instantly.
+  sleep: async () => {},
 } as unknown as StepRunner;
 
 type Calls = {

@@ -44,6 +44,8 @@ const MAIN = {
 const step = {
   do: async (_name: string, a: unknown, b?: unknown) =>
     ((b ?? a) as () => Promise<unknown>)(),
+  // Durable sleeps (the conflict sweep's settle delay) pass instantly.
+  sleep: async () => {},
 } as unknown as StepRunner;
 
 const reviewModels: ReviewModels = {
