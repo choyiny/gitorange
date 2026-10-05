@@ -576,35 +576,49 @@ export class GitService {
     );
   }
 
-  /** First commit on an empty repo ("Add a README file"). */
+  /** First commit on an empty repo ("Add a README file", a new agent). Paths may contain directories. */
   async initialCommit(
     branch: string,
-    files: Record<string, string>,
+    files: Record<string, string | Uint8Array>,
     author: Signature,
     message: string
   ) {
-    const blobs = await Promise.all(
-      Object.values(files).map((c) => makeBlob(c))
-    );
-    const tree = await makeTree(
-      Object.keys(files).map((name, i) => ({
-        name,
-        mode: '100644',
-        hash: blobs[i].sha,
-      }))
-    );
-    const commit = await makeCommit({
-      tree: tree.sha,
-      parents: [],
-      author,
-      message,
-    });
+    const objects: GitObject[] = [];
+    const tree = await writeTree(files, objects);
+    const commit = await makeCommit({ tree, parents: [], author, message });
     await this.client.push(
       [{ ref: `refs/heads/${branch}`, old: ZERO_SHA, new: commit.sha }],
-      [...blobs, tree, commit]
+      [...objects, commit]
     );
     return commit.sha;
   }
+}
+
+/** Builds the tree for `files` (paths may contain directories), collecting every new object in `out`. */
+async function writeTree(
+  files: Record<string, string | Uint8Array>,
+  out: GitObject[]
+): Promise<string> {
+  const entries: TreeEntry[] = [];
+  const dirs = new Map<string, Record<string, string | Uint8Array>>();
+  for (const [path, content] of Object.entries(files)) {
+    const slash = path.indexOf('/');
+    if (slash < 0) {
+      const blob = await makeBlob(content);
+      out.push(blob);
+      entries.push({ name: path, mode: '100644', hash: blob.sha });
+      continue;
+    }
+    const dir = path.slice(0, slash);
+    const sub = dirs.get(dir) ?? {};
+    sub[path.slice(slash + 1)] = content;
+    dirs.set(dir, sub);
+  }
+  for (const [name, sub] of dirs)
+    entries.push({ name, mode: '40000', hash: await writeTree(sub, out) });
+  const tree = await makeTree(entries);
+  out.push(tree);
+  return tree.sha;
 }
 
 function isBinary(bytes: Uint8Array | null): boolean {

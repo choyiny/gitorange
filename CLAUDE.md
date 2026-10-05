@@ -23,6 +23,11 @@ and better-auth. Git storage is **Cloudflare Artifacts**: one Artifacts repo per
 - Commit attribution (`worker/src/lib/commit-authors.ts`): every API commit's author/committer carries `user` — the member
   whose account email or _verified_ alternate (`user_emails`, Settings → Emails, verified by an emailed link) it is.
   Lookups are batched per response (`attributeCommits`), never per commit.
+- Reviewer agents (`worker/src/agents/`): an agent is a `users` row (email `<id>@agents.invalid`, no credential)
+  plus an `agents` row; refused at `session.create.before`, the PAT lookup in `git-http.ts`, and `getMcpSession`.
+  Its repository `<handle>/<handle>` holds `AGENT.md` (`config.ts`), `avatar.png`, `knowledge/`; `refreshAgentConfig`
+  re-caches `AGENT.md` after pushes/merges to its default branch (one indexed lookup for other repositories).
+  Invitations: `repository_agents`. Reviews come in milestone 2.
 - Git LFS (`worker/src/lfs-http.ts`, `worker/src/lib/lfs.ts`): Batch API at `/<owner>/<repo>.git/info/lfs/...`,
   sharing the git endpoint's auth. Bytes go client ↔ R2 directly via pre-signed URLs (needs the
   `R2_ACCESS_KEY_ID`/`R2_SECRET_ACCESS_KEY` secrets); D1 `lfs_objects` holds bare R2 keys, never URLs. One copy

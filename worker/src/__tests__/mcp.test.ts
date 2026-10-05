@@ -462,6 +462,19 @@ describe('MCP server', () => {
     expect((await rpc(t, access_token, 'ping')).status).toBe(401);
   });
 
+  it('refuses tokens whose user is an agent', async () => {
+    const t = makeEnv();
+    const admin = await bootstrapAdmin(t);
+    const bob = await addMember(t, admin, 'bob');
+    const { access_token } = await connect(t, bob);
+    expect((await rpc(t, access_token, 'ping')).status).toBe(200);
+    // An agent can't get here (no sessions, so no consent); mark bob as one to pin the check itself.
+    await t.env.DB.prepare(
+      "INSERT INTO agents (user_id, name, bio, trigger_ask, trigger_above, engine, created_at) SELECT id, 'Bob', '', 'Q?', 0.5, 'pass', 0 FROM users WHERE username = 'bob'"
+    ).run();
+    expect((await rpc(t, access_token, 'ping')).status).toBe(401);
+  });
+
   it('describes the server and its tools to signed-in members', async () => {
     const t = makeEnv();
     const admin = await bootstrapAdmin(t);

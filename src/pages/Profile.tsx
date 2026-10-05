@@ -1,7 +1,12 @@
 import { Link, useParams } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
-import { MailIcon, OrganizationIcon, RepoIcon } from '@primer/octicons-react';
-import { api, qk } from '@/lib/uiApi';
+import {
+  DependabotIcon,
+  MailIcon,
+  OrganizationIcon,
+  RepoIcon,
+} from '@primer/octicons-react';
+import { api, qk, type Namespace } from '@/lib/uiApi';
 import { ApiError } from '@/lib/api';
 import { useCurrentUser } from '@/lib/auth';
 import { timeAgo } from '@/lib/format';
@@ -59,7 +64,9 @@ export default function Profile() {
                 {data.owner.username}
               </span>
             </h1>
-            {isTeam ? (
+            {data.agent ? (
+              <AgentAbout agent={data.agent} />
+            ) : isTeam ? (
               <p
                 className="f6 color-fg-muted mt-2 d-flex flex-items-center"
                 style={{ gap: 4 }}
@@ -137,5 +144,52 @@ export default function Profile() {
         </div>
       )}
     </>
+  );
+}
+
+/** The left column of an agent's profile: what it is, what it reviews, where. */
+function AgentAbout({ agent }: { agent: NonNullable<Namespace['agent']> }) {
+  return (
+    <div className="mt-2">
+      <span
+        className={`Label ${agent.deletedAt ? 'Label--secondary' : 'Label--accent'} d-inline-flex flex-items-center`}
+        style={{ gap: 4 }}
+      >
+        <DependabotIcon size={12} />
+        {agent.deletedAt ? 'Deleted agent' : 'Agent'}
+      </span>
+      {agent.bio && <p className="f5 mt-2 mb-0">{agent.bio}</p>}
+      <div className="f6 text-bold mt-3">Reviews when</div>
+      <p className="f6 mt-1 mb-0">
+        {agent.trigger.ask}{' '}
+        <span className="color-fg-muted">
+          (Clef: yes with probability ≥ {agent.trigger.above})
+        </span>
+      </p>
+      {agent.configError && (
+        <div className="flash flash-warn f6 mt-2">
+          AGENT.md has an error, so this shows its last valid version:{' '}
+          {agent.configError}
+        </div>
+      )}
+      {agent.repository && (
+        <p className="f6 mt-3 mb-0 d-flex flex-items-center" style={{ gap: 4 }}>
+          <RepoIcon className="color-fg-muted" /> Defined in{' '}
+          <Link to={`/${agent.repository}`}>{agent.repository}</Link>
+        </p>
+      )}
+      {agent.invitedTo.length > 0 && (
+        <>
+          <div className="f6 text-bold mt-3">Invited to</div>
+          <ul className="list-style-none f6 mt-1">
+            {agent.invitedTo.map((r) => (
+              <li key={r.id}>
+                <Link to={`/${r.fullName}`}>{r.fullName}</Link>
+              </li>
+            ))}
+          </ul>
+        </>
+      )}
+    </div>
   );
 }

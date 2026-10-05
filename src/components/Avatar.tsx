@@ -1,4 +1,4 @@
-import { useMemo } from 'react';
+import { useMemo, useState } from 'react';
 
 function hash(s: string) {
   let h = 2166136261;
@@ -51,6 +51,8 @@ export function Avatar({
   /** Teams get GitHub's rounded-square organization avatar; people get a circle. */
   square?: boolean;
 }) {
+  // The URL that failed to load; a later, different URL (a new ?v=<sha>) shows again.
+  const [failedSrc, setFailedSrc] = useState<string | null>(null);
   return (
     <span
       className={`avatar ${square ? '' : 'avatar-user'} ${className}`}
@@ -64,12 +66,13 @@ export function Avatar({
       }}
       title={user.username}
     >
-      {user.image ? (
+      {user.image && user.image !== failedSrc ? (
         <img
           src={user.image}
           width={size}
           height={size}
           alt={`@${user.username}`}
+          onError={() => setFailedSrc(user.image ?? null)}
         />
       ) : (
         <Identicon seed={user.username} size={size} />

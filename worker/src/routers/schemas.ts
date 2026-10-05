@@ -10,6 +10,23 @@ export const publicUserSchema = z
   })
   .openapi('User');
 
+/** A reviewer agent: its account plus the fields cached from its AGENT.md. */
+export const agentSchema = publicUserSchema
+  .extend({
+    bio: z.string(),
+    trigger: z.object({ ask: z.string(), above: z.number() }),
+    engine: z.enum(['pass', 'pi']),
+    /** `<handle>/<handle>`; null once its repository was deleted, or when the viewer can't read it. */
+    repository: z.string().nullable(),
+    /** The commit of the AGENT.md these fields came from; null when `repository` is. */
+    configSha: z.string().nullable(),
+    /** Why the default branch's AGENT.md is invalid, if it is; null when `repository` is. */
+    configError: z.string().nullable(),
+    createdAt: z.string(),
+    deletedAt: z.string().nullable(),
+  })
+  .openapi('Agent');
+
 export const permsSchema = z.object({
   read: z.boolean(),
   write: z.boolean(),

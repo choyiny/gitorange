@@ -40,6 +40,7 @@ import SettingsTokens from './pages/SettingsTokens';
 import SettingsEmails, { VerifyEmail } from './pages/SettingsEmails';
 import Admin from './pages/Admin';
 import AdminUsage from './pages/AdminUsage';
+import AdminAgents from './pages/AdminAgents';
 import { NotFound } from './pages/NotFound';
 
 const queryClient = new QueryClient({
@@ -118,6 +119,14 @@ const App = () => (
                   element={
                     <AdminOnly>
                       <AdminUsage />
+                    </AdminOnly>
+                  }
+                />
+                <Route
+                  path="/admin/agents"
+                  element={
+                    <AdminOnly>
+                      <AdminAgents />
                     </AdminOnly>
                   }
                 />

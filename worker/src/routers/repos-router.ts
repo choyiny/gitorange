@@ -9,6 +9,7 @@ import {
   type Repository,
 } from '../db/app.schema';
 import { users } from '../db/auth.schema';
+import { isAgentUser } from '../agents/identity';
 import { decoder } from '../git/bytes';
 import type { GitService } from '../git/service';
 import {
@@ -331,6 +332,7 @@ const addCollabRoute = createRoute({
   request: { params: collabParams },
   responses: {
     ...json200Response(okSchema, 'Added'),
+    ...json400Response,
     ...json403Response,
     ...json404Response,
   },
@@ -340,6 +342,14 @@ reposRouter.openapi(addCollabRoute, async (c) => {
     return c.json({ error: 'You must be an admin of this repository' }, 403);
   const user = await userByUsername(c.get('db'), c.req.valid('param').username);
   if (!user) return c.json({ error: 'User not found' }, 404);
+  if (await isAgentUser(c.get('db'), user.id))
+    return c.json(
+      {
+        error:
+          'Agents can’t be collaborators. Invite it under Settings → Agents.',
+      },
+      400
+    );
   await c
     .get('db')
     .insert(repositoryCollaborators)

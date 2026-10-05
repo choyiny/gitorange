@@ -120,6 +120,13 @@
       "when": 1791171487636,
       "tag": "0016_previous_veda",
       "breakpoints": true
+    },
+    {
+      "idx": 17,
+      "version": "6",
+      "when": 1791218730750,
+      "tag": "0017_green_junta",
+      "breakpoints": true
     }
   ]
 }

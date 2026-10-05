@@ -97,6 +97,10 @@ export class FakeRepo {
       },
       readFile: async ({ ref, path }: { ref: string; path: string }) => {
         const commit = repo.resolve(ref);
+        // Like Artifacts: an object ID that names a tree or blob is an error, not a missing file.
+        const named = commit ? repo.objects.get(commit) : undefined;
+        if (named && named.type !== 'commit')
+          throw new Error(`INTERNAL_ERROR: ${commit} is not a commit`);
         let sha = commit ? (repo.parseCommit(commit)?.treeHash ?? null) : null;
         for (const name of path.split('/').filter(Boolean)) {
           sha = sha

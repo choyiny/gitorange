@@ -1,5 +1,6 @@
 import { OpenAPIHono, createRoute, z } from '@hono/zod-openapi';
-import { asc } from 'drizzle-orm';
+import { asc, notInArray } from 'drizzle-orm';
+import { agents } from '../db/app.schema';
 import { users } from '../db/auth.schema';
 import { toPublicUser } from '../lib/users';
 import type { AppEnv } from '../variables';
@@ -29,10 +30,17 @@ const listRoute = createRoute({
 });
 usersRouter.openapi(listRoute, async (c) => {
   const viewer = c.get('user')!;
+  // Agents aren't members: they have their own list (Site admin → Agents) and can't be collaborators.
   const rows = await c
     .get('db')
     .select()
     .from(users)
+    .where(
+      notInArray(
+        users.id,
+        c.get('db').select({ id: agents.userId }).from(agents)
+      )
+    )
     .orderBy(asc(users.username))
     .all();
   return c.json(

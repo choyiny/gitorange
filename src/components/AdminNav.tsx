@@ -10,6 +10,9 @@ export function AdminNav() {
         <NavLink end to="/admin" className={cls}>
           People &amp; team
         </NavLink>
+        <NavLink to="/admin/agents" className={cls}>
+          Agents
+        </NavLink>
         <NavLink to="/admin/usage" className={cls}>
           Usage &amp; cost
         </NavLink>

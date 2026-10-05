@@ -2,6 +2,7 @@ import { and, eq, inArray, isNotNull, sql } from 'drizzle-orm';
 import type { DrizzleDB } from '../db/middleware';
 import { users } from '../db/auth.schema';
 import { userEmails } from '../db/app.schema';
+import { AGENT_EMAIL_DOMAIN } from '../agents/identity';
 import type { Commit } from '../git/service';
 import { toPublicUser, type PublicUser } from './users';
 
@@ -16,14 +17,19 @@ export type AttributedCommit<C extends Commit = Commit> = Omit<
 
 /**
  * Members by commit email: their account (primary) email or a *verified* alternate. Two queries
- * for any number of emails, so a page of commits never costs a lookup per commit.
+ * for any number of emails, so a page of commits never costs a lookup per commit. An agent's
+ * `@agents.invalid` address never matches: anyone who can push could write it into a commit.
  */
 export async function usersByCommitEmail(
   db: DrizzleDB,
   emails: string[]
 ): Promise<Map<string, PublicUser>> {
   const wanted = [
-    ...new Set(emails.map((e) => e.trim().toLowerCase()).filter(Boolean)),
+    ...new Set(
+      emails
+        .map((e) => e.trim().toLowerCase())
+        .filter((e) => e && !e.endsWith(`@${AGENT_EMAIL_DOMAIN}`))
+    ),
   ];
   if (!wanted.length) return new Map();
   const [primary, alternates] = await Promise.all([

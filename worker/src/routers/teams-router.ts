@@ -7,7 +7,12 @@ import { isValidSlug, namespaceTaken } from '../lib/namespaces';
 import { getTeam, teamNamespace, userNamespace, visibleTo } from '../lib/repos';
 import type { AppEnv } from '../variables';
 import { serializeRepo } from './repos-router';
-import { publicUserSchema, repoSchema } from './schemas';
+import { agentSchema, publicUserSchema, repoSchema } from './schemas';
+import {
+  agentByUserId,
+  invitedRepositories,
+  serializeAgent,
+} from '../agents/accounts';
 import {
   json200Response,
   json400Response,
@@ -126,6 +131,13 @@ const namespaceRoute = createRoute({
           email: z.string().nullable(),
         }),
         repositories: z.array(repoSchema),
+        // A reviewer agent's own fields; null for people and the team.
+        agent: agentSchema
+          .extend({
+            /** Repositories it is invited to that the viewer can see. */
+            invitedTo: z.array(repoSchema),
+          })
+          .nullable(),
       }),
       'A user or the team, with the repositories the viewer can see'
     ),
@@ -157,6 +169,7 @@ namespacesRouter.openapi(namespaceRoute, async (c) => {
           email: null,
         },
         repositories: repos.map((r) => serializeRepo(r, ns)),
+        agent: null,
       },
       200
     );
@@ -181,6 +194,19 @@ namespacesRouter.openapi(namespaceRoute, async (c) => {
     .orderBy(desc(repositories.updatedAt))
     .all();
   const ns = userNamespace(user);
+  const agentRow = await agentByUserId(db, user.id);
+  const agent = agentRow
+    ? {
+        ...serializeAgent({
+          user,
+          agent: agentRow,
+          repo: repos.find((r) => r.id === agentRow.repositoryId) ?? null,
+        }),
+        invitedTo: (await invitedRepositories(db, agentRow.userId, viewer)).map(
+          (r) => serializeRepo(r.repo, r.namespace)
+        ),
+      }
+    : null;
   return c.json(
     {
       kind: 'user' as const,
@@ -190,9 +216,10 @@ namespacesRouter.openapi(namespaceRoute, async (c) => {
         name: ns.name,
         image: ns.image,
         createdAt: user.createdAt.toISOString(),
-        email: user.email,
+        email: agent ? null : user.email,
       },
       repositories: repos.map((r) => serializeRepo(r, ns)),
+      agent,
     },
     200
   );

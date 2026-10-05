@@ -243,4 +243,11 @@ jobs:
           worker/src/__tests__/insights.test.ts
           worker/src/__tests__/ai-gateway.test.ts
           worker/src/__tests__/mcp.test.ts
+          worker/src/__tests__/agents-config.test.ts
+          worker/src/__tests__/agents-template.test.ts
+          worker/src/__tests__/agents-admin.test.ts
+          worker/src/__tests__/agents-repos.test.ts
+          worker/src/__tests__/agents-auth.test.ts
+          worker/src/__tests__/agents-refresh.test.ts
+          worker/src/__tests__/agents-profile.test.ts
           src/lib/

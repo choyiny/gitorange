@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { Link, useNavigate, useOutletContext } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { GearIcon, PeopleIcon } from '@primer/octicons-react';
+import { DependabotIcon, GearIcon, PeopleIcon } from '@primer/octicons-react';
 import { api, qk, type RepoDetail } from '@/lib/uiApi';
 import { errorMessage } from '@/lib/api';
 import { Avatar } from '@/components/Avatar';
@@ -26,6 +26,12 @@ export default function RepoSettings() {
     queryFn: () => api.collaborators(o, repo.name),
   });
   const members = useQuery({ queryKey: qk.members, queryFn: api.members });
+  const agents = useQuery({ queryKey: qk.agents, queryFn: api.agents });
+  const repoAgents = useQuery({
+    queryKey: qk.repoAgents(o, repo.name),
+    queryFn: () => api.repoAgents(o, repo.name),
+  });
+  const [agentName, setAgentName] = useState('');
 
   const save = useMutation({
     mutationFn: () =>
@@ -64,6 +70,29 @@ export default function RepoSettings() {
     onSuccess: () =>
       qc.invalidateQueries({ queryKey: qk.collaborators(o, repo.name) }),
   });
+  const inviteAgent = useMutation({
+    mutationFn: (handle: string) => {
+      setFlash(null);
+      return api.inviteAgent(o, repo.name, handle);
+    },
+    onSuccess: (_r, handle) => {
+      qc.invalidateQueries({ queryKey: qk.namespace(handle) });
+      setAgentName('');
+      qc.invalidateQueries({ queryKey: qk.repoAgents(o, repo.name) });
+    },
+    onError: (e) => setFlash({ kind: 'error', text: errorMessage(e) }),
+  });
+  const removeAgent = useMutation({
+    mutationFn: (handle: string) => {
+      setFlash(null);
+      return api.removeAgent(o, repo.name, handle);
+    },
+    onSuccess: (_r, handle) => {
+      qc.invalidateQueries({ queryKey: qk.repoAgents(o, repo.name) });
+      qc.invalidateQueries({ queryKey: qk.namespace(handle) });
+    },
+    onError: (e) => setFlash({ kind: 'error', text: errorMessage(e) }),
+  });
   const del = useMutation({
     mutationFn: () => api.deleteRepo(o, repo.name),
     onSuccess: async () => {
@@ -79,6 +108,8 @@ export default function RepoSettings() {
     ...(collabs.data ?? []).map((c) => c.id),
   ]);
   const candidates = (members.data ?? []).filter((m) => !existing.has(m.id));
+  const invited = new Set((repoAgents.data ?? []).map((a) => a.id));
+  const agentCandidates = (agents.data ?? []).filter((a) => !invited.has(a.id));
 
   return (
     <div
@@ -99,6 +130,13 @@ export default function RepoSettings() {
           style={{ gap: 8 }}
         >
           <PeopleIcon /> Collaborators
+        </a>
+        <a
+          href="#agents"
+          className="menu-item d-flex flex-items-center"
+          style={{ gap: 8 }}
+        >
+          <DependabotIcon /> Agents
         </a>
       </nav>
       <div className="flex-1">
@@ -208,6 +246,67 @@ export default function RepoSettings() {
           </select>
           <button className="btn" disabled={!collabName}>
             Add collaborator
+          </button>
+        </form>
+
+        <div className="Subhead mt-6" id="agents">
+          <h2 className="Subhead-heading">Agents</h2>
+          <div className="Subhead-description">
+            Reviewer agents invited to this repository. Each agent's AGENT.md
+            says what it reviews.
+          </div>
+        </div>
+        <div className="Box mb-3">
+          {(repoAgents.data ?? []).length === 0 && (
+            <div className="Box-row color-fg-muted">No agents invited.</div>
+          )}
+          {(repoAgents.data ?? []).map((a) => (
+            <div
+              key={a.id}
+              className="Box-row d-flex flex-items-center"
+              style={{ gap: 12 }}
+            >
+              <Avatar user={a} size={32} />
+              <div className="flex-1" style={{ minWidth: 0 }}>
+                <Link to={`/${a.username}`} className="text-bold">
+                  {a.username}
+                </Link>
+                <span className="color-fg-muted ml-2">{a.name}</span>
+                {a.bio && <div className="f6 color-fg-muted">{a.bio}</div>}
+              </div>
+              <button
+                className="btn btn-sm btn-danger"
+                disabled={removeAgent.isPending}
+                onClick={() => removeAgent.mutate(a.username)}
+              >
+                Remove
+              </button>
+            </div>
+          ))}
+        </div>
+        <form
+          className="d-flex mb-6"
+          style={{ gap: 8 }}
+          onSubmit={(e) => {
+            e.preventDefault();
+            if (agentName) inviteAgent.mutate(agentName);
+          }}
+        >
+          <select
+            className="form-select flex-1"
+            aria-label="Agent to invite"
+            value={agentName}
+            onChange={(e) => setAgentName(e.target.value)}
+          >
+            <option value="">Select an agent…</option>
+            {agentCandidates.map((a) => (
+              <option key={a.id} value={a.username}>
+                {a.username} — {a.name}
+              </option>
+            ))}
+          </select>
+          <button className="btn" disabled={!agentName}>
+            Invite agent
           </button>
         </form>
 

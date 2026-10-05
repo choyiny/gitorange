@@ -28,6 +28,11 @@ import { approvalsRouter } from './routers/approvals-router';
 import { insightsRouter } from './routers/insights-router';
 import { adminSetupRouter } from './routers/admin-setup-router';
 import { adminRouter } from './routers/admin-router';
+import {
+  adminAgentsRouter,
+  agentsRouter,
+  repoAgentsRouter,
+} from './routers/agents-router';
 import { usageRouter } from './routers/usage-router';
 import { runScheduled } from './cron';
 
@@ -79,6 +84,10 @@ app.use('/api/repos/:owner/:repo', pingAfterChange);
 app.use('/api/repos/:owner/:repo/*', pingAfterChange);
 app.use('/api/admin/*', requireAuth);
 app.route('/api/admin', adminRouter);
+app.route('/api/admin/agents', adminAgentsRouter);
+app.use('/api/agents', requireAuth);
+app.use('/api/agents/*', requireAuth);
+app.route('/api/agents', agentsRouter);
 app.use('/api/approvals', requireAuth);
 app.route('/api/approvals', approvalsRouter);
 app.use('/api/live', requireAuth);
@@ -88,6 +97,7 @@ app.route('/api/repos', pullsRouter);
 app.route('/api/repos', actionsRouter);
 app.route('/api/repos', agentRunsRouter);
 app.route('/api/repos', insightsRouter);
+app.route('/api/repos', repoAgentsRouter);
 app.use('/api/users/*', requireAuth);
 app.use('/api/users', requireAuth);
 app.route('/api/users', usersRouter);

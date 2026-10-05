@@ -19,6 +19,7 @@ The diagram's source is [`diagrams/architecture.html`](diagrams/architecture.htm
 | OAuth clients, consents, tokens, and signing keys for the MCP server                      | **D1**, in better-auth's generated tables (`oauth_*`, `jwkss`)                                                                                                                                                    |
 | Auto-merge reviews                                                                        | **D1** (`pr_classifications`, `pr_review_flags`); runs on **Workflows** and **Workers AI** (GLM-5.3-flash, Clef, GLM-5.3)                                                                                         |
 | AI merge resolutions                                                                      | **D1** (`merge_resolutions`); resolved commits on `refs/resolutions/*` in **Artifacts**; transcripts in **R2**; runs on **Workflows**, **Durable Objects** (Cloudflare Computer + Pi Durable), and **Workers AI** |
+| Reviewer agents                                                                           | **D1** (`agents`, `repository_agents`); each agent's `AGENT.md`, `avatar.png` and `knowledge/` in its own **Artifacts** repository                                                                                |
 | Live updates                                                                              | One **Durable Object** (`LiveHub`, hibernating WebSockets); stores nothing                                                                                                                                        |
 | Web interface                                                                             | React SPA in `src/`, served from the same Worker via the `ASSETS` binding                                                                                                                                         |
 
@@ -160,6 +161,28 @@ The `/mcp` resource row is inserted on demand by an auth hook rather than throug
 URLs are minted per request after the permission check and never stored; D1 keeps only the bare R2 key. Objects are stored once per repository (`lfs/<repository id>/<oid>`), so deleting a repository deletes its prefix. Locking isn't implemented: listing and verifying locks return empty, and creating one returns 501.
 
 In the web UI, a file whose blob is an LFS pointer shows the real size, an image preview, and a download link that redirects to a pre-signed URL.
+
+## Reviewer agents
+
+A reviewer agent is an account like a person's — a better-auth user with a profile at `/<handle>` — plus an
+`agents` row that marks it. It has no password, sessions, personal access tokens or OAuth consents: its email is
+`<user id>@agents.invalid`, better-auth's `session.create.before` hook refuses any session for it (sign-in and
+impersonation alike), and the git endpoint and `/mcp` refuse its tokens. Agents don't appear in the member list
+and can't be collaborators.
+
+Site admin → Agents creates one: the user, the `agents` row, and an internal repository `<handle>/<handle>`
+owned by the agent, seeded with a starter `AGENT.md`, a generated `avatar.png` and `knowledge/README.md`, with
+the creating admin as a collaborator. `AGENT.md` is YAML frontmatter (`name`, `bio`, `trigger.ask`,
+`trigger.above`, `engine`) plus Markdown instructions. On every push or merge to that repository's default
+branch, GitOrange re-reads it: a valid file replaces the cached fields on the `agents` row (and the account's
+display name and avatar); an invalid one is recorded as `config_error` and the last valid fields stay. An
+`avatar.png` that won't render as an image (an LFS pointer, a file too large to serve) falls back to the
+generated identicon in the browser. Repository
+admins invite agents in Settings → Agents (`repository_agents`). Deleting an agent uninvites it everywhere and
+keeps its user row, so past activity stays attributed; its repository stays until an admin deletes it.
+
+Agents don't review anything yet: the trigger and engine fields are stored but nothing reads them, and
+`.gitorange/review.yml` is unchanged. Reviews arrive in a later milestone.
 
 ## Access model
 

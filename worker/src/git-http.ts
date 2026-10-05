@@ -1,10 +1,12 @@
 import { drizzle } from 'drizzle-orm/d1';
+import { refreshAgentConfig } from './agents/refresh';
 import { settleStates } from './pulls/settle';
 import { eq } from 'drizzle-orm';
 import { publishChange } from './live/publish';
 import { instanceName } from './lib/settings';
 import { schema } from './db/schema';
 import {
+  agents,
   personalAccessTokens,
   repositories,
   type Repository,
@@ -85,13 +87,15 @@ export async function authenticateRepoRequest(
   const token =
     creds.pass && creds.pass !== 'x-oauth-basic' ? creds.pass : creds.user;
   const pat = await db
-    .select({ pat: personalAccessTokens, user: users })
+    .select({ pat: personalAccessTokens, user: users, agent: agents.userId })
     .from(personalAccessTokens)
     .innerJoin(users, eq(users.id, personalAccessTokens.userId))
+    .leftJoin(agents, eq(agents.userId, users.id))
     .where(eq(personalAccessTokens.tokenHash, await hashToken(token)))
     .get();
   if (
     !pat ||
+    pat.agent ||
     pat.user.banned ||
     (pat.pat.expiresAt && pat.pat.expiresAt < new Date())
   )
@@ -248,4 +252,6 @@ async function afterPush(
   }
   await publishChange(env, repoId, { approvals: true });
   await settleStates(env, db, repoId);
+  // An agent's repository: re-read AGENT.md if its default branch moved. Last, so it delays nothing above.
+  await refreshAgentConfig(env, db, repoId);
 }

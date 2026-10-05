@@ -3,6 +3,7 @@ import { verifyJwsAccessToken } from 'better-auth/oauth2';
 import { mcpResource, oauthIssuer } from '../auth';
 import { oauthConsents, users } from '../db/auth.schema';
 import type { DrizzleDB } from '../db/middleware';
+import { isAgentUser } from '../agents/identity';
 import type { AppEnv, SessionUser } from '../variables';
 
 export interface McpSession {
@@ -12,8 +13,8 @@ export interface McpSession {
 }
 
 /**
- * Bearer JWT → user, verified locally against our JWKS. Also requires an unbanned user and the
- * app's consent row, so disconnecting an app takes effect immediately.
+ * Bearer JWT → user, verified locally against our JWKS. Also requires an unbanned user who isn't an
+ * agent and the app's consent row, so disconnecting an app takes effect immediately.
  */
 export async function getMcpSession(
   auth: AppEnv['Variables']['auth'],
@@ -49,7 +50,7 @@ export async function getMcpSession(
         : null;
   if (!userId || !clientId) return null;
 
-  const [user, consent] = await Promise.all([
+  const [user, consent, agent] = await Promise.all([
     db.select().from(users).where(eq(users.id, userId)).get(),
     db
       .select({ id: oauthConsents.id })
@@ -61,8 +62,9 @@ export async function getMcpSession(
         )
       )
       .get(),
+    isAgentUser(db, userId),
   ]);
-  if (!user || user.banned || !consent) return null;
+  if (!user || user.banned || agent || !consent) return null;
   const scope = typeof payload.scope === 'string' ? payload.scope : '';
   return {
     user: user as SessionUser,

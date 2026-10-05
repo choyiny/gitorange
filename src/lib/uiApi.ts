@@ -11,6 +11,19 @@ export type Member = User & {
   role: string;
   createdAt: string;
 };
+/** A reviewer agent (Site admin → Agents). */
+export type Agent = User & {
+  bio: string;
+  trigger: { ask: string; above: number };
+  engine: 'pass' | 'pi';
+  /** `<handle>/<handle>`; null once its repository was deleted, or when the viewer can't read it. */
+  repository: string | null;
+  configSha: string | null;
+  configError: string | null;
+  createdAt: string;
+  deletedAt: string | null;
+};
+export type RepoAgent = Agent & { invitedAt: string };
 export type Perms = { read: boolean; write: boolean; admin: boolean };
 export type Visibility = 'private' | 'internal';
 export type Repo = {
@@ -351,9 +364,11 @@ export type Team = {
 };
 export type Namespace = {
   kind: 'user' | 'team';
-  /** `email` is a member's account email (null for the team). */
+  /** `email` is a member's account email (null for the team and agents). */
   owner: User & { createdAt: string; email: string | null };
   repositories: Repo[];
+  /** Set when the user is a reviewer agent. */
+  agent: (Agent & { invitedTo: Repo[] }) | null;
 };
 export type AlternateEmail = {
   id: string;
@@ -657,6 +672,26 @@ export const api = {
     apiFetch(`/api/invites/manage/${id}`, { method: 'DELETE' }),
 
   members: () => apiFetch<Member[]>('/api/users'),
+  agents: () => apiFetch<Agent[]>('/api/agents'),
+  createAgent: (body: { handle: string; name: string }) =>
+    apiFetch<{ agent: Agent }>('/api/admin/agents', {
+      method: 'POST',
+      json: body,
+    }),
+  deleteAgent: (handle: string) =>
+    apiFetch(`/api/admin/agents/${encodeURIComponent(handle)}`, {
+      method: 'DELETE',
+    }),
+  repoAgents: (o: string, n: string) =>
+    apiFetch<RepoAgent[]>(`${r(o, n)}/agents`),
+  inviteAgent: (o: string, n: string, handle: string) =>
+    apiFetch(`${r(o, n)}/agents/${encodeURIComponent(handle)}`, {
+      method: 'PUT',
+    }),
+  removeAgent: (o: string, n: string, handle: string) =>
+    apiFetch(`${r(o, n)}/agents/${encodeURIComponent(handle)}`, {
+      method: 'DELETE',
+    }),
   namespace: (slug: string) =>
     apiFetch<Namespace>(`/api/namespaces/${encodeURIComponent(slug)}`),
   team: () => apiFetch<{ team: Team | null }>('/api/team'),
@@ -913,6 +948,7 @@ export const qk = {
   setup: ['setup'] as const,
   repos: ['repos'] as const,
   members: ['members'] as const,
+  agents: ['agents'] as const,
   invitations: ['invitations'] as const,
   tokens: ['tokens'] as const,
   emails: ['emails'] as const,
@@ -936,6 +972,7 @@ export const qk = {
     ['repo', o, n, 'compare', base, head] as const,
   collaborators: (o: string, n: string) =>
     ['repo', o, n, 'collaborators'] as const,
+  repoAgents: (o: string, n: string) => ['repo', o, n, 'agents'] as const,
   pulls: (o: string, n: string, state: string) =>
     ['repo', o, n, 'pulls', state] as const,
   pullTree: (o: string, n: string) => ['repo', o, n, 'pull-tree'] as const,

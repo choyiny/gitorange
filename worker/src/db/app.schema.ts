@@ -70,6 +70,61 @@ export const repositoryCollaborators = sqliteTable(
   ]
 );
 
+// Reviewer agents: an account in `users` with no credential, sessions or tokens, plus this row. The cached
+// fields come from AGENT.md on its repository's default branch at `config_sha` (the latest valid one);
+// `config_error` is the latest parse error. Reviews read the repository itself, never these fields.
+export const agents = sqliteTable(
+  'agents',
+  {
+    userId: text('user_id')
+      .primaryKey()
+      .references(() => users.id, { onDelete: 'cascade' }),
+    // Its `<handle>/<handle>` repository; null once a site admin deletes that repository.
+    repositoryId: text('repository_id').references(() => repositories.id, {
+      onDelete: 'set null',
+    }),
+    name: text('name').notNull(),
+    bio: text('bio').notNull().default(''),
+    triggerAsk: text('trigger_ask').notNull(),
+    triggerAbove: real('trigger_above').notNull(),
+    engine: text('engine', { enum: ['pass', 'pi'] })
+      .notNull()
+      .default('pass'),
+    configSha: text('config_sha'),
+    configError: text('config_error'),
+    createdById: text('created_by_id').references(() => users.id, {
+      onDelete: 'set null',
+    }),
+    createdAt: integer('created_at', { mode: 'timestamp' }).notNull(),
+    // Set ⇒ a "deleted agent": uninvited everywhere; its user row keeps past reviews attributed.
+    deletedAt: integer('deleted_at', { mode: 'timestamp' }),
+  },
+  // A push finds its repository's agent by this (one lookup per push).
+  (t) => [uniqueIndex('agents_repository_uq').on(t.repositoryId)]
+);
+export type Agent = typeof agents.$inferSelect;
+
+// Agents invited to review a repository's pull requests.
+export const repositoryAgents = sqliteTable(
+  'repository_agents',
+  {
+    repositoryId: text('repository_id')
+      .notNull()
+      .references(() => repositories.id, { onDelete: 'cascade' }),
+    agentId: text('agent_id')
+      .notNull()
+      .references(() => agents.userId, { onDelete: 'cascade' }),
+    invitedById: text('invited_by_id').references(() => users.id, {
+      onDelete: 'set null',
+    }),
+    createdAt: integer('created_at', { mode: 'timestamp' }).notNull(),
+  },
+  (t) => [
+    primaryKey({ columns: [t.repositoryId, t.agentId] }),
+    index('repository_agents_agent_idx').on(t.agentId),
+  ]
+);
+
 export const invitations = sqliteTable(
   'invitations',
   {

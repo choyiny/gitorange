@@ -18,6 +18,7 @@ import { latestResolution } from './resolution';
 import { landTargetIs, landTargetOf } from '../lib/land-target';
 import { stackGate } from '../stack/gate';
 import { onPullClosed } from '../stack/retarget';
+import { refreshAgentConfig } from '../agents/refresh';
 
 export const pullRef = (n: number) => `refs/pull/${n}/head`;
 
@@ -282,6 +283,8 @@ export async function landPull(opts: {
         opts.by?.id ?? pr.authorId
       )
     );
+    if (target === opts.repo.defaultBranch)
+      opts.after(refreshAgentConfig(env, db, opts.repo.id));
   }
   return { ok: true, sha, headSha };
 }

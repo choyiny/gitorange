@@ -8,6 +8,7 @@ import { schema } from '../db/schema';
 import { isValidUsername } from '../lib/usernames';
 import { APIError, createAuthMiddleware } from 'better-auth/api';
 import { namespaceTaken } from '../lib/namespaces';
+import { isAgentUser } from '../agents/identity';
 
 /** The /mcp URL: the OAuth protected resource and token audience (RFC 8707). */
 export const mcpResource = (baseURL: string) =>
@@ -124,10 +125,57 @@ function createAuth(env?: CloudflareBindings) {
     // In-memory limits would be per isolate.
     rateLimit: { enabled: true, storage: 'database' },
     databaseHooks: {
+      session: {
+        create: {
+          // Agents are accounts without sign-in: no session by any route (password, impersonation), and so
+          // no personal access tokens or OAuth consents either.
+          before: async (session) => {
+            if (env && (await isAgentUser(db, session.userId)))
+              throw new APIError('FORBIDDEN', {
+                message: 'Agents can’t sign in.',
+              });
+            return { data: session };
+          },
+        },
+      },
+      account: {
+        create: {
+          // Nor credentials: covers admin set-user-password, create-user with a password, any linkAccount.
+          before: async (account) => {
+            if (env && (await isAgentUser(db, account.userId)))
+              throw new APIError('FORBIDDEN', {
+                message: 'Agents can’t have a password.',
+              });
+            return { data: account };
+          },
+        },
+      },
       user: {
         update: {
           // Usernames share the URL namespace with the team slug.
           before: async (data, ctx) => {
+            // An agent stays a plain user (no site admin) under the handle and `.invalid` email it was
+            // created with. The hook gets no `where`; the admin endpoints (set-role, update-user) name
+            // their target as `body.userId`, and agents have no session to update themselves with.
+            const target = (ctx?.body as { userId?: unknown } | undefined)
+              ?.userId;
+            const fields = data as Record<string, unknown>;
+            const touches = (keys: string[]) =>
+              keys.some((k) => fields[k] !== undefined);
+            if (
+              env &&
+              typeof target === 'string' &&
+              touches(['role', 'username', 'displayUsername', 'email']) &&
+              (await isAgentUser(db, target))
+            ) {
+              if (touches(['role']))
+                throw new APIError('FORBIDDEN', {
+                  message: 'An agent’s role can’t be changed.',
+                });
+              throw new APIError('FORBIDDEN', {
+                message: 'An agent’s username and email can’t be changed.',
+              });
+            }
             const username = (data as { username?: string }).username;
             const userId = ctx?.context.session?.user.id;
             if (
@@ -140,6 +188,15 @@ function createAuth(env?: CloudflareBindings) {
               });
             }
             return { data };
+          },
+        },
+        delete: {
+          // Deleting an agent keeps its user (history, attribution); admin remove-user would cascade it away.
+          before: async (user) => {
+            if (env && (await isAgentUser(db, user.id)))
+              throw new APIError('FORBIDDEN', {
+                message: 'Delete agents from Site admin → Agents.',
+              });
           },
         },
       },
