@@ -10,6 +10,7 @@ import { findRepoById, gitFor } from '../lib/repos';
 import { reviewConfigured } from '../review/classify';
 import { recordStates } from './events';
 import { pullStates } from './signals';
+import { landTargetIs, landTargetOf } from '../lib/land-target';
 
 /**
  * Recomputes the states of a repository's open PRs (those into `scope.branch` only, when given) and records
@@ -33,7 +34,7 @@ export async function settleStates(
         and(
           eq(pullRequests.repositoryId, repositoryId),
           eq(pullRequests.state, 'open'),
-          scope.branch ? eq(pullRequests.baseRef, scope.branch) : undefined
+          scope.branch ? landTargetIs(scope.branch) : undefined
         )
       )
       .all();
@@ -60,6 +61,7 @@ type Payload = {
   classificationId?: string;
   sweep?: { repositoryId: string };
   stack?: { pullRequestId: string };
+  reconcile?: { repositoryId: string; landTarget: string };
 };
 
 /**
@@ -70,6 +72,11 @@ export async function repositoryForPayload(
   db: DrizzleDB,
   p: Payload
 ): Promise<{ repositoryId: string; branch?: string } | null> {
+  if (p.reconcile)
+    return {
+      repositoryId: p.reconcile.repositoryId,
+      branch: p.reconcile.landTarget,
+    };
   if (p.sweep) return { repositoryId: p.sweep.repositoryId };
   let prId = p.stack?.pullRequestId;
   if (!prId && p.classificationId)
@@ -92,12 +99,15 @@ export async function repositoryForPayload(
   const row = await db
     .select({
       repositoryId: pullRequests.repositoryId,
-      branch: pullRequests.baseRef,
+      baseRef: pullRequests.baseRef,
+      landTarget: pullRequests.landTarget,
     })
     .from(pullRequests)
     .where(eq(pullRequests.id, prId))
     .get();
-  return row ?? null;
+  return row
+    ? { repositoryId: row.repositoryId, branch: landTargetOf(row) }
+    : null;
 }
 
 /**

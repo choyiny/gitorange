@@ -15,8 +15,7 @@ export const STATE_CLASS: Record<PullStateName, string> = {
   ready: 'Label--success',
 };
 
-// must_account_for only informs until plan 2b can mark it accounted for.
-const INFO = new Set(['stacked_on', 'waits_on', 'must_account_for']);
+const INFO = new Set(['stacked_on', 'waits_on']);
 /** Whether a reason holds the PR in its state (others only inform). */
 export const blocking = (r: PullReason) => !INFO.has(r.kind);
 
@@ -42,7 +41,9 @@ export function reasonText(r: PullReason): string {
         ? "this pull request's .gitorange/review.yml is invalid"
         : '.gitorange/review.yml on the target branch is invalid';
     case 'must_account_for':
-      return `must account for #${n(r.pr)}`;
+      return `must account for #${n(r.pr)}${r.branch ? `, after rebasing onto ${String(r.branch)}` : ''}`;
+    case 'rebase_onto':
+      return `rebase onto #${n(r.pr)} (${String(r.branch)})`;
     case 'review_failed':
       return 'the auto-merge review failed';
     case 'flags_pending':

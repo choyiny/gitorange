@@ -65,7 +65,9 @@ function Item({ item }: { item: ApprovalItem }) {
         {item.pullState?.state === 'human_review' &&
           !item.flags.length &&
           !item.reviewFailed &&
-          !item.resolutionFailed && (
+          !item.resolutionFailed &&
+          !item.stackStale.length &&
+          !item.stackUnchecked.length && (
             <div className="flash flash-warn mb-2">
               <PullStateLabel state={item.pullState} />
               <PullStateReasons state={item.pullState} />
@@ -104,6 +106,44 @@ function Item({ item }: { item: ApprovalItem }) {
             <Link to={prUrl} className="btn btn-sm">
               Decide on the pull request
             </Link>
+          </div>
+        )}
+        {item.stackStale.map((s) => (
+          <div
+            key={`stale${s.pr}`}
+            className="flash flash-warn mb-2 d-flex flex-items-center flex-wrap"
+            style={{ gap: 8 }}
+          >
+            <AlertIcon />
+            <span className="flex-1" style={{ minWidth: 200 }}>
+              Still must account for #{s.pr} (nothing new since{' '}
+              {timeAgo(s.since)})
+            </span>
+            <Link
+              to={`/${item.repo.fullName}/pull/${s.pr}`}
+              className="btn btn-sm"
+            >
+              View #{s.pr}
+            </Link>
+          </div>
+        ))}
+        {item.stackUnchecked.length > 0 && (
+          <div
+            className="flash flash-warn mb-2 d-flex flex-items-center flex-wrap"
+            style={{ gap: 8 }}
+          >
+            <AlertIcon />
+            <span className="flex-1" style={{ minWidth: 200 }}>
+              Couldn&apos;t check against{' '}
+              {item.stackUnchecked.map((u) => `#${u}`).join(', ')}
+            </span>
+            <button
+              className="btn btn-sm"
+              disabled={busy !== null}
+              onClick={() => act('stack', () => api.retryStack(owner, name, n))}
+            >
+              {busy === 'stack' ? 'Starting…' : 'Check again'}
+            </button>
           </div>
         )}
         {item.flags.map((f) => {

@@ -78,6 +78,11 @@ and better-auth. Git storage is **Cloudflare Artifacts**: one Artifacts repo per
   (`STACK_QUESTIONS`, `routeDecision`), the reasoning model explains related pairs from diffs (and decides when Clef
   is unsure) → one `pr_edges` row per pair. `buildTree` (pure) derives parents, waits-on, must-account-for, cycles.
   Tests drive `executeStacking` with fake `StackModels`.
+  Milestone 2: `pull_requests.land_target` (nullable; null means `base_ref`) is where a PR lands (always read via
+  `landTargetOf`/`landTargetIs`, written on create and every retarget; readers of "where this lands" use it,
+  diffs use `base_ref`). `executeReconcile` (`stack/reconcile.ts`) prunes/linearizes (`pr_edges.slot = 'order'`,
+  kind `ordered_after`) and retargets `base_ref` (metadata only, CAS); `stackGate` blocks `landPull`. Tests drive
+  `executeReconcile` with fake `StackModels` (`order`, `recheck`).
 - Artifacts has no local emulator: `yarn dev` runs `env.dev`, which uses the remote service in the
   `gitorange-dev` namespace. Tests use `wrangler.test.jsonc` (no remote bindings) plus an in-memory
   Artifacts fake.

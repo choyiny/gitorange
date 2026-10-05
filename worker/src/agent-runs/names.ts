@@ -32,6 +32,20 @@ const ABOUT_PULL: Record<string, string> = {
   explain: 'Explain relationship with',
   save: 'Save relationship with',
   fail: 'Record failure with',
+  recheck: 'Re-check accounting for',
+  rechecked: 'Record re-check of',
+  'recheck-failed': 'Record failed re-check of',
+};
+
+/** A stack run's inline reconcile (`stack-reconcile:<step>`), or a reconcile run's own steps. */
+const RECONCILE: Record<string, string> = {
+  load: 'Load stacks',
+  edges: 'Prune ordering edges',
+  'save-orders': 'Save ordering edges',
+  retarget: 'Retarget stacked pull requests',
+  states: 'Record pull request states',
+  order: 'Order prerequisites',
+  ready: 'Compare readiness',
 };
 
 /** Steps named `<kind>:<index>`. */
@@ -56,6 +70,11 @@ export function stepDisplayName(
   numbers: Map<string, number>
 ): string {
   if (FIXED[name]) return FIXED[name];
+  const r = name.replace(/^stack-/, '');
+  if (r.startsWith('reconcile:')) {
+    const kind = r.slice('reconcile:'.length).split(':')[0];
+    if (RECONCILE[kind]) return RECONCILE[kind];
+  }
   const i = name.indexOf(':');
   if (i < 0) return capitalize(name);
   const [kind, rest] = [name.slice(0, i), name.slice(i + 1)];

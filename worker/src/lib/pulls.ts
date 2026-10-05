@@ -15,6 +15,7 @@ import { pullRef } from '../merge/land';
 import { ensureClassification } from '../review/classify';
 import { publishChange } from '../live/publish';
 import { ensureStacking } from '../stack/discover';
+import { landTargetIs, landTargetOf } from './land-target';
 
 /**
  * The commits a PR compares: live branches while open; once closed, `refs/pull/<n>/head` and
@@ -88,7 +89,8 @@ export async function openPull(opts: {
       and(
         eq(pullRequests.repositoryId, repo.id),
         eq(pullRequests.state, 'open'),
-        eq(pullRequests.baseRef, base),
+        // Stacked PRs keep their land target; their base_ref is a parent's branch.
+        landTargetIs(base),
         eq(pullRequests.headRef, head)
       )
     )
@@ -120,6 +122,7 @@ export async function openPull(opts: {
       body: opts.body,
       authorId: opts.author.id,
       baseRef: base,
+      landTarget: base,
       headRef: head,
       state: 'open',
       createdAt: now,
@@ -134,6 +137,7 @@ export async function openPull(opts: {
   await git
     .setRef(pullRef(pr.number), headSha)
     .catch((e) => console.error('[pulls] pin ref failed', e));
+  // A new PR's base is its land target, so these are also its land shas.
   const shas = { base: baseSha, head: headSha };
   opts.after(
     ensureClassification(env, db, git, pr, shas).catch((e) =>
@@ -158,7 +162,7 @@ export async function openPull(opts: {
       kind: 'pull_request',
       number: pr.number,
       title: pr.title,
-      baseRef: pr.baseRef,
+      baseRef: landTargetOf(pr),
       headRef: pr.headRef,
       headSha,
       actorId: opts.author.id,

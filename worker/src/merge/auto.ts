@@ -23,6 +23,7 @@ import {
   type StepRunner,
 } from './resolution';
 import { generatedConflicts } from './generated';
+import { landTargetIs, landTargetOf } from '../lib/land-target';
 
 export type SweepParams = { repositoryId: string; branches: string[] };
 
@@ -51,22 +52,32 @@ export async function autoResolveConflicts(
   }
 }
 
+const SWEEP_CHUNK = 20;
+
 /** The PRs a sweep checks, as plain data for a durable step. */
 async function sweepTargets(db: DrizzleDB, params: SweepParams) {
-  return db
-    .select()
-    .from(pullRequests)
-    .where(
-      and(
-        eq(pullRequests.repositoryId, params.repositoryId),
-        eq(pullRequests.state, 'open'),
-        or(
-          ...params.branches.map((b) => eq(pullRequests.baseRef, b)),
-          ...params.branches.map((b) => eq(pullRequests.headRef, b))
+  // Three ORed terms and parameters per branch; D1 caps both a statement's parameters and its expression depth at 100.
+  const byId = new Map<string, PullRequest>();
+  for (let i = 0; i < params.branches.length; i += SWEEP_CHUNK) {
+    const part = params.branches.slice(i, i + SWEEP_CHUNK);
+    for (const pr of await db
+      .select()
+      .from(pullRequests)
+      .where(
+        and(
+          eq(pullRequests.repositoryId, params.repositoryId),
+          eq(pullRequests.state, 'open'),
+          or(
+            ...part.map((b) => landTargetIs(b)),
+            ...part.map((b) => eq(pullRequests.baseRef, b)),
+            ...part.map((b) => eq(pullRequests.headRef, b))
+          )
         )
       )
-    )
-    .all();
+      .all())
+      byId.set(pr.id, pr);
+  }
+  return [...byId.values()].sort((a, b) => a.number - b.number);
 }
 
 /**
@@ -90,7 +101,7 @@ export async function executeSweep(
   const prs = await step.do('targets', () => sweepTargets(db, params));
   const tips = async (git: GitService, pr: PullRequest) => {
     const [base, head] = await Promise.all([
-      git.resolve(pr.baseRef),
+      git.resolve(landTargetOf(pr)),
       git.resolve(pr.headRef),
     ]);
     return base && head ? { base, head } : null;

@@ -24,6 +24,8 @@ import {
   type PullState,
   type Reason,
 } from './state';
+import { contains } from '../stack/contains';
+import { landTargetOf } from '../lib/land-target';
 
 type TargetPolicy = {
   sha: string;
@@ -73,7 +75,7 @@ export async function pullStates(
   const refs = opts.refs ?? (await git.refs());
   const tips = prs.flatMap((pr) => {
     if (pr.state !== 'open') return [];
-    const base = refs.get(`refs/heads/${pr.baseRef}`);
+    const base = refs.get(`refs/heads/${landTargetOf(pr)}`);
     const head = refs.get(`refs/heads/${pr.headRef}`);
     return base && head ? [{ pr, base, head }] : [];
   });
@@ -225,13 +227,51 @@ export async function pullStates(
       .all())
       resolutions.set(r.pullRequestId, r);
 
-  const targets = [...new Set(tips.map((t) => t.pr.baseRef))];
+  const targets = [...new Set(tips.map((t) => landTargetOf(t.pr)))];
+  // A tree that can't be read: every PR waits on stack checking instead of failing the whole read.
+  let treeFailed = false;
   const tree =
     opts.tree ??
     (await stackTreeView(db, git, repositoryId, {
       authors: false,
       branch: targets.length === 1 ? targets[0] : undefined,
+    }).catch((e): StackTreeView => {
+      console.error('[states] stack tree failed', repositoryId, e);
+      treeFailed = true;
+      return { targets: [] };
     }));
+
+  // Which stacked PRs still need to rebase onto their open parent: parents before children, and a PR is asked
+  // only once its parent's own chain is in order.
+  const needsRebase = new Map<number, boolean>();
+  const branchOf = new Map<number, string>();
+  // Callers may pass only the PR's own branch tips: a parent's head is then read from the full listing, once.
+  let allRefs: Map<string, string> | undefined;
+  const tipOf = async (branch: string) =>
+    refs.get(`refs/heads/${branch}`) ??
+    (allRefs ??= await git.refs()).get(`refs/heads/${branch}`);
+  for (const t of tree.targets) {
+    for (const n of t.nodes) branchOf.set(n.number, n.headRef);
+    const byNumber = new Map(t.nodes.map((n) => [n.number, n]));
+    const visit = async (n: (typeof t.nodes)[number]): Promise<boolean> => {
+      if (needsRebase.has(n.number)) return needsRebase.get(n.number)!;
+      needsRebase.set(n.number, false); // cycle guard
+      const parent = n.parent ? byNumber.get(n.parent.number) : undefined;
+      let needs = false;
+      if (parent) {
+        const parentHead = await tipOf(parent.headRef);
+        const head = await tipOf(n.headRef);
+        needs =
+          !!parentHead &&
+          !!head &&
+          !(await visit(parent)) &&
+          (await contains(git, parentHead, head)) === false; // unknown: no ask
+      }
+      needsRebase.set(n.number, needs);
+      return needs;
+    };
+    for (const n of t.nodes) await visit(n);
+  }
 
   for (const { pr, base, head } of tips) {
     const reasons: Reason[] = [];
@@ -302,13 +342,16 @@ export async function pullStates(
     }
 
     const node = tree.targets
-      .find((t) => t.branch === pr.baseRef)
+      .find((t) => t.branch === landTargetOf(pr))
       ?.nodes.find((n) => n.number === pr.number);
+    // Whatever is configured: landPull refuses while the tree can't be read, so the PR is never Ready.
+    if (treeFailed) reasons.push({ kind: 'stack_checking', prs: [] });
     if (node)
       reasons.push(
-        ...stackReasons(node).filter(
-          (x) => aiReview || x.kind !== 'stack_checking'
-        )
+        ...stackReasons(node, {
+          branchOf: (n) => branchOf.get(n) ?? null,
+          needsRebase: needsRebase.get(node.number) ?? false,
+        }).filter((x) => aiReview || x.kind !== 'stack_checking')
       );
 
     out.set(pr.id, decideState(reasons));
@@ -317,7 +360,7 @@ export async function pullStates(
 }
 
 /**
- * One PR's state; null unless it is open with both branches. `shas` (its live base and head, from `pullShas`)
+ * One PR's state; null unless it is open with both branches. `shas` (its land target's tip and head, from `landShas`)
  * saves listing the refs; the stack tree is read for its target only.
  */
 export async function pullStateFor(
@@ -327,6 +370,8 @@ export async function pullStateFor(
   opts: {
     shas?: { base: string; head: string } | null;
     reviewConfigured?: boolean;
+    /** The PR's target tree, when the caller already read it. */
+    tree?: StackTreeView;
   } = {}
 ): Promise<PullState | null> {
   if (pr.state !== 'open') return null;
@@ -336,7 +381,7 @@ export async function pullStateFor(
       : new Map(
           opts.shas
             ? [
-                [`refs/heads/${pr.baseRef}`, opts.shas.base],
+                [`refs/heads/${landTargetOf(pr)}`, opts.shas.base],
                 [`refs/heads/${pr.headRef}`, opts.shas.head],
               ]
             : []
@@ -346,6 +391,7 @@ export async function pullStateFor(
       await pullStates(db, git, pr.repositoryId, [pr], {
         refs,
         reviewConfigured: opts.reviewConfigured,
+        tree: opts.tree,
       })
     ).get(pr.id) ?? null
   );

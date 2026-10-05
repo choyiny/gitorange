@@ -27,10 +27,31 @@ export function StackSidebar({
   const base = `/${repo.fullName}`;
   const o = repo.owner.username;
   const qc = useQueryClient();
+  const refresh = () =>
+    qc.invalidateQueries({ queryKey: ['repo', o, repo.name] });
   const retry = useMutation({
     mutationFn: () => api.retryStack(o, repo.name, number),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['repo', o, repo.name] }),
+    onSuccess: refresh,
   });
+  const unstack = useMutation({
+    mutationFn: () => api.unstack(o, repo.name, number),
+    onSuccess: refresh,
+  });
+  const dismiss = useMutation({
+    mutationFn: (pr: number) => api.dismissStackEdge(o, repo.name, number, pr),
+    onSuccess: refresh,
+  });
+  const control = (label: string, onClick: () => void, title: string) =>
+    repo.permissions.write ? (
+      <button
+        className="btn-link ml-1"
+        title={title}
+        disabled={unstack.isPending || dismiss.isPending}
+        onClick={onClick}
+      >
+        {label}
+      </button>
+    ) : null;
   const link = (n: number) => (
     <Link key={n} to={`${base}/pull/${n}`}>
       #{n}
@@ -67,7 +88,24 @@ export function StackSidebar({
       )}
       {stack.parent && (
         <p className="mb-2">
-          Builds on {link(stack.parent.number)}: {stack.parent.reason}
+          {stack.parent.kind === 'ordered_after' ? (
+            <>
+              Lands after {link(stack.parent.number)} so{' '}
+              {stack.parent.forPr
+                ? link(stack.parent.forPr)
+                : 'another pull request'}{' '}
+              can build on both: {stack.parent.reason}
+            </>
+          ) : (
+            <>
+              Builds on {link(stack.parent.number)}: {stack.parent.reason}
+            </>
+          )}
+          {control(
+            'Unstack',
+            () => unstack.mutate(),
+            'Retarget to the land target and stop building on it'
+          )}
         </p>
       )}
       {stack.children.length > 0 && (
@@ -76,15 +114,39 @@ export function StackSidebar({
       {stack.waitsOn.map((d) => (
         <p key={`w${d.number}`} className="mb-2">
           Waits on {link(d.number)}: {d.reason}
+          {control(
+            'Dismiss',
+            () => dismiss.mutate(d.number),
+            'Stop waiting on it'
+          )}
         </p>
       ))}
       {stack.mustAccountFor.map((d) => (
-        <div key={`m${d.number}`} className="flash flash-warn p-2 mb-2">
+        <div
+          key={`m${d.number}`}
+          className={`${d.accounted ? 'border rounded-2' : 'flash flash-warn'} p-2 mb-2`}
+        >
+          {d.accounted && (
+            <span className="Label Label--success mr-1">accounted for</span>
+          )}
           Must change for {link(d.number)}
           {d.landed ? ' (landed)' : ''}: {d.reason}
-          {d.instructions && <div className="mt-1">{d.instructions}</div>}
+          {d.instructions && !d.accounted && (
+            <div className="mt-1">{d.instructions}</div>
+          )}
+          {!d.accounted &&
+            control(
+              'Dismiss',
+              () => dismiss.mutate(d.number),
+              'Stop waiting on it'
+            )}
         </div>
       ))}
+      {(unstack.isError || dismiss.isError) && (
+        <p className="color-fg-danger f6 mb-2">
+          {errorMessage(unstack.error ?? dismiss.error)}
+        </p>
+      )}
       {stack.cycleWith.length > 0 && (
         <p className="color-fg-danger mb-2">
           Depends in a circle on {joined(stack.cycleWith.map(link))}; a person

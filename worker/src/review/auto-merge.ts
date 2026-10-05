@@ -11,11 +11,13 @@ import {
 import { users } from '../db/auth.schema';
 import type { GitService } from '../git/service';
 import { findRepoById, gitFor } from '../lib/repos';
-import { deleteMergedBranch, landPull } from '../merge/land';
+import { landPull } from '../merge/land';
 import { latestResolution } from '../merge/resolution';
 import { classificationFor } from './classify';
 import { checkVerdict } from './checks';
 import { parsePolicy, readPolicy, type ReviewPolicy } from './policy';
+import { landTargetOf } from '../lib/land-target';
+import { stackGate } from '../stack/gate';
 
 /**
  * - off: the target branch has no `.gitorange/review.yml`.
@@ -98,7 +100,7 @@ export async function autoMergeStatus(
 ): Promise<AutoMergeStatus> {
   if (pr.state !== 'open') return { state: 'off' };
   const [base, head] = await Promise.all([
-    git.resolve(pr.baseRef),
+    git.resolve(landTargetOf(pr)),
     git.resolve(pr.headRef),
   ]);
   if (!base || !head) return { state: 'off' };
@@ -177,6 +179,15 @@ export async function autoMergeStatus(
     else blocked.push('Merge conflicts need a person');
   }
 
+  const gate = await stackGate(db, git, pr);
+  if (gate.error)
+    waiting.push('Couldn’t check how it relates to other open pull requests');
+  for (const b of gate.blocks)
+    (b.kind === 'must_account_for' ? blocked : waiting).push(b.message);
+  // Discovery runs once the review ends; landing before it has checked this head would skip it.
+  if (gate.checking)
+    waiting.push('Checking how it relates to other open pull requests');
+
   if (blocked.length) return { state: 'blocked', reasons: blocked };
   if (waiting.length) return { state: 'waiting', reasons: waiting };
   return { state: 'ready', reasons: [] };
@@ -215,19 +226,9 @@ export async function maybeAutoMerge(
     by: null,
     author: author ?? { name: 'GitOrange', email: 'noreply@gitorange' },
     after: (p) => void followUps.push(p),
+    // Merged branches don't pile up; stacked or since-pushed ones are kept.
+    deleteBranch: true,
   });
-  // Merged branches don't pile up; stacked or since-pushed ones are kept.
-  if (result.ok)
-    followUps.push(
-      deleteMergedBranch({
-        env,
-        db,
-        repo: found.repo,
-        git,
-        pr,
-        headSha: result.headSha,
-      })
-    );
   await Promise.allSettled(followUps);
   if (!result.ok)
     console.warn('[review] auto-merge did not land', pr.id, result.error);

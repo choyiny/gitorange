@@ -12,6 +12,7 @@ const KIND: Record<StackDependency['kind'], string> = {
   must_account_for: 'must change for',
   conflicts: 'conflicts with',
   independent: 'independent of',
+  ordered_after: 'lands after',
 };
 
 function DepChip({ d, base }: { d: StackDependency; base: string }) {
@@ -19,9 +20,12 @@ function DepChip({ d, base }: { d: StackDependency; base: string }) {
     <Link
       to={`${base}/pull/${d.number}`}
       title={d.reason}
-      className={`Label mr-1 ${d.kind === 'must_account_for' ? 'Label--attention' : 'Label--secondary'}`}
+      className={`Label mr-1 ${d.kind === 'must_account_for' ? (d.accounted ? 'Label--success' : 'Label--attention') : 'Label--secondary'}`}
     >
-      {KIND[d.kind]} #{d.number}
+      {d.kind === 'must_account_for' && d.accounted
+        ? 'accounted for'
+        : KIND[d.kind]}{' '}
+      #{d.number}
       {d.landed ? ' (landed)' : ''}
     </Link>
   );
@@ -122,6 +126,9 @@ export function StackTree({ repo }: { repo: RepoDetail }) {
                 </span>
                 {node.parent && (
                   <div className="f6 color-fg-muted mt-1">
+                    {node.parent.kind === 'ordered_after'
+                      ? `lands after #${node.parent.number} so ${node.parent.forPr ? `#${node.parent.forPr}` : 'another pull request'} can build on both: `
+                      : ''}
                     {node.parent.reason}
                   </div>
                 )}
@@ -156,7 +163,10 @@ export function StackTree({ repo }: { repo: RepoDetail }) {
                   ...node.waitsOn.map((d) => ({ d, verb: 'waits on' })),
                   ...node.mustAccountFor
                     .filter((d) => d.number !== node.parent?.number)
-                    .map((d) => ({ d, verb: 'must change for' })),
+                    .map((d) => ({
+                      d,
+                      verb: d.accounted ? 'accounted for' : 'must change for',
+                    })),
                 ].map(({ d, verb }) => (
                   <div key={`${verb}${d.number}`} className="f6 color-fg-muted">
                     {verb} #{d.number}: {d.reason}

@@ -182,6 +182,16 @@ them, whose chain then contains both.
 - **Unwinding.** If a prerequisite closes without landing, ordering edges that existed for it are removed and the
   chain is rebuilt; when one lands, the rest of the chain retargets as in "Parent lands".
 
+**Decided while planning (milestone 2b).** Ordering edges are `pr_edges` rows with `slot = 'order'` (the table's
+uniqueness is per pair and slot), recording the three heads they were decided at. Only stackable prerequisites
+(`builds_on`, `must_account_for`) are linearized; a `conflicts` prerequisite stays waits-on. A parent must be a
+stackable prerequisite whose chain contains the other stackable ones; otherwise the PR has no parent and waits on
+all. When only a dependent's head moves, a `must_account_for` pair is re-checked instead of re-decided; a failed
+re-check keeps blocking. Dismissals survive head moves. A closed parent's pair rows are kept (ignored while it is
+closed); its ordering edges are deleted and its children go back to the land target at once, then a reconcile run
+restacks them. Landing (button, MCP, auto-merge) is refused on an unaccounted must-account-for, an open parent or
+open waits-on, naming each.
+
 ## 2b. Pull request states
 
 Every open pull request has exactly one state saying whose move it is. The state is **computed** on read from
@@ -233,9 +243,14 @@ Every reader of `base_ref` that means "where this lands" switches to `land_targe
 - Actions `pull_request` branch filters (`pullRequestMatches`).
 - `autoMergeStatus`'s merge plan and the AI conflict sweep (conflicts are against the land target).
 - `landPull` (lands into the land target, never into a parent branch).
-- The PR list's base filter and the Approvals inbox.
+- The stack tree's grouping and discovery's candidates (the list has no base filter; the Approvals inbox never read
+  `base_ref`).
 
 `base_ref` stays what the diff and the "into" label show.
+
+A stacked PR's auto-merge review still summarizes its own changes (from `base_ref`), under the land target's
+review.yml. `land_target` is nullable (no backfill); a null value means `base_ref`, and every retarget writes
+`land_target` explicitly.
 
 ## 3. Landing one at a time
 

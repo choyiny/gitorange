@@ -26,6 +26,10 @@ const itemSchema = z.object({
   resolutionFailed: z.string().nullable(),
   /** The latest recorded state: human_review items may have no flag (e.g. a dependency cycle). */
   pullState: pullStateSchema.nullable(),
+  /** Must account for #pr, with nothing new since `since` (24 hours or more). */
+  stackStale: z.array(z.object({ pr: z.number(), since: z.string() })),
+  /** Other pull requests it couldn't be checked against. */
+  stackUnchecked: z.array(z.number()),
   /** Flags of the latest review that nobody approved yet (some may have changes requested). */
   flags: z.array(
     z.object({
@@ -63,7 +67,7 @@ const listRoute = createRoute({
         /** One page, most recently updated pull request first. */
         items: z.array(itemSchema),
         /** How many things wait on you across every page: each unapproved flag, failed review and
-         * failed resolution, and each pull request requiring human review that has none of those. */
+         * failed resolution, each stale must-account-for block, each pull request with unchecked stack pairs, and each pull request requiring human review that has none of those. */
         count: z.number(),
         /** Pass as `cursor` for the next page; null on the last page. */
         nextCursor: z.string().nullable(),

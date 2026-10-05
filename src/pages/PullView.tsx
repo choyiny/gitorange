@@ -352,7 +352,7 @@ function Conversation({
           <Fragment key={c.id}>
             {/* The auto-merge review sits in the timeline where it happened. */}
             {slots[i].map((e) => (
-              <PullEventItem key={e.id} e={e} />
+              <PullEventItem key={e.id} e={e} repoPath={`/${repo.fullName}`} />
             ))}
             {reviewAt === i && (
               <ReviewComment repo={repo} d={d} onChange={refresh} />
@@ -365,7 +365,7 @@ function Conversation({
           </Fragment>
         ))}
         {slots[d.comments.length].map((e) => (
-          <PullEventItem key={e.id} e={e} />
+          <PullEventItem key={e.id} e={e} repoPath={`/${repo.fullName}`} />
         ))}
         {reviewAt === d.comments.length && (
           <ReviewComment repo={repo} d={d} onChange={refresh} />

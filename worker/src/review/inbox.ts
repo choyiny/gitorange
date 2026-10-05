@@ -1,8 +1,10 @@
-import { desc, eq, inArray } from 'drizzle-orm';
+import { and, desc, eq, inArray, isNull, lt, or } from 'drizzle-orm';
+import { alias } from 'drizzle-orm/sqlite-core';
 import type { DrizzleDB } from '../db/middleware';
 import {
   mergeResolutions,
   prClassifications,
+  prEdges,
   prReviewFlags,
   pullRequests,
   type PrClassification,
@@ -27,6 +29,9 @@ function latestPer<T extends { pullRequestId: string }>(rows: T[]) {
     if (!out.has(r.pullRequestId)) out.set(r.pullRequestId, r);
   return out;
 }
+
+/** A must-account-for block with no change for this long shows on Approvals. */
+const STALE_MS = 24 * 3600 * 1000;
 
 /** D1 binds at most 100 parameters per statement. */
 const CHUNK = 90;
@@ -127,6 +132,83 @@ export async function approvalsFor(
       f,
     ]);
 
+  const pa = alias(pullRequests, 'pa');
+  const pb = alias(pullRequests, 'pb');
+  const staleBefore = new Date(Date.now() - STALE_MS);
+  const stackRows = new Map<
+    string,
+    {
+      aId: string;
+      bId: string;
+      aNumber: number;
+      bNumber: number;
+      aState: string;
+      bState: string;
+      stage: string;
+      prerequisite: 'a' | 'b' | null;
+      updatedAt: Date;
+    }
+  >();
+  for (const part of chunks(ids, CHUNK))
+    for (const side of [prEdges.prAId, prEdges.prBId])
+      for (const r of await db
+        .select({
+          id: prEdges.id,
+          aId: prEdges.prAId,
+          bId: prEdges.prBId,
+          aNumber: pa.number,
+          bNumber: pb.number,
+          aState: pa.state,
+          bState: pb.state,
+          stage: prEdges.stage,
+          prerequisite: prEdges.prerequisite,
+          updatedAt: prEdges.updatedAt,
+        })
+        .from(prEdges)
+        .innerJoin(pa, eq(pa.id, prEdges.prAId))
+        .innerJoin(pb, eq(pb.id, prEdges.prBId))
+        .where(
+          and(
+            inArray(side, part),
+            eq(prEdges.slot, 'pair'),
+            isNull(prEdges.dismissedAt),
+            or(
+              eq(prEdges.stage, 'failed'),
+              and(
+                eq(prEdges.kind, 'must_account_for'),
+                isNull(prEdges.accountedForAt),
+                lt(prEdges.updatedAt, staleBefore)
+              )
+            )
+          )
+        )
+        .all())
+        stackRows.set(r.id, r);
+  const openIds = new Set(ids);
+  const stale = new Map<string, { pr: number; since: string }[]>();
+  const unchecked = new Map<string, number[]>();
+  const push = <T>(m: Map<string, T[]>, k: string, v: T) =>
+    m.set(k, [...(m.get(k) ?? []), v]);
+  for (const r of stackRows.values()) {
+    if (r.stage === 'failed') {
+      // Only against pull requests that are still open.
+      if (openIds.has(r.aId) && openIds.has(r.bId)) {
+        push(unchecked, r.aId, r.bNumber);
+        push(unchecked, r.bId, r.aNumber);
+      }
+      continue;
+    }
+    if (!r.prerequisite) continue;
+    const [pre, dependent, preState] =
+      r.prerequisite === 'a'
+        ? [r.aNumber, r.bId, r.aState]
+        : [r.bNumber, r.aId, r.bState];
+    // A prerequisite closed without landing no longer blocks (the tree ignores it too).
+    if (preState === 'closed') continue;
+    if (openIds.has(dependent))
+      push(stale, dependent, { pr: pre, since: r.updatedAt.toISOString() });
+  }
+
   type Item = {
     pr: PullRequest;
     review: PrClassification | null;
@@ -134,6 +216,8 @@ export async function approvalsFor(
     reviewFailed: boolean;
     resolutionFailed: string | null;
     pullState: PullState | null;
+    stackStale: { pr: number; since: string }[];
+    stackUnchecked: number[];
   };
   const items: Item[] = [];
   for (const pr of open) {
@@ -153,11 +237,15 @@ export async function approvalsFor(
           : `AI couldn't resolve its conflicts: ${resolution.errorMessage ?? 'unknown error'}`
         : null;
     const pullState = recorded.get(pr.id) ?? null;
+    const stackStale = (stale.get(pr.id) ?? []).sort((x, y) => x.pr - y.pr);
+    const stackUnchecked = (unchecked.get(pr.id) ?? []).sort((x, y) => x - y);
     if (
       prFlags.length ||
       reviewFailed ||
       resolutionFailed ||
-      pullState?.state === 'human_review'
+      pullState?.state === 'human_review' ||
+      stackStale.length ||
+      stackUnchecked.length
     )
       items.push({
         pr,
@@ -166,6 +254,8 @@ export async function approvalsFor(
         reviewFailed,
         resolutionFailed,
         pullState,
+        stackStale,
+        stackUnchecked,
       });
   }
 
@@ -204,10 +294,14 @@ export async function approvalsFor(
       i.flags.length +
       (i.reviewFailed ? 1 : 0) +
       (i.resolutionFailed ? 1 : 0) +
+      i.stackStale.length +
+      (i.stackUnchecked.length ? 1 : 0) +
       (i.pullState?.state === 'human_review' &&
       !i.flags.length &&
       !i.reviewFailed &&
-      !i.resolutionFailed
+      !i.resolutionFailed &&
+      !i.stackStale.length &&
+      !i.stackUnchecked.length
         ? 1
         : 0),
     0
@@ -273,6 +367,8 @@ export async function approvalsFor(
         : null,
       resolutionFailed: i.resolutionFailed,
       pullState: i.pullState,
+      stackStale: i.stackStale,
+      stackUnchecked: i.stackUnchecked,
       flags: i.flags.map((f) => ({
         id: f.id,
         source: f.source,

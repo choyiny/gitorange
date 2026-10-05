@@ -3,13 +3,16 @@ import { env } from 'cloudflare:test';
 import { parsePolicy, PolicyError } from '../review/policy';
 import type { ClassifierAnswer } from '../db/app.schema';
 import {
+  parseRecheck,
   parseRelation,
   readDecision,
+  readOrder,
   routeDecision,
   workersAiStackModels,
   type Decision,
 } from '../stack/models';
 import { buildTree, type EdgeInput } from '../stack/tree';
+import { linearize, type Choose } from '../stack/linearize';
 
 describe('review.yml stacking', () => {
   it('has defaults', () => {
@@ -289,7 +292,7 @@ describe('buildTree', () => {
     expect(t.get(1)!.parent?.number).toBe(2);
   });
 
-  it('prefers must_account_for, then the newer prerequisite, and keeps the rest as waits-on', () => {
+  it('without one line through the prerequisites, has no parent and waits on all', () => {
     const t = buildTree(
       [1, 2, 3, 4],
       [
@@ -298,19 +301,96 @@ describe('buildTree', () => {
         edge(3, 4, 'builds_on'),
       ]
     );
-    expect(t.get(4)!.parent?.number).toBe(3);
+    expect(t.get(4)!.parent).toBeNull();
     expect(
       t
         .get(4)!
         .waitsOn.map((d) => d.number)
         .sort()
-    ).toEqual([1, 2]);
-    const u = buildTree(
-      [1, 2, 3],
-      [edge(1, 3, 'must_account_for'), edge(2, 3, 'builds_on')]
+    ).toEqual([1, 2, 3]);
+  });
+
+  it('stacks on the prerequisite whose chain holds the others, preferring must_account_for', () => {
+    const order = (a: number, b: number, forPr: number): EdgeInput => ({
+      ...edge(a, b, 'ordered_after'),
+      slot: 'order',
+      forPr,
+    });
+    // #31 needs #28 and #29; #29 was ordered after #28 for it.
+    const t = buildTree(
+      [28, 29, 31],
+      [
+        edge(28, 31, 'builds_on'),
+        edge(29, 31, 'must_account_for'),
+        order(28, 29, 31),
+      ]
     );
-    expect(u.get(3)!.parent?.number).toBe(1);
-    expect(u.get(3)!.mustAccountFor.map((d) => d.number)).toEqual([1]);
+    expect(t.get(31)!.parent).toMatchObject({
+      number: 29,
+      kind: 'must_account_for',
+    });
+    expect(t.get(31)!.waitsOn).toEqual([]); // #28 is on #29's chain
+    expect(t.get(29)!.parent).toMatchObject({
+      number: 28,
+      kind: 'ordered_after',
+      forPr: 31,
+    });
+    expect(t.get(28)!.children).toEqual([29]);
+  });
+
+  it('ignores dismissed edges and marks accounted ones', () => {
+    const t = buildTree(
+      [1, 2, 3],
+      [
+        { ...edge(1, 3, 'conflicts'), dismissed: true },
+        { ...edge(2, 3, 'must_account_for'), accounted: true },
+      ]
+    );
+    expect(t.get(3)!.waitsOn).toEqual([]);
+    expect(t.get(3)!.mustAccountFor).toMatchObject([
+      { number: 2, accounted: true },
+    ]);
+    expect(t.get(3)!.parent?.number).toBe(2);
+  });
+
+  it('keeps blocking while a must_account_for is re-checked', () => {
+    const t = buildTree(
+      [1, 2],
+      [edge(1, 2, 'must_account_for', 'a', 'recheck')]
+    );
+    expect(t.get(2)!.mustAccountFor).toMatchObject([
+      { number: 1, accounted: false },
+    ]);
+    expect(t.get(2)!.pending).toEqual([]);
+  });
+
+  it('never stacks on a line that holds a prerequisite only through a conflict', () => {
+    const t = buildTree(
+      [1, 2, 3],
+      [
+        edge(1, 3, 'builds_on'),
+        edge(2, 3, 'builds_on'),
+        edge(1, 2, 'conflicts'), // #2 lands after #1, but isn't stacked on it
+      ]
+    );
+    expect(t.get(3)!.parent).toBeNull();
+    expect(t.get(3)!.waitsOn.map((d) => d.number)).toEqual([1, 2]);
+    expect(t.get(2)!.waitsOn.map((d) => d.number)).toEqual([1]);
+  });
+
+  it('stacks on the line an order edge makes after a conflict', () => {
+    const t = buildTree(
+      [1, 2, 3],
+      [
+        edge(1, 3, 'builds_on'),
+        edge(2, 3, 'builds_on'),
+        edge(1, 2, 'conflicts'),
+        { ...edge(1, 2, 'ordered_after'), slot: 'order', forPr: 3 },
+      ]
+    );
+    expect(t.get(2)!.parent?.number).toBe(1);
+    expect(t.get(3)!.parent?.number).toBe(2);
+    expect(t.get(3)!.waitsOn).toEqual([]);
   });
 
   it('never parents on a conflict alone', () => {
@@ -347,6 +427,73 @@ describe('buildTree', () => {
     }
   });
 
+  it('reports a failed re-check as unchecked on the dependent, and it still blocks', () => {
+    const t = buildTree(
+      [1, 2],
+      [
+        {
+          ...edge(1, 2, 'must_account_for'),
+          errorMessage: 'Re-check failed: model down',
+        },
+      ]
+    );
+    expect(t.get(2)!.unchecked).toEqual([1]);
+    expect(t.get(1)!.unchecked).toEqual([]);
+    expect(t.get(2)!.mustAccountFor.map((d) => d.number)).toEqual([1]);
+    expect(t.get(2)!.parent?.number).toBe(1);
+    // Dismissed, or accounted for: nothing to retry.
+    for (const extra of [{ dismissed: true }, { accounted: true }])
+      expect(
+        buildTree(
+          [1, 2],
+          [
+            {
+              ...edge(1, 2, 'must_account_for'),
+              errorMessage: 'Re-check failed: model down',
+              ...extra,
+            },
+          ]
+        ).get(2)!.unchecked
+      ).toEqual([]);
+  });
+
+  it('lists a prerequisite once in waitsOn when a verdict and an order edge both name it', () => {
+    const t = buildTree(
+      [1, 2],
+      [
+        edge(1, 2, 'conflicts'),
+        { ...edge(1, 2, 'conflicts'), slot: 'order', forPr: 2 },
+      ]
+    );
+    expect(t.get(2)!.waitsOn.map((d) => d.number)).toEqual([1]);
+  });
+
+  it('lists an unchecked PR once, and a failed order row is never unchecked', () => {
+    const t = buildTree(
+      [1, 2],
+      [
+        edge(1, 2, null, null, 'failed'),
+        {
+          ...edge(1, 2, 'must_account_for'),
+          errorMessage: 'Re-check failed: model down',
+        },
+      ]
+    );
+    expect(t.get(2)!.unchecked).toEqual([1]);
+    const order = buildTree(
+      [1, 2],
+      [
+        {
+          ...edge(1, 2, 'must_account_for'),
+          slot: 'order',
+          forPr: 2,
+          errorMessage: 'Re-check failed: model down',
+        },
+      ]
+    );
+    expect(order.get(2)!.unchecked).toEqual([]);
+  });
+
   it('reports failed pairs as unchecked and ignores independent and unfinished ones', () => {
     const t = buildTree(
       [1, 2, 3],
@@ -360,6 +507,27 @@ describe('buildTree', () => {
     expect(t.get(2)!.unchecked).toEqual([1]);
     expect(t.get(3)!.waitsOn).toEqual([]);
     expect(t.get(3)!.parent).toBeNull();
+  });
+
+  it('never reports an unfinished order row as unchecked or pending, nor stacks on it', () => {
+    const t = buildTree(
+      [1, 2],
+      [
+        {
+          ...edge(1, 2, 'ordered_after', 'a', 'failed'),
+          slot: 'order',
+          forPr: 2,
+        },
+        {
+          ...edge(1, 2, 'ordered_after', 'a', 'triage'),
+          slot: 'order',
+          forPr: 2,
+        },
+      ]
+    );
+    expect(t.get(2)!.unchecked).toEqual([]);
+    expect(t.get(2)!.pending).toEqual([]);
+    expect(t.get(2)!.parent).toBeNull();
   });
 
   it('lists pairs still being checked as pending', () => {
@@ -376,5 +544,212 @@ describe('buildTree', () => {
     // #1 has landed: only the open side waits.
     expect(t.get(4)!.pending).toEqual([1]);
     expect(t.get(4)!.checking).toBe(false);
+  });
+});
+
+describe('parseRecheck', () => {
+  it('reads an answer and drops instructions once accounted for', () => {
+    expect(
+      parseRecheck(
+        '```json\n{"accounted":true,"reason":"Adds the check.","instructions":"x"}\n```'
+      )
+    ).toEqual({
+      accounted: true,
+      reason: 'Adds the check.',
+      instructions: null,
+    });
+    expect(
+      parseRecheck(
+        '{"accounted":false,"reason":"Still missing.","instructions":"Add it."}'
+      )
+    ).toEqual({
+      accounted: false,
+      reason: 'Still missing.',
+      instructions: 'Add it.',
+    });
+  });
+
+  it('refuses anything else', () => {
+    for (const text of [
+      '{"accounted":"yes","reason":"r","instructions":null}',
+      '{"reason":"r","instructions":null}',
+      '{"accounted":true,"reason":"","instructions":null}',
+      '[]',
+      'not json',
+    ])
+      expect(() => parseRecheck(text)).toThrow();
+  });
+});
+
+describe('linearize', () => {
+  const firstIs =
+    (n: number): Choose =>
+    async (x, y) =>
+      x === n || y !== n ? x : y;
+
+  it('adds nothing when one prerequisite’s chain already holds the others', async () => {
+    const added = await linearize(
+      {
+        open: [28, 29, 31],
+        stackable: new Map([
+          [29, [28]],
+          [31, [28, 29]],
+        ]),
+        others: [],
+        orders: [],
+      },
+      async () => {
+        throw new Error('no choice needed');
+      }
+    );
+    expect(added).toEqual([]);
+  });
+
+  it('orders two unrelated prerequisites by the choice, for the PR that needs both', async () => {
+    const asked: number[][] = [];
+    const added = await linearize(
+      {
+        open: [28, 29, 31],
+        stackable: new Map([[31, [28, 29]]]),
+        others: [],
+        orders: [],
+      },
+      async (x, y, forPr) => {
+        asked.push([x, y, forPr]);
+        return 29;
+      }
+    );
+    expect(asked).toEqual([[29, 28, 31]]);
+    expect(added).toEqual([{ before: 29, after: 28, forPr: 31 }]);
+  });
+
+  it('lets an existing relationship win over the choice, and still puts the pair in one line', async () => {
+    const added = await linearize(
+      {
+        open: [28, 29, 31],
+        stackable: new Map([[31, [28, 29]]]),
+        others: [{ pre: 28, dep: 29 }], // #29 conflicts with #28 and lands after it
+        orders: [],
+      },
+      async () => {
+        throw new Error('no choice needed');
+      }
+    );
+    // A conflict sets the direction but isn't a line to stack on: the order edge is still added.
+    expect(added).toEqual([{ before: 28, after: 29, forPr: 31 }]);
+  });
+
+  it('never orders a pair a maintainer refused; the dependent waits on both', async () => {
+    const added = await linearize(
+      {
+        open: [28, 29, 31],
+        stackable: new Map([[31, [28, 29]]]),
+        others: [],
+        orders: [],
+        refused: [{ before: 28, after: 29, forPr: 31 }],
+      },
+      async () => {
+        throw new Error('no choice needed');
+      }
+    );
+    expect(added).toEqual([]);
+  });
+
+  it('keeps one order when two dependents would choose opposite orders', async () => {
+    const asked: number[] = [];
+    const added = await linearize(
+      {
+        open: [1, 2, 8, 9],
+        stackable: new Map([
+          [8, [1, 2]],
+          [9, [1, 2]],
+        ]),
+        others: [],
+        orders: [],
+      },
+      async (x, y, forPr) => {
+        asked.push(forPr);
+        // #8 wants #2 first, #9 wants #1 first.
+        return forPr === 8 ? (x === 2 ? x : y) : x === 1 ? x : y;
+      }
+    );
+    expect(asked).toEqual([8]);
+    expect(added).toEqual([{ before: 2, after: 1, forPr: 8 }]);
+  });
+
+  it('rolls back a chain that would close a cycle', async () => {
+    const added = await linearize(
+      {
+        open: [1, 2, 3, 9],
+        stackable: new Map([[9, [1, 2, 3]]]),
+        others: [{ pre: 1, dep: 3 }], // #3 lands after #1
+        orders: [],
+      },
+      async (x) => x // whichever is asked about goes first: chain 3, 2, 1
+    );
+    // 2 after 3 is fine alone, but 1 after 2 would close 1 → 2 → 3 → 1: nothing of the chain is kept.
+    expect(added).toEqual([]);
+  });
+
+  it('chains three prerequisites and stays acyclic whatever the choice says', async () => {
+    const added = await linearize(
+      {
+        open: [1, 2, 3, 9],
+        stackable: new Map([[9, [1, 2, 3]]]),
+        others: [],
+        orders: [],
+      },
+      async (_x, y) => y // contrary: always the second
+    );
+    expect(added).toHaveLength(2);
+    const after = new Map(added.map((e) => [e.after, e.before]));
+    // Following "lands after" from any node ends: no cycle.
+    for (const start of [1, 2, 3]) {
+      const seen = new Set<number>();
+      for (
+        let n: number | undefined = start;
+        n !== undefined;
+        n = after.get(n)
+      ) {
+        expect(seen.has(n)).toBe(false);
+        seen.add(n);
+      }
+    }
+  });
+
+  it('skips PRs in a dependency cycle', async () => {
+    const added = await linearize(
+      {
+        open: [1, 2, 3, 4],
+        stackable: new Map([
+          [1, [2]],
+          [2, [1]],
+          [4, [1, 3]],
+        ]),
+        others: [],
+        orders: [],
+      },
+      firstIs(3)
+    );
+    expect(added).toEqual([]);
+  });
+
+  it('reads Clef’s order answer', () => {
+    expect(
+      readOrder({
+        first: {
+          type: 'choice',
+          value: 'b',
+          confidence: 0.8,
+          probabilities: { b: 0.8 },
+        },
+      })
+    ).toEqual({ first: 'b', confidence: 0.8 });
+    expect(() => readOrder({ first: { type: 'noul', value: 0.9 } })).toThrow();
+    expect(() =>
+      readOrder({
+        first: { type: 'choice', value: 'c', confidence: 1, probabilities: {} },
+      })
+    ).toThrow();
   });
 });

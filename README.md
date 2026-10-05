@@ -88,8 +88,8 @@ newer one.
 
 | Relationship         | Example                                                                                  | What happens                                                     |
 | -------------------- | ---------------------------------------------------------------------------------------- | ---------------------------------------------------------------- |
-| **Builds on**        | #32 calls a helper that #31 adds                                                         | #32 is drawn under #31 in the tree                               |
-| **Must account for** | #28 adds a setup check for every configuration variable; #29 adds a variable without one | #29's agent gets instructions: rebase onto #28 and add the check |
+| **Builds on**        | #32 calls a helper that #31 adds                                                         | #32 is stacked on #31 and lands after it                         |
+| **Must account for** | #28 adds a setup check for every configuration variable; #29 adds a variable without one | #29 can't merge until a re-check says it added the check         |
 | **Conflicts**        | #40 and #41 rewrite the same function                                                    | The tree shows the order: the later one waits on the earlier     |
 | **Independent**      | A docs change and an unrelated bug fix                                                   | Recorded, so the pair is never checked again at the same commits |
 
@@ -152,7 +152,8 @@ open pull requests are found before either lands.
 - **One place for people.** The **Approvals** page lists everything waiting on you across repositories, and the
   header shows how many.
 - **Opt in gradually.** Without a `.gitorange/review.yml`, GitOrange behaves like an ordinary code host with
-  checks, conflict resolution, and the stack tree. Add review questions when you want auto-merge, and a
+  checks, conflict resolution, and the stack tree (which also holds a dependent pull request until what it
+  needs has landed). Add review questions when you want auto-merge, and a
   `stacking:` section to tune how pull requests are compared.
 
 ## Built on Cloudflare
@@ -286,9 +287,9 @@ actual numbers.
 
 ## Known limitations
 
-- **Stacking shows and explains relationships, but doesn't yet retarget or order landings.** Retargeting a
-  pull request onto the one it builds on, putting several prerequisites in one line, and blocking until a
-  "must account for" is handled are in progress.
+- **Stacking retargets only in GitOrange.** A stacked pull request's base becomes its parent's branch, but
+  nothing is pushed: the author rebases onto the parent's branch themselves. A maintainer can Unstack a pull
+  request or Dismiss a dependency from the pull request page.
 - **Auto-merge tests the pull request's own commit, not the rebased result.** If the target moved since the
   checks ran, the merged result as a whole wasn't tested. Landing one at a time on tested commits is planned.
 - **Review reads one-line summaries.** A summary that leaves something out can't be flagged; ask about what

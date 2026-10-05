@@ -33,7 +33,10 @@ export type Reason =
       pr: number;
       landed: boolean;
       instructions: string | null;
+      /** Rebase onto it first when the prerequisite is open. */
+      branch: string | null;
     }
+  | { kind: 'rebase_onto'; pr: number; branch: string; why: string }
   | { kind: 'review_failed'; error: string | null }
   | { kind: 'flags_pending'; count: number }
   | { kind: 'cycle'; prs: number[] }
@@ -58,6 +61,7 @@ const KINDS: Record<ReasonKind, true> = {
   conflicts_unresolved: true,
   review_policy_invalid: true,
   must_account_for: true,
+  rebase_onto: true,
   review_failed: true,
   flags_pending: true,
   cycle: true,
@@ -78,6 +82,9 @@ export function reasonState(r: Reason): PullStateName | null {
     case 'check_failed':
     case 'changes_requested':
     case 'conflicts_unresolved':
+    // Not accounted for and not dismissed: stackReasons emits it only then.
+    case 'must_account_for':
+    case 'rebase_onto':
       return 'agent_followup';
     case 'review_policy_invalid':
       return r.where === 'pull_request' ? 'agent_followup' : 'human_review';
@@ -90,8 +97,6 @@ export function reasonState(r: Reason): PullStateName | null {
     case 'resolution_running':
     case 'stack_checking':
       return 'waiting';
-    // must_account_for informs only until plan 2b can mark edges accounted for (then it drives agent_followup).
-    case 'must_account_for':
     case 'stacked_on':
     case 'waits_on':
       return null;
@@ -112,8 +117,12 @@ export function decideState(reasons: Reason[]): PullState {
   };
 }
 
-/** What the stack reasons need beyond the node; milestone 2b adds fields. */
-export type StackReasonContext = Record<string, never>;
+export type StackReasonContext = {
+  /** Head branch of an open PR in the tree (rebase targets). */
+  branchOf?: (pr: number) => string | null;
+  /** This PR's head doesn't contain its open parent's head, and the parent's own chain is in order. */
+  needsRebase?: boolean;
+};
 
 /**
  * Reasons from a PR's place in its target's stack tree. The one place stack
@@ -121,19 +130,31 @@ export type StackReasonContext = Record<string, never>;
  */
 export function stackReasons(
   node: TreeNode,
-  _ctx: StackReasonContext = {}
+  ctx: StackReasonContext = {}
 ): Reason[] {
   const out: Reason[] = [];
   if (node.cycleWith.length) out.push({ kind: 'cycle', prs: node.cycleWith });
   if (node.checking || node.pending.length)
     out.push({ kind: 'stack_checking', prs: [...node.pending] });
   for (const d of node.mustAccountFor)
-    out.push({
-      kind: 'must_account_for',
-      pr: d.number,
-      landed: d.landed,
-      instructions: d.instructions,
-    });
+    if (!d.accounted)
+      out.push({
+        kind: 'must_account_for',
+        pr: d.number,
+        landed: d.landed,
+        instructions: d.instructions,
+        branch: d.landed ? null : (ctx.branchOf?.(d.number) ?? null),
+      });
+  if (node.parent && ctx.needsRebase) {
+    const branch = ctx.branchOf?.(node.parent.number);
+    if (branch)
+      out.push({
+        kind: 'rebase_onto',
+        pr: node.parent.number,
+        branch,
+        why: node.parent.reason,
+      });
+  }
   if (node.parent) out.push({ kind: 'stacked_on', pr: node.parent.number });
   for (const d of node.waitsOn) out.push({ kind: 'waits_on', pr: d.number });
   return out;

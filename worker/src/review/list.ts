@@ -9,6 +9,7 @@ import {
 import type { GitService } from '../git/service';
 import { reviewProgress, type ReviewProgress } from './auto-merge';
 import { readPolicy } from './policy';
+import { landTargetOf } from '../lib/land-target';
 
 /**
  * Review progress of a repository's open PRs at their current tips, in two queries; PRs
@@ -18,12 +19,15 @@ export async function reviewProgressFor(
   db: DrizzleDB,
   git: GitService,
   repositoryId: string,
-  prs: Pick<PullRequest, 'id' | 'state' | 'baseRef' | 'headRef'>[],
+  prs: Pick<
+    PullRequest,
+    'id' | 'state' | 'baseRef' | 'landTarget' | 'headRef'
+  >[],
   refs: Map<string, string>
 ): Promise<Map<string, ReviewProgress>> {
   const out = new Map<string, ReviewProgress>();
   const tips = prs.flatMap((pr) => {
-    const base = refs.get(`refs/heads/${pr.baseRef}`);
+    const base = refs.get(`refs/heads/${landTargetOf(pr)}`);
     const head = refs.get(`refs/heads/${pr.headRef}`);
     return pr.state === 'open' && base && head ? [{ pr, base, head }] : [];
   });

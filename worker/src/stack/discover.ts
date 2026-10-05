@@ -1,4 +1,4 @@
-import { and, desc, eq, or } from 'drizzle-orm';
+import { and, desc, eq, inArray, isNotNull, isNull, lt, or } from 'drizzle-orm';
 import type { DrizzleDB } from '../db/middleware';
 import {
   prClassifications,
@@ -9,6 +9,7 @@ import {
 } from '../db/app.schema';
 import type { FileChange, GitService } from '../git/service';
 import { pingingSteps } from '../live/publish';
+import { recordEvent } from '../pulls/events';
 import { findRepoById, gitFor } from '../lib/repos';
 import { pullRef } from '../merge/land';
 import type { StepRunner } from '../merge/resolution';
@@ -31,6 +32,9 @@ import {
   type PrSide,
   type StackModels,
 } from './models';
+import { landTargetIs, landTargetOf } from '../lib/land-target';
+import { maybeAutoMerge } from '../review/auto-merge';
+import { executeReconcile } from './reconcile';
 
 export type StackParams = { pullRequestId: string };
 
@@ -39,6 +43,8 @@ const MAX_SIDE_DIFF = 60 * 1024;
 /** Landed PRs considered: merged into the target within this window. */
 const LANDED_WINDOW_MS = 30 * 24 * 3600 * 1000;
 const MAX_LANDED = 20;
+/** A pair still in triage, deep or recheck this long after its claim belongs to a run that died: re-arm it. */
+export const PENDING_STALE_MS = 30 * 60 * 1000;
 /** Per-side caps that keep the `load` step's result well under Workflows' 1 MiB limit. */
 const MAX_DESCRIPTION = 4 * 1024;
 const MAX_SUMMARIES = 16 * 1024;
@@ -59,7 +65,7 @@ function capLines(text: string, max: number): string {
  * Stacking's tuning from the target branch's review.yml. Without a valid one, the defaults and no
  * `policySha`: there is no auto-merge review to wait for.
  */
-async function stackingPolicy(git: GitService, baseSha: string) {
+export async function stackingPolicy(git: GitService, baseSha: string) {
   const file = await readPolicy(git, baseSha);
   if (file)
     try {
@@ -114,7 +120,7 @@ export async function ensureStacking(
 }
 
 /** What a PR changes relative to `targetSha`, from their merge base. */
-async function changesFor(
+export async function changesFor(
   git: GitService,
   targetSha: string,
   headSha: string
@@ -129,7 +135,7 @@ async function changesFor(
 }
 
 /** One-liners from the PR's latest review at `head`; plain paths when it has none. */
-async function summariesFor(
+export async function summariesFor(
   db: DrizzleDB,
   pullRequestId: string,
   head: string,
@@ -156,6 +162,7 @@ async function summariesFor(
 type Side = PrSide & {
   id: string;
   head: string;
+  headRef: string;
   /** The commit its changes are measured from: the target tip, or a landed PR's merge parent. */
   target: string;
 };
@@ -184,7 +191,7 @@ export async function executeStacking(
     if (!found) return null;
     const git = gitFor(env, found.repo);
     const [target, head] = await Promise.all([
-      git.resolve(pr.baseRef),
+      git.resolve(landTargetOf(pr)),
       git.resolve(pr.headRef),
     ]);
     if (!target || !head) return null;
@@ -207,6 +214,7 @@ export async function executeStacking(
         ),
         landed,
         head: h,
+        headRef: p.headRef,
         target: base,
         paths: changes.map((c) => c.path),
       };
@@ -230,7 +238,7 @@ export async function executeStacking(
         and(
           eq(pullRequests.repositoryId, pr.repositoryId),
           eq(pullRequests.state, 'open'),
-          eq(pullRequests.baseRef, pr.baseRef)
+          landTargetIs(landTargetOf(pr))
         )
       )
       .orderBy(desc(pullRequests.number))
@@ -258,26 +266,68 @@ export async function executeStacking(
         and(
           eq(pullRequests.repositoryId, pr.repositoryId),
           eq(pullRequests.state, 'merged'),
-          eq(pullRequests.baseRef, pr.baseRef)
+          landTargetIs(landTargetOf(pr))
         )
       )
       .orderBy(desc(pullRequests.mergedAt))
       .limit(MAX_LANDED)
       .all();
+    const addLanded = async (l: PullRequest) => {
+      if (!l.mergeCommitSha) return;
+      const merge = await git.commit(l.mergeCommitSha);
+      const h = refs.get(pullRef(l.number));
+      if (!merge || !h) return;
+      candidates.push(candidate(await side(l, h, merge.parents[0], true)));
+    };
     for (const l of landed) {
       if (!l.mergeCommitSha || !l.mergedAt) continue;
       if (Date.now() - l.mergedAt.getTime() > LANDED_WINDOW_MS) continue;
       if ((await git.mergeBase(l.mergeCommitSha, head)) === l.mergeCommitSha)
         continue; // already in this PR's history
-      const merge = await git.commit(l.mergeCommitSha);
-      const h = refs.get(pullRef(l.number));
-      if (!merge || !h) continue;
-      candidates.push(candidate(await side(l, h, merge.parents[0], true)));
+      await addLanded(l);
+    }
+    // Landed prerequisites this PR still has to account for are re-checked whatever their age, and even once
+    // its head contains them (the dependent rebased onto them): otherwise it would stay blocked for good.
+    const owed = await db
+      .select({ a: prEdges.prAId, b: prEdges.prBId })
+      .from(prEdges)
+      .where(
+        and(
+          eq(prEdges.slot, 'pair'),
+          eq(prEdges.kind, 'must_account_for'),
+          isNull(prEdges.dismissedAt),
+          isNull(prEdges.accountedForAt),
+          or(
+            and(eq(prEdges.prBId, pr.id), eq(prEdges.prerequisite, 'a')),
+            and(eq(prEdges.prAId, pr.id), eq(prEdges.prerequisite, 'b'))
+          )
+        )
+      )
+      .all();
+    const have = new Set(candidates.map((c) => c.id));
+    for (const e of owed) {
+      const id = e.a === pr.id ? e.b : e.a;
+      if (have.has(id)) continue;
+      const l = await db
+        .select()
+        .from(pullRequests)
+        .where(
+          and(
+            eq(pullRequests.id, id),
+            eq(pullRequests.state, 'merged'),
+            landTargetIs(landTargetOf(pr))
+          )
+        )
+        .get();
+      if (l) {
+        have.add(id);
+        await addLanded(l);
+      }
     }
     const ignoreText = await readIgnore(git, target);
     return {
       repo: found.repo,
-      landTarget: pr.baseRef,
+      landTarget: landTargetOf(pr),
       policy,
       me,
       candidates,
@@ -289,71 +339,245 @@ export async function executeStacking(
   const git = gitFor(env, job.repo as Repository);
   const ignored = ignoreMatcher(job.ignoreText);
 
+  type Claim =
+    | { mode: 'skip' }
+    | { mode: 'fresh'; wasAccounted: boolean; dismissed: boolean }
+    | {
+        mode: 'recheck';
+        prerequisite: 'a' | 'b';
+        reason: string;
+        instructions: string | null;
+      };
+  // The reasoning model reads the diffs: `focus` files first, then the rest within budget.
+  const diffsOf = async (s: Side, focus: string[]) => {
+    const changes = await changesFor(git, s.target, s.head);
+    const text = await diffsFor(git, changes, focus, ignored, false);
+    return text.slice(0, MAX_SIDE_DIFF);
+  };
+  // Open PRs whose pair this run checked: discovery may have been all that held their auto-merge.
+  const touched = new Set<string>();
+  // Whether this run claimed any pair: a run that claimed nothing found nothing new to restack.
+  let claimed = false;
   for (const other of job.candidates) {
     // a: the landed one, else the lower number.
     const [a, b] =
       other.landed || other.number < job.me.number
         ? [other, job.me]
         : [job.me, other];
-    const fresh = await step.do(`claim:${other.id}`, async () => {
-      // One row per unordered pair: once the higher-numbered PR lands it becomes a, so drop the old orientation.
-      await db
-        .delete(prEdges)
-        .where(and(eq(prEdges.prAId, b.id), eq(prEdges.prBId, a.id)));
-      const row = await db
-        .select()
-        .from(prEdges)
-        .where(and(eq(prEdges.prAId, a.id), eq(prEdges.prBId, b.id)))
-        .get();
-      if (
-        row &&
-        row.aHead === a.head &&
-        row.bHead === b.head &&
-        row.stage !== 'failed'
-      )
-        return false;
-      const now = new Date();
-      const values = {
-        repositoryId: job.repo.id,
-        landTarget: job.landTarget,
-        prAId: a.id,
-        prBId: b.id,
-        aHead: a.head,
-        bHead: b.head,
-        stage: 'triage' as const,
-        kind: null,
-        prerequisite: null,
-        files: null,
-        conflictFiles: null,
-        reason: null,
-        instructions: null,
-        errorMessage: null,
-        updatedAt: now,
-      };
-      await db
-        .insert(prEdges)
-        .values({ id: crypto.randomUUID(), createdAt: now, ...values })
-        .onConflictDoUpdate({
-          target: [prEdges.prAId, prEdges.prBId],
-          set: values,
-        });
-      return true;
-    });
-    if (!fresh) continue;
+    const pairOf = (x: string, y: string) =>
+      and(eq(prEdges.prAId, x), eq(prEdges.prBId, y), eq(prEdges.slot, 'pair'));
+    const claim = await step.do(
+      `claim:${other.id}`,
+      async (): Promise<Claim> => {
+        // One pair row per unordered pair. A reverse-oriented row exists only because the other side landed
+        // (landed PRs are always a): drop it only when this run is the landed orientation; otherwise this run
+        // loaded before that landing and its view is stale.
+        const reverse = await db
+          .select({ id: prEdges.id })
+          .from(prEdges)
+          .where(pairOf(b.id, a.id))
+          .get();
+        if (reverse) {
+          if (!a.landed) return { mode: 'skip' };
+          await db.delete(prEdges).where(eq(prEdges.id, reverse.id));
+        }
+        const row = await db
+          .select()
+          .from(prEdges)
+          .where(pairOf(a.id, b.id))
+          .get();
+        // In progress elsewhere, unless that run died (still pending long after its claim).
+        const dead =
+          row &&
+          (row.stage === 'triage' ||
+            row.stage === 'deep' ||
+            row.stage === 'recheck') &&
+          Date.now() - row.updatedAt.getTime() > PENDING_STALE_MS;
+        if (
+          row &&
+          row.aHead === a.head &&
+          row.bHead === b.head &&
+          row.stage !== 'failed' &&
+          !dead
+        )
+          return { mode: 'skip' };
+        // Only the dependent moved since it was told to account for the prerequisite: re-check, don't re-decide.
+        if (
+          row &&
+          // recheck: a re-check whose run died, re-armed by Retry.
+          (row.stage === 'done' || row.stage === 'recheck') &&
+          row.kind === 'must_account_for' &&
+          row.prerequisite &&
+          (row.prerequisite === 'a'
+            ? row.aHead === a.head
+            : row.bHead === b.head)
+        ) {
+          // Dismissed: it neither blocks nor needs re-checking.
+          if (row.dismissedAt) return { mode: 'skip' };
+          await db
+            .update(prEdges)
+            .set({
+              aHead: a.head,
+              bHead: b.head,
+              stage: 'recheck',
+              accountedForAt: null,
+              accountedHead: null,
+              errorMessage: null,
+              updatedAt: new Date(),
+            })
+            .where(eq(prEdges.id, row.id));
+          return {
+            mode: 'recheck',
+            prerequisite: row.prerequisite,
+            reason: row.reason ?? '',
+            instructions: row.instructions,
+          };
+        }
+        const now = new Date();
+        // dismissed_at is left alone: a maintainer's dismissal survives new heads.
+        const values = {
+          repositoryId: job.repo.id,
+          landTarget: job.landTarget,
+          prAId: a.id,
+          prBId: b.id,
+          slot: 'pair' as const,
+          aHead: a.head,
+          bHead: b.head,
+          stage: 'triage' as const,
+          kind: null,
+          prerequisite: null,
+          files: null,
+          conflictFiles: null,
+          reason: null,
+          instructions: null,
+          accountedForAt: null,
+          accountedHead: null,
+          errorMessage: null,
+          updatedAt: now,
+        };
+        await db
+          .insert(prEdges)
+          .values({ id: crypto.randomUUID(), createdAt: now, ...values })
+          .onConflictDoUpdate({
+            target: [prEdges.prAId, prEdges.prBId, prEdges.slot],
+            set: values,
+          });
+        return {
+          mode: 'fresh',
+          wasAccounted:
+            !!row?.accountedForAt && row.kind === 'must_account_for',
+          dismissed: !!row?.dismissedAt,
+        };
+      }
+    );
+    if (claim.mode === 'skip') continue;
+    claimed = true;
+    if (!other.landed) touched.add(other.id);
 
     // Compare-and-swap on the claimed heads: a newer run that re-claimed the pair at other heads keeps its row.
-    const save = (set: Partial<typeof prEdges.$inferInsert>) =>
-      db
+    // Returns whether this run still owns the row and should announce it: saved, and not dismissed.
+    const save = async (set: Partial<typeof prEdges.$inferInsert>) => {
+      const rows = await db
         .update(prEdges)
         .set({ ...set, updatedAt: new Date() })
         .where(
           and(
             eq(prEdges.prAId, a.id),
             eq(prEdges.prBId, b.id),
+            eq(prEdges.slot, 'pair'),
             eq(prEdges.aHead, a.head),
             eq(prEdges.bHead, b.head)
           )
+        )
+        .returning({ id: prEdges.id, dismissedAt: prEdges.dismissedAt });
+      return rows.length > 0 && !rows[0].dismissedAt;
+    };
+    // One event per pair, heads and kind: a retried step records it once.
+    const eventId = (kind: string) =>
+      `pair:${a.id}:${b.id}:${a.head}:${b.head}:${kind}`;
+    const announceMust = (
+      pre: Side,
+      dep: Side,
+      reason: string,
+      instructions: string | null
+    ) =>
+      recordEvent(db, {
+        id: eventId('must_account_for'),
+        repositoryId: job.repo.id,
+        pullRequestId: dep.id,
+        kind: 'must_account_for',
+        data: {
+          pr: pre.number,
+          reason,
+          instructions,
+          rebase_first: pre.landed ? null : pre.headRef,
+        },
+      });
+    const sides = (pre: 'a' | 'b') =>
+      pre === 'a' ? { pre: a, dep: b } : { pre: b, dep: a };
+    // Did the dependent's head account for the prerequisite? A failure keeps blocking (stage done, error set);
+    // `announceOnFail`: the dependent hasn't been told yet at these heads, so a failure posts the instructions.
+    const recheck = async (
+      pre: Side,
+      dep: Side,
+      reason: string,
+      instructions: string | null,
+      announceOnFail = false
+    ) => {
+      try {
+        const result = await step.do(
+          `recheck:${other.id}`,
+          MODEL_RETRIES,
+          async () =>
+            models.recheck({
+              prerequisite: {
+                ...pre,
+                diffs: await diffsOf(pre, other.shared),
+              },
+              dependent: { ...dep, diffs: await diffsOf(dep, other.shared) },
+              reason,
+              instructions,
+            })
         );
+        await step.do(`rechecked:${other.id}`, async () => {
+          const still = result.instructions ?? instructions;
+          const owned = await save({
+            stage: 'done',
+            accountedForAt: result.accounted ? new Date() : null,
+            accountedHead: result.accounted ? dep.head : null,
+            instructions: result.accounted ? instructions : still,
+            errorMessage: null,
+          });
+          if (!owned) return true;
+          if (result.accounted)
+            await recordEvent(db, {
+              id: eventId('accounted_for'),
+              repositoryId: job.repo.id,
+              pullRequestId: dep.id,
+              kind: 'accounted_for',
+              data: { pr: pre.number, reason: result.reason },
+            });
+          else await announceMust(pre, dep, result.reason, still);
+          return true;
+        });
+      } catch (e) {
+        console.error('[stack] re-check failed', a.number, b.number, e);
+        await step.do(`recheck-failed:${other.id}`, async () => {
+          const owned = await save({
+            stage: 'done',
+            errorMessage: `Re-check failed: ${e instanceof Error ? e.message : String(e)}`,
+          });
+          if (owned && announceOnFail)
+            await announceMust(pre, dep, reason, instructions);
+          return true;
+        });
+      }
+    };
+    if (claim.mode === 'recheck') {
+      const { pre, dep } = sides(claim.prerequisite);
+      await recheck(pre, dep, claim.reason, claim.instructions);
+      continue;
+    }
 
     try {
       // Textual check: only possible between two open heads that share a file.
@@ -394,13 +618,8 @@ export async function executeStacking(
         await save({ stage: 'deep', conflictFiles: conflicts });
         return true;
       });
-      // The reasoning model reads the diffs: shared and conflicting files first, then the rest within budget.
+      // Shared and conflicting files first.
       const focus = [...new Set([...conflicts, ...shared])];
-      const diffs = async (s: Side) => {
-        const changes = await changesFor(git, s.target, s.head);
-        const text = await diffsFor(git, changes, focus, ignored, false);
-        return text.slice(0, MAX_SIDE_DIFF);
-      };
       const decided =
         route.action === 'explain'
           ? { kind: route.kind, prerequisite: route.prerequisite }
@@ -410,8 +629,8 @@ export async function executeStacking(
         MODEL_RETRIES,
         async () =>
           models.explain({
-            a: { ...a, diffs: await diffs(a) },
-            b: { ...b, diffs: await diffs(b) },
+            a: { ...a, diffs: await diffsOf(a, focus) },
+            b: { ...b, diffs: await diffsOf(b, focus) },
             conflicts,
             decided,
           })
@@ -422,7 +641,7 @@ export async function executeStacking(
       if (kind === 'independent' && conflicts.length) kind = 'conflicts';
       if (kind === 'conflicts' && !prerequisite) prerequisite = 'a';
       await step.do(`save:${other.id}`, async () => {
-        await save({
+        const owned = await save({
           stage: 'done',
           kind,
           prerequisite: kind === 'independent' ? null : prerequisite,
@@ -431,8 +650,28 @@ export async function executeStacking(
           instructions:
             kind === 'must_account_for' ? relation.instructions : null,
         });
+        // Accounted for before: the re-check below announces its outcome instead.
+        if (
+          owned &&
+          kind === 'must_account_for' &&
+          prerequisite &&
+          !claim.wasAccounted
+        ) {
+          const { pre, dep } = sides(prerequisite);
+          await announceMust(pre, dep, relation.reason, relation.instructions);
+        }
         return true;
       });
+      // Accounted for before both heads moved, and still must account for: re-check now rather than wait.
+      if (
+        kind === 'must_account_for' &&
+        prerequisite &&
+        claim.wasAccounted &&
+        !claim.dismissed
+      ) {
+        const { pre, dep } = sides(prerequisite);
+        await recheck(pre, dep, relation.reason, relation.instructions, true);
+      }
     } catch (e) {
       console.error('[stack] pair failed', a.number, b.number, e);
       await step.do(`fail:${other.id}`, async () => {
@@ -444,6 +683,27 @@ export async function executeStacking(
       });
     }
   }
+  // Restack the land target with what this run found. A failing reconcile never stops auto-merge below.
+  if (claimed)
+    try {
+      await executeReconcile(
+        { env, db, step: deps.step, models },
+        { repositoryId: job.repo.id, landTarget: job.landTarget },
+        'stack-'
+      );
+    } catch (e) {
+      console.error('[stack] reconcile failed', job.repo.id, job.landTarget, e);
+    }
+  // Discovery held auto-merge for these heads; now that it has checked them, try again. Never fails the run.
+  await step.do('auto-merge', async () => {
+    for (const id of [params.pullRequestId, ...touched])
+      try {
+        await maybeAutoMerge(env, db, id);
+      } catch (e) {
+        console.error('[stack] auto-merge failed', id, e);
+      }
+    return true;
+  });
 }
 
 /**
@@ -460,12 +720,49 @@ export async function retryFailedPairs(
   if (!reviewConfigured(env)) return 'off';
   // A retried run needs a new instance id: suffix with the time.
   const id = `stack-${pr.id}-${shas.head.slice(0, 12)}-retry-${Date.now()}`;
+  // Failed pairs, and pairs stuck mid-check by a run that died, are checked again from scratch.
   await db
     .delete(prEdges)
     .where(
       and(
-        eq(prEdges.stage, 'failed'),
+        eq(prEdges.slot, 'pair'),
+        or(
+          eq(prEdges.stage, 'failed'),
+          and(
+            inArray(prEdges.stage, ['triage', 'deep']),
+            lt(prEdges.updatedAt, new Date(Date.now() - PENDING_STALE_MS))
+          )
+        ),
         or(eq(prEdges.prAId, pr.id), eq(prEdges.prBId, pr.id))
+      )
+    );
+  // A failed re-check still blocks; forgetting the dependent's head makes the next run re-check it.
+  // A re-check stuck at stage 'recheck' (its run died) is re-armed too.
+  const failedRecheck = and(
+    eq(prEdges.slot, 'pair'),
+    eq(prEdges.kind, 'must_account_for'),
+    isNull(prEdges.accountedForAt),
+    isNull(prEdges.dismissedAt),
+    or(isNotNull(prEdges.errorMessage), eq(prEdges.stage, 'recheck'))
+  );
+  await db
+    .update(prEdges)
+    .set({ bHead: '' })
+    .where(
+      and(
+        failedRecheck,
+        eq(prEdges.prerequisite, 'a'),
+        eq(prEdges.prBId, pr.id)
+      )
+    );
+  await db
+    .update(prEdges)
+    .set({ aHead: '' })
+    .where(
+      and(
+        failedRecheck,
+        eq(prEdges.prerequisite, 'b'),
+        eq(prEdges.prAId, pr.id)
       )
     );
   try {

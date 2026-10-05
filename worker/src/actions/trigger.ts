@@ -24,6 +24,7 @@ import {
   WorkflowFileError,
   type WorkflowDef,
 } from './workflow-file';
+import { landTargetOf } from '../lib/land-target';
 
 type Db = DrizzleD1Database<typeof schema>;
 
@@ -395,7 +396,7 @@ export async function onRefsUpdated(
           kind: 'pull_request',
           number: pr.number,
           title: pr.title,
-          baseRef: pr.baseRef,
+          baseRef: landTargetOf(pr),
           headRef: pr.headRef,
           headSha: u.new,
           actorId,

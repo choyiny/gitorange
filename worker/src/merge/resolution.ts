@@ -21,6 +21,7 @@ import { type ConflictResolverApi, type ResolveRequest } from './resolver';
 import { generatedConflicts } from './generated';
 import { recordAiUsage, usageFromTranscript } from '../usage/record';
 import { closeAgentRun } from '../agent-runs/record';
+import { landTargetOf } from '../lib/land-target';
 
 /** Where a proposed resolution's commit waits until it is applied. */
 export const resolutionRef = (id: string) => `refs/resolutions/${id}`;
@@ -278,14 +279,17 @@ export async function cancelStale(
   env: CloudflareBindings,
   db: DrizzleDB,
   git: GitService,
-  pr: Pick<PullRequest, 'id' | 'repositoryId' | 'baseRef' | 'headRef'>,
+  pr: Pick<
+    PullRequest,
+    'id' | 'repositoryId' | 'baseRef' | 'landTarget' | 'headRef'
+  >,
   seen: { base: string; head: string }
 ): Promise<{ stale: boolean; cancelled: number }> {
   // Straight from the remote: a request's GitService caches the refs it saw when it began.
   const { refs } = await git.client.listRefs();
   const tip = (name: string) =>
     refs.get(`refs/heads/${name}`) ?? refs.get(name) ?? null;
-  if (tip(pr.baseRef) !== seen.base || tip(pr.headRef) !== seen.head)
+  if (tip(landTargetOf(pr)) !== seen.base || tip(pr.headRef) !== seen.head)
     return { stale: true, cancelled: 0 };
   const cancelled = await supersede(env, db, pr.id, seen);
   if (cancelled) await startNext(env, db, pr.repositoryId);
@@ -359,7 +363,7 @@ export async function startNext(
       .get();
     if (!next) return;
     const [base, head] = await Promise.all([
-      git.resolve(next.pr.baseRef),
+      git.resolve(landTargetOf(next.pr)),
       git.resolve(next.pr.headRef),
     ]);
     if (
@@ -594,7 +598,7 @@ export async function executeResolution(deps: ResolutionDeps, id: string) {
     if (!job) return;
     const { row, pr, repo, author } = job;
     step = pingingSteps(env, step, pr.repositoryId, { approvals: true });
-    const labels = { a: pr.baseRef, o: 'base', b: pr.headRef };
+    const labels = { a: landTargetOf(pr), o: 'base', b: pr.headRef };
     const current = (when: string) =>
       step.do(`current:${when}`, () =>
         outcome(() => ensureCurrent(env, db, row, repo as Repository))
@@ -767,7 +771,7 @@ async function ensureCurrent(
   if (pr?.state !== 'open') throw new ResolutionError(SUPERSEDED);
   const git = gitFor(env, repo);
   const [base, head] = await Promise.all([
-    git.resolve(pr.baseRef),
+    git.resolve(landTargetOf(pr)),
     git.resolve(pr.headRef),
   ]);
   if (base !== row.baseSha || head !== row.headSha)
@@ -802,7 +806,7 @@ async function prepareRequest(
       plan.conflictFiles.map((f) => [f.path, f.withMarkers])
     ),
     labels: { ours: labels.a, theirs: labels.b },
-    oursIntent: `Commits that landed on ${pr.baseRef} since the pull request branched:\n${subjects(landed)}`,
+    oursIntent: `Commits that landed on ${landTargetOf(pr)} since the pull request branched:\n${subjects(landed)}`,
     theirsIntent:
       `Pull request #${pr.number}: ${pr.title}\n${pr.body ? `${pr.body.slice(0, 4000)}\n` : ''}` +
       `Its commits:\n${subjects(proposed)}`,

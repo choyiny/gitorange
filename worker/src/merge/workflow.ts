@@ -14,6 +14,7 @@ import { executeStacking, type StackParams } from '../stack/discover';
 import { workersAiStackModels } from '../stack/models';
 import { recordAgentRun } from '../agent-runs/record';
 import { settleAfterPayload } from '../pulls/settle';
+import { executeReconcile, type ReconcileParams } from '../stack/reconcile';
 
 export type MergeResolutionParams =
   | {
@@ -21,27 +22,41 @@ export type MergeResolutionParams =
       sweep?: undefined;
       classificationId?: undefined;
       stack?: undefined;
+      reconcile?: undefined;
     }
   | {
       sweep: SweepParams;
       resolutionId?: undefined;
       classificationId?: undefined;
       stack?: undefined;
+      reconcile?: undefined;
     }
   | {
       classificationId: string;
       resolutionId?: undefined;
       sweep?: undefined;
       stack?: undefined;
+      reconcile?: undefined;
     }
   | {
       stack: StackParams;
       resolutionId?: undefined;
       sweep?: undefined;
       classificationId?: undefined;
+      reconcile?: undefined;
+    }
+  | {
+      reconcile: ReconcileParams;
+      resolutionId?: undefined;
+      sweep?: undefined;
+      classificationId?: undefined;
+      stack?: undefined;
     };
 
-/** MERGE_RESOLUTION: runs an AI resolution attempt, an auto-merge review, a conflict sweep, or stacking discovery. */
+/**
+ * MERGE_RESOLUTION: runs an AI resolution attempt, an auto-merge review, a conflict sweep, stacking discovery, or a
+ * stack reconcile.
+ */
 export class MergeResolutionWorkflow extends WorkflowEntrypoint<
   CloudflareBindings,
   MergeResolutionParams
@@ -102,6 +117,21 @@ export class MergeResolutionWorkflow extends WorkflowEntrypoint<
         );
     } else if (p.sweep) {
       await executeSweep({ env: this.env, db, step: runner }, p.sweep);
+    } else if (p.reconcile) {
+      const ids = await getSettings(db, this.env, ['ai.review_model']);
+      await executeReconcile(
+        {
+          env: this.env,
+          db,
+          step: runner,
+          models: workersAiStackModels(
+            this.env,
+            { review: ids['ai.review_model'] },
+            { repositoryId: p.reconcile.repositoryId, pullRequestId: null }
+          ),
+        },
+        p.reconcile
+      );
     } else {
       await executeResolution(
         {

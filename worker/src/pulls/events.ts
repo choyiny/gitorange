@@ -1,6 +1,11 @@
 import { and, desc, eq, inArray, sql } from 'drizzle-orm';
 import type { DrizzleDB } from '../db/middleware';
-import { prEvents, type PrEvent, type PullRequest } from '../db/app.schema';
+import {
+  prEvents,
+  type PrEvent,
+  type PrEventKind,
+  type PullRequest,
+} from '../db/app.schema';
 import { chunks } from '../stack/view';
 import type { PullState, PullStateName, Reason } from './state';
 
@@ -57,7 +62,7 @@ export function stateEventStatements(
 }
 
 /** The D1 binding under a drizzle instance (its batch is a transaction; drizzle's batch rejects raw statements). */
-function d1Of(db: DrizzleDB): D1Database {
+export function d1Of(db: DrizzleDB): D1Database {
   const d1 = (db as DrizzleDB & { $client?: D1Database }).$client;
   if (!d1) throw new Error('drizzle instance has no D1 client');
   return d1;
@@ -85,6 +90,39 @@ export async function recordStates(
       inserted += results[i].meta?.changes ?? 0;
   }
   return inserted;
+}
+
+/**
+ * Records one of GitOrange's own timeline entries (not a state change). Pass a deterministic `id` from inside a
+ * Workflow step so a retried step records it once.
+ */
+export async function recordEvent(
+  db: DrizzleDB,
+  e: {
+    id?: string;
+    repositoryId: string;
+    pullRequestId: string;
+    kind: Exclude<PrEventKind, 'state_changed'>;
+    data?: Record<string, unknown>;
+    actorId?: string | null;
+  }
+): Promise<void> {
+  const now = new Date();
+  await db
+    .insert(prEvents)
+    .values({
+      id: e.id ?? crypto.randomUUID(),
+      repositoryId: e.repositoryId,
+      pullRequestId: e.pullRequestId,
+      kind: e.kind,
+      state: null,
+      data: e.data ?? null,
+      actorId: e.actorId ?? null,
+      // eventsFor orders by computed_at: a timeline entry sorts at when it happened.
+      computedAt: now,
+      createdAt: now,
+    })
+    .onConflictDoNothing({ target: prEvents.id });
 }
 
 /** A PR's newest `limit` timeline events, oldest first. */

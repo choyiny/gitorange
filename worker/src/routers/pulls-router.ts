@@ -53,10 +53,12 @@ import { reviewProgressFor } from '../review/list';
 import { CHANGES_NOTE_MAX, decideFlag } from '../review/flags';
 import { reviewView } from '../review/view';
 import { stackTreeView, stackViewFor } from '../stack/view';
-import { retryFailedPairs } from '../stack/discover';
+import { ensureStacking, retryFailedPairs } from '../stack/discover';
+import { dismissEdge, onPullClosed, startReconcile } from '../stack/retarget';
 import { PULL_STATES, type PullState } from '../pulls/state';
 import { pullStates, pullStateFor } from '../pulls/signals';
 import { eventsFor } from '../pulls/events';
+import { landShas, landTargetOf } from '../lib/land-target';
 
 export const pullsRouter = new OpenAPIHono<RepoEnv>({
   defaultHook: validationHook,
@@ -72,6 +74,8 @@ const pullSchema = z
     state: z.enum(['open', 'closed', 'merged']),
     author: publicUserSchema,
     baseRef: z.string(),
+    /** Where it lands; baseRef may be a parent PR's branch while stacked. */
+    landTarget: z.string(),
     headRef: z.string(),
     mergeCommitSha: z.string().nullable(),
     mergedBy: publicUserSchema.nullable(),
@@ -105,6 +109,7 @@ function serializePull(
     state: pr.state,
     author: people.get(pr.authorId) ?? ghost,
     baseRef: pr.baseRef,
+    landTarget: landTargetOf(pr),
     headRef: pr.headRef,
     mergeCommitSha: pr.mergeCommitSha,
     mergedBy: pr.mergedById ? (people.get(pr.mergedById) ?? ghost) : null,
@@ -299,7 +304,7 @@ pullsRouter.openapi(listRoute, async (c) => {
     const r = resolutions.get(pr.id);
     if (
       !r ||
-      r.baseSha !== refs.get(`refs/heads/${pr.baseRef}`) ||
+      r.baseSha !== refs.get(`refs/heads/${landTargetOf(pr)}`) ||
       r.headSha !== refs.get(`refs/heads/${pr.headRef}`)
     )
       return null;
@@ -327,11 +332,20 @@ pullsRouter.openapi(listRoute, async (c) => {
 
 const dependencySchema = z.object({
   number: z.number(),
-  kind: z.enum(['builds_on', 'must_account_for', 'conflicts', 'independent']),
+  kind: z.enum([
+    'builds_on',
+    'must_account_for',
+    'conflicts',
+    'independent',
+    'ordered_after',
+  ]),
   reason: z.string(),
   instructions: z.string().nullable(),
   landed: z.boolean(),
   files: z.array(z.string()),
+  accounted: z.boolean(),
+  /** ordered_after: the PR this order was added for. */
+  forPr: z.number().nullable(),
 });
 const stackNodeSchema = z.object({
   number: z.number(),
@@ -669,56 +683,61 @@ pullsRouter.openapi(getPullRoute, async (c) => {
   let resolvedByAi = false;
   let commitCount = 0;
   const resolution = await latestResolution(db, pr.id);
-  if (shas) {
-    const commits = await git.commitsBetween(shas.base, shas.head);
-    commitCount = commits.length;
-    if (pr.state === 'open') {
-      const plan = await git.planMerge(shas.base, shas.head, {
-        collectConflictFiles: true,
-      });
-      conflicts = plan.upToDate ? [] : plan.conflicts;
-      resolvedByAi =
-        conflicts.length > 0 &&
-        resolution?.status === 'proposed' &&
-        resolution.baseSha === shas.base &&
-        resolution.headSha === shas.head;
-      mergeable = !plan.upToDate && (conflicts.length === 0 || resolvedByAi);
-      // Text conflicts outside generated files (those are regenerated, not merged by the model).
-      conflictsResolvable =
-        !plan.upToDate &&
-        plan.conflicts.length > 0 &&
-        plan.conflictFiles.length === plan.conflicts.length &&
-        !(await generatedConflicts(git, shas.base, plan.conflicts)).length;
-      // Backstop for missed triggers: unresolved text conflicts get a resolution attempt, and an
-      // attempt for commits the branches moved past is cancelled.
-      if (conflictsResolvable && !resolvedByAi)
-        c.executionCtx.waitUntil(
-          ensureResolution(c.env, db, git, pr, shas).catch((e) =>
-            console.error('[merge] auto-resolve failed', e)
-          )
-        );
-      else if (
-        (resolution?.status === 'running' || resolution?.status === 'queued') &&
-        (resolution.baseSha !== shas.base || resolution.headSha !== shas.head)
-      )
-        c.executionCtx.waitUntil(
-          cancelStale(c.env, db, git, pr, shas).catch((e) =>
-            console.error('[merge] cancel stale failed', e)
-          )
-        );
-    }
+  // Merging is measured against the land target, which base_ref (the diff's base) may not be while stacked.
+  const target = pr.state === 'open' ? await landShas(git, pr) : null;
+  if (shas)
+    commitCount = (await git.commitsBetween(shas.base, shas.head)).length;
+  // Even when base_ref (a parent PR's branch) is gone, the land target and head decide merging.
+  if (target) {
+    const plan = await git.planMerge(target.base, target.head, {
+      collectConflictFiles: true,
+    });
+    conflicts = plan.upToDate ? [] : plan.conflicts;
+    resolvedByAi =
+      conflicts.length > 0 &&
+      resolution?.status === 'proposed' &&
+      resolution.baseSha === target.base &&
+      resolution.headSha === target.head;
+    mergeable = !plan.upToDate && (conflicts.length === 0 || resolvedByAi);
+    // Text conflicts outside generated files (those are regenerated, not merged by the model).
+    conflictsResolvable =
+      !plan.upToDate &&
+      plan.conflicts.length > 0 &&
+      plan.conflictFiles.length === plan.conflicts.length &&
+      !(await generatedConflicts(git, target.base, plan.conflicts)).length;
+    // Backstop for missed triggers: unresolved text conflicts get a resolution attempt, and an
+    // attempt for commits the branches moved past is cancelled.
+    if (conflictsResolvable && !resolvedByAi)
+      c.executionCtx.waitUntil(
+        ensureResolution(c.env, db, git, pr, target).catch((e) =>
+          console.error('[merge] auto-resolve failed', e)
+        )
+      );
+    else if (
+      (resolution?.status === 'running' || resolution?.status === 'queued') &&
+      (resolution.baseSha !== target.base || resolution.headSha !== target.head)
+    )
+      c.executionCtx.waitUntil(
+        cancelStale(c.env, db, git, pr, target).catch((e) =>
+          console.error('[merge] cancel stale failed', e)
+        )
+      );
   }
   const review = await reviewView(db, git, pr, shas);
   // Backstop for missed triggers: a reviewable commit without a review gets one.
-  if (shas && pr.state === 'open' && review && !review.classification)
+  if (target && review && !review.classification)
     c.executionCtx.waitUntil(
-      ensureClassification(c.env, db, git, pr, shas).catch((e) =>
+      ensureClassification(c.env, db, git, pr, target).catch((e) =>
         console.error('[review] start failed', e)
       )
     );
-  const stack = await stackViewFor(db, git, pr);
+  // A tree that can't be read never takes the page down; merging still refuses (stackGate).
+  const stack = await stackViewFor(db, git, pr).catch((e) => {
+    console.error('[stack] view failed', pr.id, e);
+    return null;
+  });
   const pullState = await pullStateFor(db, git, pr, {
-    shas,
+    shas: target,
     reviewConfigured: reviewConfigured(c.env),
   });
   return c.json(
@@ -740,7 +759,9 @@ pullsRouter.openapi(getPullRoute, async (c) => {
       conflictsResolvable,
       aiResolution: resolutionConfigured(c.env),
       resolvedByAi,
-      resolution: resolution ? serializeResolution(resolution, shas) : null,
+      resolution: resolution
+        ? serializeResolution(resolution, target ?? shas)
+        : null,
       review,
       canMerge: c.get('perms').write,
       stack,
@@ -817,9 +838,12 @@ pullsRouter.openapi(updatePullRoute, async (c) => {
     .update(pullRequests)
     .set(patch)
     .where(eq(pullRequests.id, pr.id));
+  if (patch.state === 'closed')
+    // Children stacked on its branch go back to the land target; a reconcile restacks them.
+    c.executionCtx.waitUntil(onPullClosed(c.env, c.get('db'), pr, 'closed'));
   if (patch.state === 'open') {
     // A reopened PR may conflict with everything that landed while it was closed.
-    const shas = await pullShas(c.get('git'), { ...pr, state: 'open' });
+    const shas = await landShas(c.get('git'), pr);
     if (shas)
       c.executionCtx.waitUntil(
         ensureResolution(
@@ -840,6 +864,21 @@ pullsRouter.openapi(updatePullRoute, async (c) => {
           shas
         ).catch((e) => console.error('[review] start failed', e))
       );
+    // Its pairs were kept while it was closed: discovery checks what changed since, and a reconcile restacks
+    // the land target with it back in.
+    if (shas)
+      c.executionCtx.waitUntil(
+        ensureStacking(
+          c.env,
+          c.get('db'),
+          c.get('git'),
+          { ...pr, state: 'open' },
+          shas
+        ).catch((e) => console.error('[stack] start failed', e))
+      );
+    c.executionCtx.waitUntil(
+      startReconcile(c.env, pr.repositoryId, landTargetOf(pr))
+    );
   }
   return c.json({ ok: true as const }, 200);
 });
@@ -1042,7 +1081,7 @@ pullsRouter.openapi(retryReviewRoute, async (c) => {
     return c.json({ error: 'You do not have permission to do that' }, 403);
   const pr = await getPull(c, c.req.valid('param').number);
   if (!pr) return c.json({ error: 'Not Found' }, 404);
-  const shas = pr.state === 'open' ? await pullShas(c.get('git'), pr) : null;
+  const shas = pr.state === 'open' ? await landShas(c.get('git'), pr) : null;
   if (!shas)
     return c.json({ error: 'Only open pull requests are reviewed' }, 400);
   const row = await retryClassification(
@@ -1087,7 +1126,7 @@ pullsRouter.openapi(retryStackRoute, async (c) => {
     return c.json({ error: 'You do not have permission to do that' }, 403);
   const pr = await getPull(c, c.req.valid('param').number);
   if (!pr || pr.state !== 'open') return c.json({ error: 'Not Found' }, 404);
-  const shas = await pullShas(c.get('git'), pr);
+  const shas = await landShas(c.get('git'), pr);
   if (!shas) return c.json({ error: 'Not Found' }, 404);
   const result = await retryFailedPairs(
     c.env,
@@ -1104,6 +1143,86 @@ pullsRouter.openapi(retryStackRoute, async (c) => {
       503
     );
   return c.json({ ok: true }, 202);
+});
+
+const unstackRoute = createRoute({
+  method: 'post',
+  path: '/{owner}/{repo}/pulls/{number}/stack/unstack',
+  tags: ['Pull requests'],
+  request: { params: numberParams },
+  responses: {
+    ...json200Response(z.object({ ok: z.literal(true) }), 'Unstacked'),
+    ...json400Response,
+    ...json403Response,
+    ...json404Response,
+  },
+});
+pullsRouter.openapi(unstackRoute, async (c) => {
+  // A maintainer's decision, like approving a flag: merge permission, and never offered to agents (no MCP tool).
+  if (!c.get('perms').write)
+    return c.json({ error: 'You do not have permission to do that' }, 403);
+  const pr = await getPull(c, c.req.valid('param').number);
+  if (!pr || pr.state !== 'open') return c.json({ error: 'Not Found' }, 404);
+  let parent = (await stackViewFor(c.get('db'), c.get('git'), pr))?.parent
+    ?.number;
+  if (!parent && pr.baseRef !== landTargetOf(pr)) {
+    // Its edge may already be dismissed (an earlier attempt crashed before retargeting): it still sits on the
+    // parent's branch, so finish the retarget.
+    const head = await c
+      .get('db')
+      .select({ number: pullRequests.number })
+      .from(pullRequests)
+      .where(
+        and(
+          eq(pullRequests.repositoryId, pr.repositoryId),
+          eq(pullRequests.state, 'open'),
+          eq(pullRequests.headRef, pr.baseRef)
+        )
+      )
+      .get();
+    parent = head?.number;
+  }
+  if (!parent)
+    return c.json({ error: 'This pull request is not stacked' }, 400);
+  await dismissEdge(c.env, c.get('db'), pr, parent, c.get('user')!.id);
+  return c.json({ ok: true as const }, 200);
+});
+
+const dismissRoute = createRoute({
+  method: 'post',
+  path: '/{owner}/{repo}/pulls/{number}/stack/dismiss',
+  tags: ['Pull requests'],
+  request: {
+    params: numberParams,
+    body: {
+      content: {
+        'application/json': {
+          schema: z.object({ pr: z.number().int().min(1) }),
+        },
+      },
+    },
+  },
+  responses: {
+    ...json200Response(z.object({ ok: z.literal(true) }), 'Dismissed'),
+    ...json403Response,
+    ...json404Response,
+  },
+});
+pullsRouter.openapi(dismissRoute, async (c) => {
+  if (!c.get('perms').write)
+    return c.json({ error: 'You do not have permission to do that' }, 403);
+  const pr = await getPull(c, c.req.valid('param').number);
+  if (!pr || pr.state !== 'open') return c.json({ error: 'Not Found' }, 404);
+  const result = await dismissEdge(
+    c.env,
+    c.get('db'),
+    pr,
+    c.req.valid('json').pr,
+    c.get('user')!.id
+  );
+  if (result === 'not_found')
+    return c.json({ error: 'No dependency on that pull request' }, 404);
+  return c.json({ ok: true as const }, 200);
 });
 
 const autoMergeRoute = createRoute({
@@ -1166,7 +1285,7 @@ pullsRouter.openapi(startResolutionRoute, async (c) => {
   if (!pr) return c.json({ error: 'Not Found' }, 404);
   if (pr.state !== 'open')
     return c.json({ error: 'Pull request is not open' }, 400);
-  const shas = await pullShas(c.get('git'), pr);
+  const shas = await landShas(c.get('git'), pr);
   if (!shas) return c.json({ error: 'The head branch no longer exists' }, 400);
   const result = await startResolution(
     c.env,

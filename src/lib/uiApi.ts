@@ -151,11 +151,19 @@ export type Comment = {
 };
 export type StackDependency = {
   number: number;
-  kind: 'builds_on' | 'must_account_for' | 'conflicts' | 'independent';
+  kind:
+    | 'builds_on'
+    | 'must_account_for'
+    | 'conflicts'
+    | 'independent'
+    | 'ordered_after';
   reason: string;
   instructions: string | null;
   landed: boolean;
   files: string[];
+  accounted: boolean;
+  /** ordered_after: the PR this order was added for. */
+  forPr: number | null;
 };
 export type StackNode = {
   number: number;
@@ -267,6 +275,10 @@ export type ApprovalItem = {
   resolutionFailed: string | null;
   flags: ReviewFlag[];
   pullState: PullState | null;
+  /** Must account for #pr, with nothing new since `since` (24 hours or more). */
+  stackStale: { pr: number; since: string }[];
+  /** Other pull requests it couldn't be checked against. */
+  stackUnchecked: number[];
 };
 /** One page of GET /api/approvals; `count` covers every page. */
 export type ApprovalsPage = {
@@ -753,6 +765,13 @@ export const api = {
     apiFetch<StackTree>(`${r(o, n)}/pulls/tree`),
   retryStack: (o: string, n: string, num: number) =>
     apiFetch(`${r(o, n)}/pulls/${num}/stack/retry`, { method: 'POST' }),
+  unstack: (o: string, n: string, num: number) =>
+    apiFetch(`${r(o, n)}/pulls/${num}/stack/unstack`, { method: 'POST' }),
+  dismissStackEdge: (o: string, n: string, num: number, pr: number) =>
+    apiFetch(`${r(o, n)}/pulls/${num}/stack/dismiss`, {
+      method: 'POST',
+      json: { pr },
+    }),
   pull: (o: string, n: string, num: number) =>
     apiFetch<PullDetail>(`${r(o, n)}/pulls/${num}`),
   updatePull: (

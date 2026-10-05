@@ -18,6 +18,7 @@ import {
   readPolicy,
   type ReviewPolicy,
 } from './policy';
+import { landTargetOf } from '../lib/land-target';
 
 /** A flag's heading on the pull request. */
 export function flagTitle(
@@ -48,7 +49,8 @@ export async function reviewView(
   if (!shas) return null;
   const open = pr.state === 'open';
   // Open: review under the current policy. Merged/closed: last review of its final commit.
-  const policyFile = open ? await readPolicy(git, shas.base) : null;
+  const target = open ? await git.resolve(landTargetOf(pr)) : null;
+  const policyFile = target ? await readPolicy(git, target) : null;
   if (open && !policyFile) return null;
   const review = policyFile
     ? await classificationFor(db, pr.id, shas.head, policyFile.sha)

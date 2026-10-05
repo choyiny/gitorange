@@ -191,7 +191,7 @@ Where to see them:
 
 ## Stacking
 
-When several agents open pull requests at once, they often touch the same code. Stacking works out how open pull requests into the same branch relate and shows the result as a tree. Today it only shows relationships: nothing is retargeted, blocked, or reordered.
+When several agents open pull requests at once, they often touch the same code. Stacking works out how open pull requests into the same branch relate and shows the result as a tree. It then acts on what it finds: it retargets stacked pull requests onto their parent, puts several prerequisites in one line, and holds back a pull request that must change for another (see [Retargeting](#retargeting-and-blocking)).
 
 It's always on, whenever AI is configured, with or without a `.gitorange/review.yml`. The file's optional `stacking:` section only tunes it (these are the defaults):
 
@@ -204,13 +204,13 @@ stacking:
 
 Clef uses the file's top-level `model` (`clef` without a valid `review.yml`). `stacking.enabled`, which used to turn stacking on, is no longer used: it's accepted and ignored, so `enabled: false` doesn't turn it off.
 
-**How a pair is checked.** With a `review.yml` on the target branch, a `stack` run starts when a pull request's review finishes (or fails); without one (or with an invalid one), when the pull request is opened. In both cases it also starts when the conflict sweep sees a branch move. It pairs the pull request with the other open pull requests into the same target (newest first) and with pull requests that landed there in the last 30 days and aren't in its history. For each pair:
+**How a pair is checked.** With a `review.yml` on the target branch, a `stack` run starts when a pull request's review finishes (or fails); without one (or with an invalid one), when the pull request is opened. In both cases it also starts when the conflict sweep sees a branch move. It pairs the pull request with the other open pull requests into the same target (newest first) and with pull requests that landed there in the last 30 days and aren't in its history, plus any landed pull request it still has to account for (whatever its age, and even once its history contains it). For each pair:
 
 1. A textual check merges the two heads and notes which files conflict.
 2. Clef decides over the one-line summaries from the review (file paths when there are none, or no review): are they related, which kind, and which goes first.
 3. For related pairs, GLM-5.3 reads the diffs and writes the reason and, where needed, instructions for the author. It also decides the kind and direction, but only when Clef was unsure.
 
-A pair is saved only for the commits the run started from, so a push mid-run can't leave a stale answer. A pair that can't be checked shows as "Couldn't check against #N"; the retry button is in that pull request's **Stack** section (the Tree view only shows the label).
+A pair is saved only for the commits the run started from, so a push mid-run can't leave a stale answer. A pair that can't be checked shows as "Couldn't check against #N"; the retry button is in that pull request's **Stack** section (the Tree view only shows the label). A pair still being checked 30 minutes after its run claimed it belongs to a run that died: the next run checks it again, and the retry button resets it.
 
 **The four kinds.**
 
@@ -221,7 +221,33 @@ A pair is saved only for the commits the run started from, so a push mid-run can
 
 The **Tree** view on the Pull requests tab shows open pull requests with their builds-on, must-account-for, and conflict relationships, each pull request's **Stack** section lists its own relationships, and agents read both over MCP (`gitorange_get_pull_tree`, and `stack` on `gitorange_get_pull_request`). Closed-unmerged pull requests are ignored. While checks are still running, a pull request shows "checking…" (no check has started for its latest commit yet; `checking` in the API and MCP) or "checking #N…" (that pair is in progress; `pending`), and isn't called independent until they finish. With nothing open, the Tree view says "No open pull requests".
 
-**Cost.** Per PR head change, one Clef call per open PR into the same target and per landed candidate (up to 20 pull requests landed in the last 30 days), skipped for pairs already checked at the same commits, plus one GLM-5.3 call per related or conflicting pair.
+### Retargeting and blocking
+
+After discovery, a `reconcile` run (also started when a pull request closes or lands) settles each target branch's stacks. Like discovery, retargeting and the stack gate apply to every repository, with or without `review.yml`; a maintainer who disagrees with a relationship can Unstack or Dismiss it (below).
+
+**Retargeting.** A pull request that builds on another open one is _stacked_ on it: its base becomes the parent's branch, so its diff shows only its own change. Its **land target** stays the branch it will finally land on. A stacked pull request lands on the land target once its parent has. Retargeting only changes pull request metadata (the base shown, the diff, a `stacked` timeline event); GitOrange never pushes to a branch. When the parent closes or lands, its children go back to the land target at once, and the run restacks what is left. A parent is the strongest stackable prerequisite (must account for, then builds on, then an order from linearizing) whose own line already includes the other prerequisites; a pull request with no such prerequisite stays on the land target. If a stacked pull request's head doesn't contain its parent's yet, its state says to rebase onto the parent's branch first (nothing is asked when GitOrange can't tell).
+
+**Linearizing several prerequisites.** A pull request has one parent, so when it builds on or must account for several open pull requests, GitOrange puts them in one line. If #31 builds on #28 and #29, and #28 and #29 are otherwise unrelated, one of them must land first: say #29 lands after #28, and #31 stacks on #29. An existing relationship between the two decides it (a conflict sets which lands first; the ordering edge is still added, since a conflict alone doesn't stack one on the other). Otherwise Clef reads both and says which is easier to build on; if it isn't confident enough (`confident_above`) or fails, the one closer to Ready goes first, then the lower number. The choice is saved as an ordering edge (kind `ordered_after`), recorded on the timeline as an `ordered` event, and dropped when any of the three pull requests' heads moves (the two it orders and the one it was added for), or one of them closes or lands. An order that would make a cycle is never added: that pull request waits on its prerequisites instead.
+
+**Must account for.** A pull request that must change for another gets the reason and instructions for its author on its timeline. It can't merge until it does. When the dependent gets a new commit and the prerequisite hasn't moved, GLM-5.3 re-checks the dependent's new head against the prerequisite (open or landed) and either marks it accounted for (an `accounted_for` timeline event) or repeats what's still missing; if the prerequisite moved too, the pair is decided again from scratch. A landed prerequisite is re-checked even after the dependent rebased onto it. A re-check that fails keeps blocking; the **Stack** section's retry button runs it again. Until then, the merge button and auto-merge both refuse.
+
+**The stack gate.** Landing is refused (`409`, naming each cause) while the pull request:
+
+- must account for another pull request, open or landed, and hasn't yet;
+- is stacked on an open pull request (it lands after its parent), or waits on one that has to land first.
+
+Auto-merge treats unaccounted must-account-for as blocked and the other two as waiting, and also waits while discovery is still checking the pull request's head (the "still checking" hold applies to auto-merge only; the merge button doesn't wait for it). Pull requests in a dependency cycle don't make each other wait or stack on each other; the cycle itself is a reason to ask a person (`human_review`). An unaccounted must-account-for still blocks.
+
+**Unstack and Dismiss.** A person with merge permission can, on the pull request page (web only; there are no MCP tools, so agents can't):
+
+- **Unstack** a stacked pull request: its edge to the parent is dismissed and it goes back to the land target. When the parent was an ordering (from linearizing), the dismissed order stays: those two pull requests aren't put in one line again, and the pull request that needed both waits on both instead.
+- **Dismiss** a dependency: every relationship between the two pull requests stops stacking and blocking.
+
+Both are recorded on the timeline with who did them. A dismissal survives new commits to either pull request, so a dependency stays dismissed, until one of the two lands: then the landed pull request's relationships count again (a must-account-for blocks until a re-check finds it accounted for).
+
+**Reasons in a pull request's state.** `must_account_for` (with the instructions and, when the prerequisite is open, the branch to rebase onto first) and `rebase_onto` call for the author's move (`agent_followup`); `cycle` calls for a person; `stack_checking` waits; `stacked_on` and `waits_on` only inform. Agents read them in `state.reasons` and in `stack` over MCP.
+
+**Cost.** Per PR head change, one Clef call per open PR into the same target and per landed candidate (up to 20 pull requests landed in the last 30 days), skipped for pairs already checked at the same commits, plus one GLM-5.3 call per related or conflicting pair. Retargeting adds one Clef call per pair of unrelated prerequisites to order, and one GLM-5.3 re-check per new commit of a PR that must account for another.
 
 ## Cost
 

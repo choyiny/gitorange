@@ -9,6 +9,7 @@ import {
 import type { GitService } from '../git/service';
 import { usersById, type PublicUser } from '../lib/users';
 import { buildTree, type EdgeInput, type TreeNode } from './tree';
+import { landTargetIs, landTargetOf } from '../lib/land-target';
 
 export type StackNodeView = TreeNode & {
   title: string;
@@ -50,11 +51,11 @@ export async function stackTreeView(
       and(
         eq(pullRequests.repositoryId, repositoryId),
         eq(pullRequests.state, 'open'),
-        opts.branch ? eq(pullRequests.baseRef, opts.branch) : undefined
+        opts.branch ? landTargetIs(opts.branch) : undefined
       )
     )
     .all();
-  const branches = [...new Set(open.map((p) => p.baseRef))].sort();
+  const branches = [...new Set(open.map((p) => landTargetOf(p)))].sort();
   if (!branches.length) return { targets: [] };
   // Only pairs with an open side; D1 binds at most 100 parameters per statement.
   const openIds = open.map((p) => p.id);
@@ -70,13 +71,14 @@ export async function stackTreeView(
         )
       )
       .all())
+      // Pair verdicts and ordering edges (slot 'order', added for `forPrId`).
       if (branches.includes(e.landTarget)) edges.set(e.id, e);
   const isOpen = new Set(openIds);
   const others = [
     ...new Set(
       [...edges.values()]
-        .flatMap((e) => [e.prAId, e.prBId])
-        .filter((id) => !isOpen.has(id))
+        .flatMap((e) => [e.prAId, e.prBId, e.forPrId])
+        .filter((id): id is string => typeof id === 'string' && !isOpen.has(id))
     ),
   ];
   const touched = [
@@ -113,7 +115,7 @@ export async function stackTreeView(
   return {
     targets: branches.map((branch) => {
       const prs = open
-        .filter((p) => p.baseRef === branch)
+        .filter((p) => landTargetOf(p) === branch)
         .sort((x, y) => x.number - y.number);
       const inputs: EdgeInput[] = [...edges.values()]
         .filter((e) => e.landTarget === branch)
@@ -123,6 +125,9 @@ export async function stackTreeView(
           // Closed without merging: not a prerequisite, never "landed".
           if (!a || !b || a.state === 'closed' || b.state === 'closed')
             return [];
+          // An ordering edge lasts only while the PR it was added for is open.
+          const forPr = e.forPrId ? byId.get(e.forPrId) : undefined;
+          if (e.slot === 'order' && forPr?.state !== 'open') return [];
           return [
             {
               a: a.number,
@@ -133,6 +138,11 @@ export async function stackTreeView(
               reason: e.reason,
               instructions: e.instructions,
               files: e.files ?? [],
+              slot: e.slot,
+              forPr: forPr?.number ?? null,
+              accounted: !!e.accountedForAt,
+              dismissed: !!e.dismissedAt,
+              errorMessage: e.errorMessage,
             },
           ];
         });
@@ -154,8 +164,9 @@ export async function stackTreeView(
         if (!head || live.length < 2) return false;
         return ![...edges.values()].some(
           (e) =>
-            (e.prAId === p.id && e.aHead === head) ||
-            (e.prBId === p.id && e.bHead === head)
+            e.slot === 'pair' &&
+            ((e.prAId === p.id && e.aHead === head) ||
+              (e.prBId === p.id && e.bHead === head))
         );
       };
       return {
@@ -176,21 +187,39 @@ export async function stackTreeView(
   };
 }
 
+/**
+ * One open PR's node in its land target's tree, with the target's whole view (for other nodes' head branches);
+ * null when the PR isn't open.
+ */
+export async function stackTargetFor(
+  db: DrizzleDB,
+  git: GitService,
+  pr: PullRequest
+): Promise<{ node: StackNodeView | null; view: StackTreeView } | null> {
+  if (pr.state !== 'open') return null;
+  const view = await stackTreeView(db, git, pr.repositoryId, {
+    branch: landTargetOf(pr),
+    authors: false,
+  });
+  const node =
+    view.targets
+      .find((t) => t.branch === landTargetOf(pr))
+      ?.nodes.find((n) => n.number === pr.number) ?? null;
+  return { node, view };
+}
+
+/** A tree node without its display fields. */
+export function bareNode(node: StackNodeView): TreeNode {
+  const { title: _t, headRef: _h, author: _a, ...rest } = node;
+  return rest;
+}
+
 /** One open PR's place in its target's tree; null when it isn't open. */
 export async function stackViewFor(
   db: DrizzleDB,
   git: GitService,
   pr: PullRequest
 ): Promise<TreeNode | null> {
-  if (pr.state !== 'open') return null;
-  const view = await stackTreeView(db, git, pr.repositoryId, {
-    branch: pr.baseRef,
-    authors: false,
-  });
-  const node = view.targets
-    .find((t) => t.branch === pr.baseRef)
-    ?.nodes.find((n) => n.number === pr.number);
-  if (!node) return null;
-  const { title: _t, headRef: _h, author: _a, ...rest } = node;
-  return rest;
+  const found = await stackTargetFor(db, git, pr);
+  return found?.node ? bareNode(found.node) : null;
 }

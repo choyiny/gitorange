@@ -40,10 +40,21 @@ describe('pull state text', () => {
   it('tells informational reasons apart', () => {
     expect(blocking({ kind: 'stacked_on', pr: 1 })).toBe(false);
     expect(blocking({ kind: 'must_account_for', pr: 1, landed: false })).toBe(
-      false
+      true
     );
     expect(blocking({ kind: 'check_failed', run_number: 1, check: null })).toBe(
       true
     );
+  });
+
+  it('says rebase onto', () => {
+    expect(
+      reasonText({
+        kind: 'rebase_onto',
+        pr: 28,
+        branch: 'setup-checks',
+        why: 'x',
+      })
+    ).toBe('rebase onto #28 (setup-checks)');
   });
 });

@@ -1052,6 +1052,10 @@ describe('stacking tools', () => {
       repository: 'octocat/app',
       number: 1,
     });
+    expect(JSON.parse(pr.content[0].text)).toMatchObject({
+      base: 'main',
+      land_target: 'main',
+    });
     expect(JSON.parse(pr.content[0].text).stack).toMatchObject({
       parent: null,
       waits_on: [],
@@ -1064,5 +1068,89 @@ describe('stacking tools', () => {
       repository: 'octocat/app',
     });
     expect(hidden.isError).toBe(true);
+  });
+  it('reports accounting, ordering and the branch to rebase onto', async () => {
+    const t = makeEnv({ actions: true });
+    const admin = await bootstrapAdmin(t);
+    await call(t, '/api/repos', {
+      cookie: admin,
+      json: { name: 'app', visibility: 'private' },
+    });
+    const repo = [...t.fake.repos.values()][0];
+    const policy = 'stacking:\n  enabled: true\n';
+    const files = { 'a.txt': 'a\n', '.gitorange/review.yml': policy };
+    const main = await commitPaths(repo, 'main', files, 'base');
+    for (const [branch, title] of [
+      ['one', 'One'],
+      ['two', 'Two'],
+      ['three', 'Three'],
+    ]) {
+      repo.refs.set(`refs/heads/${branch}`, main);
+      await commitPaths(
+        repo,
+        branch,
+        { ...files, [`${branch}.txt`]: `${branch}\n` },
+        title
+      );
+      await call(t, '/api/repos/octocat/app/pulls', {
+        cookie: admin,
+        json: { title, body: '', base: 'main', head: branch },
+      });
+    }
+    await settle(t);
+    const id = (n: number) =>
+      `(SELECT id FROM pull_requests WHERE number = ${n})`;
+    const edge = (
+      a: number,
+      b: number,
+      slot: string,
+      kind: string,
+      forPr: number | null,
+      accounted: boolean
+    ) =>
+      t.env.DB.prepare(
+        `INSERT INTO pr_edges (id, repository_id, land_target, pr_a_id, pr_b_id, slot, for_pr_id, a_head, b_head,
+                               stage, kind, prerequisite, reason, instructions, accounted_for_at, created_at, updated_at)
+         SELECT 'e${a}${b}${slot}', repository_id, 'main', ${id(a)}, ${id(b)}, '${slot}',
+                ${forPr ? id(forPr) : 'NULL'}, 'x', 'x', 'done', '${kind}', 'a', 'Because.', 'Do it.',
+                ${accounted ? 1 : 'NULL'}, 0, 0
+           FROM pull_requests WHERE number = 1`
+      ).run();
+    await edge(1, 2, 'pair', 'must_account_for', null, false);
+    await edge(1, 3, 'pair', 'must_account_for', null, true);
+    await edge(2, 3, 'order', 'ordered_after', 3, false);
+    const { access_token } = await connect(t, admin);
+    const pr = JSON.parse(
+      (
+        await tool(t, access_token, 'gitorange_get_pull_request', {
+          repository: 'octocat/app',
+          number: 3,
+        })
+      ).content[0].text
+    );
+    expect(pr.stack.parent).toMatchObject({
+      number: 2,
+      kind: 'ordered_after',
+      for_pr: 3,
+      accounted: false,
+    });
+    expect(pr.stack.must_account_for).toMatchObject([
+      { number: 1, accounted: true, rebase_first: 'one' },
+    ]);
+    const tree = JSON.parse(
+      (
+        await tool(t, access_token, 'gitorange_get_pull_tree', {
+          repository: 'octocat/app',
+        })
+      ).content[0].text
+    );
+    const two = tree.targets[0].pulls.find(
+      (p: { number: number }) => p.number === 2
+    );
+    expect(two.must_account_for).toMatchObject([
+      { number: 1, accounted: false, rebase_first: 'one' },
+    ]);
+    expect(two.parent).toMatchObject({ number: 1, accounted: false });
+    expect(two.parent).not.toHaveProperty('for_pr');
   });
 });

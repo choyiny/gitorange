@@ -8,6 +8,7 @@
  * rows instead of adding new ones. Recording never fails a step or the Workflow: every write is
  * caught and logged.
  */
+import { landTargetOf } from '../lib/land-target';
 import { and, eq, inArray, isNull, or, sql } from 'drizzle-orm';
 import {
   agentRuns,
@@ -79,6 +80,7 @@ export async function describeRun(
     const row = await db
       .select({
         baseRef: pullRequests.baseRef,
+        landTarget: pullRequests.landTarget,
         pullRequestId: pullRequests.id,
         repositoryId: pullRequests.repositoryId,
       })
@@ -94,7 +96,7 @@ export async function describeRun(
           kind: 'conflict_resolution',
           repositoryId: row.repositoryId,
           pullRequestId: row.pullRequestId,
-          title: `Resolve conflicts with ${row.baseRef}`,
+          title: `Resolve conflicts with ${landTargetOf(row)}`,
         }
       : null;
   }

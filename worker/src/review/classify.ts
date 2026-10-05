@@ -36,6 +36,7 @@ import { maybeAutoMerge } from './auto-merge';
 import { IGNORE_PATH, ignoreMatcher, isLockfile, readIgnore } from './ignore';
 import { ensureStacking } from '../stack/discover';
 import { clip, noteDecision } from '../agent-runs/context';
+import { landTargetOf } from '../lib/land-target';
 
 /** Shared with AI conflict resolution. */
 export const reviewConfigured = resolutionConfigured;
@@ -552,8 +553,9 @@ export async function executeClassification(deps: ReviewDeps, id: string) {
       };
     }
     const changes = await git.diffTrees(from.treeHash, to.treeHash);
-    // From the target branch, like review.yml: a pull request can't hide its own files.
-    const ignoreText = baseTip ? await readIgnore(git, baseTip) : null;
+    const targetTip = await git.resolve(landTargetOf(pr));
+    // From the land target, like review.yml: a pull request can't hide its own files.
+    const ignoreText = targetTip ? await readIgnore(git, targetTip) : null;
     return {
       ok: true as const,
       ignoreText,
@@ -582,7 +584,7 @@ export async function executeClassification(deps: ReviewDeps, id: string) {
       // Never fails the review: stacking is a side job.
       try {
         const [base, head] = await Promise.all([
-          git.resolve(pr.baseRef),
+          git.resolve(landTargetOf(pr)),
           git.resolve(pr.headRef),
         ]);
         if (base && head && head === job.row.headSha)
@@ -776,9 +778,9 @@ export async function executeClassification(deps: ReviewDeps, id: string) {
       .where(eq(prClassifications.id, id));
     return true;
   });
+  await startStacking();
   await step.do('auto-merge', async () => {
     await maybeAutoMerge(env, db, pr.id);
     return true;
   });
-  await startStacking();
 }

@@ -284,8 +284,8 @@ describe('agent runs: recording', () => {
       'flags',
       'investigate:0',
       'finish',
-      'auto-merge',
       'stacking',
+      'auto-merge',
     ]);
     expect(steps.every((s) => s.status === 'succeeded')).toBe(true);
     expect(steps.every((s) => s.attempts === 1)).toBe(true);
@@ -745,6 +745,12 @@ describe('agent runs: conflict resolution, sweep, stack discovery', () => {
           instructions: null,
         };
       },
+      recheck: async () => {
+        throw new Error('not used');
+      },
+      order: async () => {
+        throw new Error('not used');
+      },
     };
     const db = dbOf(t);
     const stack: StackParams = { pullRequestId: pr2 };
@@ -763,7 +769,11 @@ describe('agent runs: conflict resolution, sweep, stack discovery', () => {
       pull_request_id: pr2,
     });
     const steps = await stepsOf(t, run.id);
-    expect(steps.map((s) => s.name.split(':')[0])).toEqual([
+    expect(
+      steps.map((s) =>
+        s.name.startsWith('stack-reconcile:') ? s.name : s.name.split(':')[0]
+      )
+    ).toEqual([
       'load',
       'claim',
       'conflicts',
@@ -771,6 +781,10 @@ describe('agent runs: conflict resolution, sweep, stack discovery', () => {
       'deep',
       'explain',
       'save',
+      'stack-reconcile:load',
+      'stack-reconcile:edges',
+      'stack-reconcile:retarget',
+      'auto-merge',
     ]);
     const decide = steps.find((s) => s.name.startsWith('decide:'))!;
     expect(decide).toMatchObject({
@@ -922,8 +936,8 @@ describe('agent runs: API', () => {
       'Record flags',
       'Investigate flag 1',
       'Finish',
-      'Try auto-merge',
       'Start stack discovery',
+      'Try auto-merge',
     ]);
     expect(body.steps[3]).toMatchObject({
       name: 'classify',

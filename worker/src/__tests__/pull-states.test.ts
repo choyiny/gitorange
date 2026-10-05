@@ -7,7 +7,7 @@ import {
   type PullState,
   type Reason,
 } from '../pulls/state';
-import type { TreeNode } from '../stack/tree';
+import { buildTree, type EdgeInput, type TreeNode } from '../stack/tree';
 import { drizzle } from 'drizzle-orm/d1';
 import { schema } from '../db/schema';
 import { checkVerdict } from '../review/checks';
@@ -53,6 +53,8 @@ const dep = (number: number, kind: 'builds_on' | 'must_account_for') => ({
   instructions: kind === 'must_account_for' ? 'Add a check.' : null,
   landed: false,
   files: [],
+  accounted: false,
+  forPr: null,
 });
 
 describe('pull request state rules', () => {
@@ -81,17 +83,18 @@ describe('pull request state rules', () => {
     });
   });
 
-  it('reports must account for without letting it decide the state (until 2b)', () => {
+  it('must account for needs the agent', () => {
     const must: Reason = {
       kind: 'must_account_for',
       pr: 28,
       landed: false,
       instructions: 'Add a check.',
+      branch: null,
     };
-    expect(reasonState(must)).toBeNull();
-    expect(decideState([must])).toEqual({ state: 'ready', reasons: [must] });
+    expect(reasonState(must)).toBe('agent_followup');
+    expect(decideState([must]).state).toBe('agent_followup');
     expect(decideState([must, { kind: 'review_running' }]).state).toBe(
-      'waiting'
+      'agent_followup'
     );
   });
 
@@ -122,6 +125,7 @@ describe('pull request state rules', () => {
         'cycle',
         'flags_pending',
         'must_account_for',
+        'rebase_onto',
         'resolution_running',
         'review_failed',
         'review_policy_invalid',
@@ -152,6 +156,7 @@ describe('pull request state rules', () => {
         pr: 29,
         landed: false,
         instructions: 'Add a check.',
+        branch: null,
       },
       { kind: 'stacked_on', pr: 28 },
       { kind: 'waits_on', pr: 30 },
@@ -704,7 +709,7 @@ describe('pullStates', () => {
     expect((await s.states())[1]).toEqual({ state: 'ready', reasons: [] });
   });
 
-  it('must account for is reported; the state comes from the rest', async () => {
+  it('must account for needs the agent', async () => {
     // Checks are required and never run, so neither PR lands on its own.
     const s = await statesRepo('checks:\n  require: all\n');
     await s.open('one', { 'a.txt': 'a\n' });
@@ -722,17 +727,24 @@ describe('pullStates', () => {
       .run();
     await s.runReviews(reviewModels());
     const st = await s.states();
-    // Reported for the agent, but (until 2b) it doesn't decide the state: checks still wait.
+    // The agent has to account for #1 (and rebase onto it), whatever the checks are doing.
     expect(st[2]).toEqual({
-      state: 'waiting',
+      state: 'agent_followup',
       reasons: [
-        { kind: 'checks_running', check: null, started: false },
         {
           kind: 'must_account_for',
           pr: 1,
           landed: false,
           instructions: 'Add a setup check.',
+          branch: 'one',
         },
+        {
+          kind: 'rebase_onto',
+          pr: 1,
+          branch: 'one',
+          why: 'Needs a check.',
+        },
+        { kind: 'checks_running', check: null, started: false },
         { kind: 'stacked_on', pr: 1 },
       ],
     });
@@ -1186,5 +1198,29 @@ describe('Approvals', () => {
     expect(await listed()).toEqual([]);
     await insert('m', 200);
     expect(await listed()).toEqual([1]);
+  });
+});
+
+describe('must account for drives agent followup (milestone 2b)', () => {
+  const must = (over: Partial<EdgeInput> = {}): EdgeInput => ({
+    a: 1,
+    b: 2,
+    stage: 'done',
+    kind: 'must_account_for',
+    prerequisite: 'a',
+    reason: 'Needs a check.',
+    instructions: 'Add it.',
+    files: [],
+    ...over,
+  });
+  const stateOf = (e: EdgeInput) =>
+    decideState(
+      stackReasons(buildTree([1, 2], [e]).get(2)!, { branchOf: () => 'one' })
+    ).state;
+
+  it('only while the edge is neither accounted for nor dismissed', () => {
+    expect(stateOf(must())).toBe('agent_followup');
+    expect(stateOf(must({ accounted: true }))).toBe('ready'); // still stacked on #1: informational
+    expect(stateOf(must({ dismissed: true }))).toBe('ready');
   });
 });

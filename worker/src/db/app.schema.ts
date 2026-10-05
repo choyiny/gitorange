@@ -149,6 +149,10 @@ export const pullRequests = sqliteTable(
       .references(() => users.id),
     baseRef: text('base_ref').notNull(),
     headRef: text('head_ref').notNull(),
+    // Where it finally lands. base_ref is what the diff is against and may be a parent PR's head branch when
+    // stacked; readers that mean "where this lands" use landTargetOf (worker/src/lib/land-target.ts).
+    // NULL (every row from before this column): lands into base_ref. Set on create and on every retarget.
+    landTarget: text('land_target'),
     state: text('state', { enum: ['open', 'closed', 'merged'] })
       .notNull()
       .default('open'),
@@ -170,6 +174,11 @@ export const pullRequests = sqliteTable(
   (t) => [
     uniqueIndex('pull_requests_repo_number_uq').on(t.repositoryId, t.number),
     index('pull_requests_repo_state_idx').on(t.repositoryId, t.state),
+    index('pull_requests_repo_target_idx').on(
+      t.repositoryId,
+      t.landTarget,
+      t.state
+    ),
     // The Approvals inbox: every open pull request across repositories, newest first.
     index('pull_requests_state_updated_idx').on(t.state, t.updatedAt),
   ]
@@ -370,12 +379,17 @@ export const prReviewFlags = sqliteTable(
 // ── Stacking ─────────────────────────────────────────────────────────────────
 
 export type EdgeKind =
-  'builds_on' | 'must_account_for' | 'conflicts' | 'independent';
-export type EdgeStage = 'triage' | 'deep' | 'done' | 'failed';
+  | 'builds_on'
+  | 'must_account_for'
+  | 'conflicts'
+  | 'independent'
+  | 'ordered_after';
+export type EdgeStage = 'triage' | 'deep' | 'recheck' | 'done' | 'failed';
 
 /**
- * Stacking: how two pull requests into the same target relate. One row per unordered pair: `a` is
- * the lower number, or the landed one. Reset and re-evaluated when either head moves.
+ * Stacking: how two pull requests into the same target relate. One `pair` row per unordered pair (`a` is
+ * the lower number, or the landed one), plus `order` rows for ordering edges. Reset and re-evaluated when
+ * either head moves.
  */
 export const prEdges = sqliteTable(
   'pr_edges',
@@ -391,13 +405,27 @@ export const prEdges = sqliteTable(
     prBId: text('pr_b_id')
       .notNull()
       .references(() => pullRequests.id, { onDelete: 'cascade' }),
+    // pair: one discovery verdict per unordered pair. order: an ordering edge (kind ordered_after) added so
+    // `for_pr_id` can stack on several prerequisites; decided at a_head, b_head and for_head.
+    slot: text('slot', { enum: ['pair', 'order'] })
+      .notNull()
+      .default('pair'),
+    // No foreign key: order rows go with the pair's pr_a_id/pr_b_id and repository_id cascades.
+    forPrId: text('for_pr_id'),
+    forHead: text('for_head'),
     aHead: text('a_head').notNull(),
     bHead: text('b_head').notNull(),
     stage: text('stage', {
-      enum: ['triage', 'deep', 'done', 'failed'],
+      enum: ['triage', 'deep', 'recheck', 'done', 'failed'],
     }).notNull(),
     kind: text('kind', {
-      enum: ['builds_on', 'must_account_for', 'conflicts', 'independent'],
+      enum: [
+        'builds_on',
+        'must_account_for',
+        'conflicts',
+        'independent',
+        'ordered_after',
+      ],
     }),
     // Which side the other depends on; null when independent.
     prerequisite: text('prerequisite', { enum: ['a', 'b'] }),
@@ -406,12 +434,20 @@ export const prEdges = sqliteTable(
     reason: text('reason'),
     // must_account_for: what the dependent PR must change, addressed to its author.
     instructions: text('instructions'),
+    // must_account_for: set when a re-check of the dependent's head (accounted_head) found it accounted for.
+    accountedForAt: integer('accounted_for_at', { mode: 'timestamp' }),
+    accountedHead: text('accounted_head'),
+    // A maintainer dismissed it (Dismiss, or Unstack for a parent): it neither stacks nor blocks. Survives head
+    // moves.
+    dismissedAt: integer('dismissed_at', { mode: 'timestamp' }),
+    // No foreign key: resolved with the ghost-user fallback like other user ids; nothing deletes users.
+    dismissedById: text('dismissed_by_id'),
     errorMessage: text('error_message'),
     createdAt: integer('created_at', { mode: 'timestamp' }).notNull(),
     updatedAt: integer('updated_at', { mode: 'timestamp' }).notNull(),
   },
   (t) => [
-    uniqueIndex('pr_edges_pair_uq').on(t.prAId, t.prBId),
+    uniqueIndex('pr_edges_pair_uq').on(t.prAId, t.prBId, t.slot),
     index('pr_edges_repo_idx').on(t.repositoryId, t.landTarget),
     index('pr_edges_b_idx').on(t.prBId),
   ]
@@ -422,7 +458,14 @@ export type PrEdge = typeof prEdges.$inferSelect;
 // GitOrange's own timeline entries. state_changed: the PR's computed state changed (states are never stored
 // otherwise). Milestone 2b adds stacking events.
 
-export type PrEventKind = 'state_changed';
+export type PrEventKind =
+  | 'state_changed'
+  | 'stacked'
+  | 'unstacked'
+  | 'ordered'
+  | 'must_account_for'
+  | 'accounted_for'
+  | 'dismissed';
 
 export const prEvents = sqliteTable(
   'pr_events',
@@ -434,7 +477,17 @@ export const prEvents = sqliteTable(
     pullRequestId: text('pull_request_id')
       .notNull()
       .references(() => pullRequests.id, { onDelete: 'cascade' }),
-    kind: text('kind', { enum: ['state_changed'] }).notNull(),
+    kind: text('kind', {
+      enum: [
+        'state_changed',
+        'stacked',
+        'unstacked',
+        'ordered',
+        'must_account_for',
+        'accounted_for',
+        'dismissed',
+      ],
+    }).notNull(),
     // state_changed: the state it changed to.
     state: text('state', {
       enum: ['agent_followup', 'human_review', 'waiting', 'ready'],

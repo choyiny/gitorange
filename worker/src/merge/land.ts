@@ -15,6 +15,9 @@ import { MergeConflictError, type GitService } from '../git/service';
 import { onRefsUpdated } from '../actions/trigger';
 import { autoResolveConflicts } from './auto';
 import { latestResolution } from './resolution';
+import { landTargetIs, landTargetOf } from '../lib/land-target';
+import { stackGate } from '../stack/gate';
+import { onPullClosed } from '../stack/retarget';
 
 export const pullRef = (n: number) => `refs/pull/${n}/head`;
 
@@ -79,10 +82,16 @@ export async function landPull(opts: {
   resolutionId?: string;
   /** Runs follow-up work (Actions, conflict sweeps) after the merge. */
   after: (work: Promise<unknown>) => void;
+  /**
+   * Delete the head branch once it has landed (auto-merge), after its stacked children have been sent back to
+   * the land target, so a branch a child was stacked on isn't kept for that child.
+   */
+  deleteBranch?: boolean;
 }): Promise<LandResult> {
   const { env, db, git, pr } = opts;
   if (pr.state !== 'open')
     return { ok: false, status: 400, error: 'Pull request is not open' };
+  const target = landTargetOf(pr);
   const headSha = await git.resolve(pr.headRef);
   if (!headSha)
     return {
@@ -90,12 +99,26 @@ export async function landPull(opts: {
       status: 400,
       error: 'The head branch no longer exists',
     };
+  const gate = await stackGate(db, git, pr);
+  if (gate.error)
+    return {
+      ok: false,
+      status: 409,
+      error:
+        'Couldn’t check how it relates to other open pull requests (the stack tree). Try again.',
+    };
+  if (gate.blocks.length)
+    return {
+      ok: false,
+      status: 409,
+      error: `${gate.blocks.map((b) => b.message.replace(/[.\s]+$/, '')).join('. ')}. A maintainer can dismiss a dependency on the pull request page.`,
+    };
   const title = opts.title?.trim() || `${pr.title} (#${pr.number})`;
   const message = opts.message ?? '';
   const timestamp = Math.floor(Date.now() / 1000);
   const committer = { ...opts.author, timestamp };
   const refsBefore = await git.refs();
-  const baseBefore = refsBefore.get(`refs/heads/${pr.baseRef}`);
+  const baseBefore = refsBefore.get(`refs/heads/${target}`);
   // Credit the PR's commit authors and co-authors, not the account that merged.
   const prCommits = baseBefore
     ? await git.commitsBetween(baseBefore, headSha).catch(() => [])
@@ -162,7 +185,7 @@ export async function landPull(opts: {
       await git.client.push(
         [
           {
-            ref: `refs/heads/${pr.baseRef}`,
+            ref: `refs/heads/${target}`,
             old: row.baseSha,
             new: commit.sha,
           },
@@ -178,7 +201,7 @@ export async function landPull(opts: {
       appliedResolution = row.id;
     } else {
       ({ sha } = await git.merge({
-        base: pr.baseRef,
+        base: target,
         head: pr.headRef,
         method: 'squash',
         message: fullMessage,
@@ -228,9 +251,25 @@ export async function landPull(opts: {
   // Auto-merges happen in the background.
   opts.after(publishChange(env, pr.repositoryId, { approvals: true }));
   opts.after(settleStates(env, db, pr.repositoryId));
+  // Children stacked on its branch go back to the land target; a reconcile restacks them. Only then is the
+  // branch free to delete.
+  opts.after(
+    onPullClosed(env, db, pr, 'landed').then(() =>
+      opts.deleteBranch
+        ? deleteMergedBranch({
+            env,
+            db,
+            repo: opts.repo,
+            git,
+            pr,
+            headSha,
+          })
+        : false
+    )
+  );
   if (baseBefore) {
     const updates = [
-      { ref: `refs/heads/${pr.baseRef}`, old: baseBefore, new: sha },
+      { ref: `refs/heads/${target}`, old: baseBefore, new: sha },
     ];
     opts.after(autoResolveConflicts(env, opts.repo, updates));
     opts.after(
@@ -250,7 +289,7 @@ export async function landPull(opts: {
 /**
  * After auto-merge lands a pull request, deletes its head branch with compare-and-swap on the
  * merged head commit. Keeps it when someone pushed since, when it's the default branch, or when
- * another open pull request uses it as base or head (a stack builds on it). Never throws.
+ * another open pull request uses it as base, head or land target (a stack builds on it). Never throws.
  */
 export async function deleteMergedBranch(opts: {
   env: CloudflareBindings;
@@ -273,7 +312,11 @@ export async function deleteMergedBranch(opts: {
           eq(pullRequests.repositoryId, pr.repositoryId),
           eq(pullRequests.state, 'open'),
           ne(pullRequests.id, pr.id),
-          or(eq(pullRequests.baseRef, branch), eq(pullRequests.headRef, branch))
+          or(
+            eq(pullRequests.baseRef, branch),
+            eq(pullRequests.headRef, branch),
+            landTargetIs(branch)
+          )
         )
       )
       .get();
