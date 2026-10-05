@@ -320,7 +320,6 @@ const treeRoute = createRoute({
   responses: {
     ...json200Response(
       z.object({
-        stacking: z.boolean(),
         targets: z.array(
           z.object({
             branch: z.string(),
@@ -337,16 +336,14 @@ const treeRoute = createRoute({
           })
         ),
       }),
-      'How open pull requests stack, per target branch (empty when stacking is off)'
+      'How open pull requests stack, per target branch (empty when none is open)'
     ),
     ...json404Response,
   },
 });
 pullsRouter.openapi(treeRoute, async (c) => {
   const repo = c.get('repo');
-  const view = await stackTreeView(c.get('db'), c.get('git'), repo.id, {
-    defaultBranch: repo.defaultBranch,
-  });
+  const view = await stackTreeView(c.get('db'), c.get('git'), repo.id);
   return c.json(view, 200);
 });
 
@@ -566,7 +563,7 @@ const getPullRoute = createRoute({
         /** Head commit's review; null without review.yml. Closed PRs keep the last review. */
         review: reviewSchema.nullable(),
         canMerge: z.boolean(),
-        /** Place in the target's stack tree; null when stacking is off or the PR isn't open. */
+        /** Place in the target's stack tree; null when the PR isn't open. */
         stack: stackNodeSchema.nullable(),
       }),
       'Pull request'
@@ -1003,7 +1000,7 @@ pullsRouter.openapi(retryStackRoute, async (c) => {
     shas
   );
   if (result === 'off')
-    return c.json({ error: 'Stacking is off for the target branch' }, 409);
+    return c.json({ error: 'AI is not configured on this instance' }, 409);
   if (result === 'unavailable')
     return c.json(
       { error: 'The retry could not be started; try again later' },

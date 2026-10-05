@@ -91,9 +91,9 @@ A repository opts in with `.gitorange/review.yml` on the target branch ([format]
 
 ### Stacking
 
-Opt-in through `stacking:` in `.gitorange/review.yml` ([format](auto-merge.md#stacking)). Code: [`worker/src/stack/`](../worker/src/stack/).
+Always on when AI is configured; the optional `stacking:` section of `.gitorange/review.yml` tunes it ([format](auto-merge.md#stacking)). Code: [`worker/src/stack/`](../worker/src/stack/).
 
-- **Discovery** is a `stack` run on the `MERGE_RESOLUTION` Workflow, started after a review finishes (or fails) and by the conflict sweep. For each pair it runs a textual check (`planMerge`), one Clef call, and, for related pairs, the reasoning model. Results go to `pr_edges`, one row per pair, written only for the heads the run claimed (compare-and-swap).
+- **Discovery** is a `stack` run on the `MERGE_RESOLUTION` Workflow, started after a review finishes (or fails) — or, when the target has no valid `review.yml`, when the pull request is opened — and by the conflict sweep. For each pair it runs a textual check (`planMerge`), one Clef call, and, for related pairs, the reasoning model. Results go to `pr_edges`, one row per pair, written only for the heads the run claimed (compare-and-swap).
 - **`buildTree`** (pure) turns the edges into parents, waits-on, must-account-for, and cycles. `view.ts` ignores closed-unmerged pull requests; PR detail computes only its own branch.
 - **Surfaces:** `GET /api/repos/:owner/:repo/pulls/tree`, `stack` on PR detail, `POST .../pulls/:n/stack/retry`, and the MCP tools `gitorange_get_pull_tree` and `gitorange_get_pull_request` (with `stack`).
 

@@ -6,7 +6,7 @@ import { decoder } from '../git/bytes';
 /** `.gitorange/review.yml`, read from the target branch so a PR can't loosen its own rules. */
 export const POLICY_PATH = '.gitorange/review.yml';
 
-export const DEFAULT_CLASSIFIER = 'clef';
+export const DEFAULT_CLASSIFIER = 'clef' as const;
 
 const id = z
   .string()
@@ -15,6 +15,21 @@ const id = z
     'Question ids may use letters, digits, _, . and -'
   );
 const text = z.string().trim().min(1);
+
+/** Stacking's tuning when review.yml doesn't set it (or there is no review.yml). */
+export const STACKING_DEFAULTS = {
+  max_open: 20,
+  related_above: 0.3,
+  confident_above: 0.6,
+};
+
+/** `stacking.enabled` turned stacking on before it was always on: still accepted, and ignored. */
+function dropEnabled(v: unknown): unknown {
+  if (!v || typeof v !== 'object' || Array.isArray(v) || !('enabled' in v))
+    return v;
+  const { enabled: _, ...rest } = v as Record<string, unknown>;
+  return rest;
+}
 
 const noul = z
   .object({
@@ -74,22 +89,20 @@ const schema = z
       })
       .strict()
       .default({ questions: {} }),
-    stacking: z
-      .object({
-        enabled: z.boolean().default(false),
-        max_open: z.number().int().min(2).max(100).default(20),
-        // Clef's "could these depend on each other?" probability above which a pair is related.
-        related_above: z.number().min(0).max(1).default(0.3),
-        // Clef's kind/direction confidence from which its answer stands without a reasoning model.
-        confident_above: z.number().min(0).max(1).default(0.6),
-      })
-      .strict()
-      .default({
-        enabled: false,
-        max_open: 20,
-        related_above: 0.3,
-        confident_above: 0.6,
-      }),
+    // Stack discovery is always on; this section only tunes it.
+    stacking: z.preprocess(
+      dropEnabled,
+      z
+        .object({
+          max_open: z.number().int().min(2).max(100).default(20),
+          // Clef's "could these depend on each other?" probability above which a pair is related.
+          related_above: z.number().min(0).max(1).default(0.3),
+          // Clef's kind/direction confidence from which its answer stands without a reasoning model.
+          confident_above: z.number().min(0).max(1).default(0.6),
+        })
+        .strict()
+        .default(() => ({ ...STACKING_DEFAULTS }))
+    ),
   })
   .strict();
 

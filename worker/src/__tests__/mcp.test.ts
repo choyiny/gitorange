@@ -924,7 +924,7 @@ describe('MCP run logs', () => {
 });
 
 describe('stacking tools', () => {
-  it('reports the tree and a PR’s stack, and hides private repos', async () => {
+  it('reports the tree and a PR’s stack without a review.yml, and hides private repos', async () => {
     const t = makeEnv({ actions: true });
     const admin = await bootstrapAdmin(t);
     await call(t, '/api/repos', {
@@ -932,20 +932,9 @@ describe('stacking tools', () => {
       json: { name: 'app', visibility: 'private' },
     });
     const repo = [...t.fake.repos.values()][0];
-    const policy = 'stacking:\n  enabled: true\n';
-    const main = await commitPaths(
-      repo,
-      'main',
-      { 'a.txt': 'a\n', '.gitorange/review.yml': policy },
-      'base'
-    );
+    const main = await commitPaths(repo, 'main', { 'a.txt': 'a\n' }, 'base');
     repo.refs.set('refs/heads/one', main);
-    await commitPaths(
-      repo,
-      'one',
-      { 'a.txt': 'A\n', '.gitorange/review.yml': policy },
-      'One'
-    );
+    await commitPaths(repo, 'one', { 'a.txt': 'A\n' }, 'One');
     await call(t, '/api/repos/octocat/app/pulls', {
       cookie: admin,
       json: { title: 'One', body: '', base: 'main', head: 'one' },
@@ -955,8 +944,9 @@ describe('stacking tools', () => {
     const tree = await tool(t, access_token, 'gitorange_get_pull_tree', {
       repository: 'octocat/app',
     });
-    expect(JSON.parse(tree.content[0].text)).toMatchObject({
-      stacking: true,
+    const view = JSON.parse(tree.content[0].text);
+    expect(view.stacking).toBeUndefined();
+    expect(view).toMatchObject({
       targets: [{ branch: 'main', pulls: [{ number: 1, parent: null }] }],
     });
     const pr = await tool(t, access_token, 'gitorange_get_pull_request', {

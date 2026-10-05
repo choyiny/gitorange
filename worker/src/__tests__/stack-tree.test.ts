@@ -12,9 +12,8 @@ import {
 import { buildTree, type EdgeInput } from '../stack/tree';
 
 describe('review.yml stacking', () => {
-  it('is off by default', () => {
+  it('has defaults', () => {
     expect(parsePolicy('model: clef\n').stacking).toEqual({
-      enabled: false,
       max_open: 20,
       related_above: 0.3,
       confident_above: 0.6,
@@ -24,14 +23,20 @@ describe('review.yml stacking', () => {
   it('reads every field', () => {
     expect(
       parsePolicy(
-        'stacking:\n  enabled: true\n  max_open: 5\n  related_above: 0.5\n  confident_above: 0.8\n'
+        'stacking:\n  max_open: 5\n  related_above: 0.5\n  confident_above: 0.8\n'
       ).stacking
     ).toEqual({
-      enabled: true,
       max_open: 5,
       related_above: 0.5,
       confident_above: 0.8,
     });
+  });
+
+  it('accepts and ignores the old enabled key', () => {
+    for (const old of ['true', 'false'])
+      expect(
+        parsePolicy(`stacking:\n  enabled: ${old}\n  max_open: 5\n`).stacking
+      ).toEqual({ max_open: 5, related_above: 0.3, confident_above: 0.6 });
   });
 
   it('rejects unknown keys and out-of-range values', () => {

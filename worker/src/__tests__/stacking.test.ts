@@ -32,8 +32,6 @@ const POLICY = (extra = '') => `
 model: clef
 checks:
   require: all
-stacking:
-  enabled: true
 ${extra}`;
 
 /** The #28/#29 shape: a config file and docs on main. */
@@ -143,8 +141,8 @@ async function drain(t: TestEnv, models: StackModels) {
   }
 }
 
-/** A repository with `review.yml` on main, and helpers to open PRs from branches off main. */
-async function repoWithPolicy(policy = POLICY()) {
+/** A repository with `review.yml` on main (none when `policy` is null), and helpers to open PRs from branches off main. */
+async function repoWithPolicy(policy: string | null = POLICY()) {
   const t = makeEnv({ actions: true });
   const admin = await bootstrapAdmin(t);
   await call(t, '/api/repos', {
@@ -152,13 +150,11 @@ async function repoWithPolicy(policy = POLICY()) {
     json: { name: 'app', visibility: 'private' },
   });
   const repo = [...t.fake.repos.values()][0];
-  const main = await commitPaths(
-    repo,
-    'main',
-    { ...MAIN, '.gitorange/review.yml': policy },
-    'base'
-  );
-  const files = { ...MAIN, '.gitorange/review.yml': policy };
+  const files: Record<string, string> =
+    policy === null
+      ? { ...MAIN }
+      : { ...MAIN, '.gitorange/review.yml': policy };
+  const main = await commitPaths(repo, 'main', files, 'base');
   async function open(
     branch: string,
     changes: Record<string, string>,
@@ -505,7 +501,9 @@ describe('stacking discovery', () => {
   });
 
   it('caps triage at max_open, newest first, but still checks pairs that share a file', async () => {
-    const { t, open } = await repoWithPolicy(POLICY('  max_open: 2\n'));
+    const { t, open } = await repoWithPolicy(
+      POLICY('stacking:\n  max_open: 2\n')
+    );
     const { models, calls } = stackModels();
     await open('p1', { 'shared.txt': 'one\n' }, 'P1');
     await open('p2', { 'b.txt': 'b\n' }, 'P2');
@@ -520,20 +518,55 @@ describe('stacking discovery', () => {
     );
   });
 
-  it('does nothing when stacking is off', async () => {
-    const { t, open } = await repoWithPolicy(
-      'model: clef\nchecks:\n  require: none\n'
+  it('runs in a repository without review.yml, on paths, from the PR opens', async () => {
+    const { t, open } = await repoWithPolicy(null);
+    const { models, calls } = stackModels({
+      related: () => true,
+      relation: () => MUST,
+    });
+    await open('setup', SETUP_CHECKS, 'Setup checks');
+    await open('usage', USAGE, 'Usage and cost');
+    await drain(t, models);
+    // No review ran (there is no review.yml), so discovery started from the opens alone.
+    expect(
+      t.actions.resolutions.filter(
+        (s) => (s.params as { classificationId?: string }).classificationId
+      )
+    ).toEqual([]);
+    expect(await edges(t)).toMatchObject([
+      { a: 1, b: 2, stage: 'done', kind: 'must_account_for' },
+    ]);
+    const triage = calls.triaged.at(-1)!;
+    expect(triage.a.summaries).toBe(
+      '- docs/configuration.md\n- src/setup-checks.ts'
     );
-    const { models, calls } = stackModels();
+    expect(triage.b.summaries).toContain('- src/usage.ts');
+  });
+
+  it('runs with a review.yml that has no stacking section', async () => {
+    const { t, open } = await repoWithPolicy(
+      'model: clef\nchecks:\n  require: all\n'
+    );
+    const { models } = stackModels();
     await open('one', { 'a.txt': 'a\n' }, 'One');
     await open('two', { 'b.txt': 'b\n' }, 'Two');
     await drain(t, models);
-    expect(
-      t.actions.resolutions.filter(
-        (s) => (s.params as { stack?: unknown }).stack
-      )
-    ).toEqual([]);
-    expect(calls.triaged).toEqual([]);
+    expect(await edges(t)).toMatchObject([
+      { a: 1, b: 2, stage: 'done', kind: 'independent' },
+    ]);
+  });
+
+  it('ignores a leftover stacking.enabled: false', async () => {
+    const { t, open } = await repoWithPolicy(
+      POLICY('stacking:\n  enabled: false\n')
+    );
+    const { models } = stackModels();
+    await open('one', { 'a.txt': 'a\n' }, 'One');
+    await open('two', { 'b.txt': 'b\n' }, 'Two');
+    await drain(t, models);
+    expect(await edges(t)).toMatchObject([
+      { a: 1, b: 2, stage: 'done', kind: 'independent' },
+    ]);
   });
 });
 
@@ -604,17 +637,19 @@ describe('stack API', () => {
     expect(two.mustAccountFor).toEqual([]);
   });
 
-  it('is empty with stacking off', async () => {
-    const { t, admin, open } = await repoWithPolicy('model: clef\n');
+  it('serves the tree for a repository without review.yml', async () => {
+    const { t, admin, open } = await repoWithPolicy(null);
     await open('one', { 'a.txt': 'a\n' }, 'One');
     const res = await call(t, '/api/repos/octocat/app/pulls/tree', {
       cookie: admin,
     });
-    expect(await res.json()).toEqual({ stacking: false, targets: [] });
+    expect(await res.json()).toMatchObject({
+      targets: [{ branch: 'main', nodes: [{ number: 1, title: 'One' }] }],
+    });
     const detail = (await (
       await call(t, '/api/repos/octocat/app/pulls/1', { cookie: admin })
     ).json()) as { stack: unknown };
-    expect(detail.stack).toBeNull();
+    expect(detail.stack).toMatchObject({ number: 1, parent: null });
   });
 
   it('serves a PR with more pairs than D1 binds in one statement', async () => {
@@ -699,12 +734,12 @@ describe('stack API', () => {
     ).toHaveLength(N);
   });
 
-  it('says stacking is on when no pull request is open', async () => {
-    const { t, admin } = await repoWithPolicy();
+  it('is empty when no pull request is open', async () => {
+    const { t, admin } = await repoWithPolicy(null);
     const res = await call(t, '/api/repos/octocat/app/pulls/tree', {
       cookie: admin,
     });
-    expect(await res.json()).toEqual({ stacking: true, targets: [] });
+    expect(await res.json()).toEqual({ targets: [] });
   });
 
   it('reports pairs still being checked instead of calling a PR independent', async () => {
@@ -741,19 +776,14 @@ describe('stack API', () => {
     expect(res.status).toBe(404);
   });
 
-  it('refuses to retry when stacking is off, and deletes nothing', async () => {
-    const { t, admin, open, repo, files } = await repoWithPolicy();
+  it('refuses to retry when AI is not configured, and deletes nothing', async () => {
+    const { t, admin, open } = await repoWithPolicy();
     await open('one', { 'a.txt': 'a\n' }, 'One');
     await open('two', { 'b.txt': 'b\n' }, 'Two');
     await drain(t, stackModels({ failTriage: true }).models);
     expect(await edges(t)).toMatchObject([{ stage: 'failed' }]);
-    await commitPaths(
-      repo,
-      'main',
-      { ...files, '.gitorange/review.yml': 'model: clef\n' },
-      'Stacking off'
-    );
     const before = t.actions.resolutions.length;
+    delete (t.env as Partial<CloudflareBindings>).MERGE_RESOLUTION;
     const res = await call(t, '/api/repos/octocat/app/pulls/2/stack/retry', {
       cookie: admin,
       json: {},

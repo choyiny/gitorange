@@ -155,8 +155,6 @@ export type StackNode = {
   checking: boolean;
 };
 export type StackTree = {
-  /** Stacking is on (for the default branch, or a branch with open PRs). */
-  stacking: boolean;
   targets: {
     branch: string;
     nodes: (StackNode & {
@@ -186,7 +184,7 @@ export type PullDetail = {
   /** Auto-merge review; null when the target branch has no .gitorange/review.yml. */
   review: PullReview | null;
   canMerge: boolean;
-  /** How this pull request stacks with other open ones; null when stacking is off. */
+  /** How this pull request stacks with other open ones; null once it isn't open. */
   stack: StackNode | null;
 };
 export type ClassifierAnswer =

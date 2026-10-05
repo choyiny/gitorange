@@ -8,7 +8,6 @@ import {
 } from '../db/app.schema';
 import type { GitService } from '../git/service';
 import { usersById, type PublicUser } from '../lib/users';
-import { parsePolicy, readPolicy } from '../review/policy';
 import { buildTree, type EdgeInput, type TreeNode } from './tree';
 
 export type StackNodeView = TreeNode & {
@@ -17,25 +16,12 @@ export type StackNodeView = TreeNode & {
   author: PublicUser;
 };
 export type StackTreeView = {
-  /** Stacking is on for the default branch or for a branch with open PRs. */
-  stacking: boolean;
   targets: {
     branch: string;
     nodes: StackNodeView[];
     landed: { number: number; title: string }[];
   }[];
 };
-
-async function stackingOn(git: GitService, branch: string) {
-  const tip = await git.resolve(branch);
-  const file = tip ? await readPolicy(git, tip) : null;
-  if (!file) return false;
-  try {
-    return parsePolicy(file.text).stacking.enabled;
-  } catch {
-    return false;
-  }
-}
 
 function chunks<T>(xs: T[], size: number): T[][] {
   const out: T[][] = [];
@@ -50,15 +36,12 @@ const ghost: PublicUser = {
   image: null,
 };
 
-/**
- * The tree of every target branch with open PRs and stacking on. `defaultBranch` is checked too, so
- * `stacking` is true for a repository with stacking on and no open PR.
- */
+/** The tree of every target branch with open PRs. */
 export async function stackTreeView(
   db: DrizzleDB,
   git: GitService,
   repositoryId: string,
-  opts: { branch?: string; authors?: boolean; defaultBranch?: string } = {}
+  opts: { branch?: string; authors?: boolean } = {}
 ): Promise<StackTreeView> {
   const open = await db
     .select()
@@ -72,19 +55,9 @@ export async function stackTreeView(
     )
     .all();
   const branches = [...new Set(open.map((p) => p.baseRef))].sort();
-  const on: string[] = [];
-  for (const b of branches) if (await stackingOn(git, b)) on.push(b);
-  if (!on.length)
-    return {
-      stacking:
-        !opts.branch &&
-        !!opts.defaultBranch &&
-        !branches.includes(opts.defaultBranch) &&
-        (await stackingOn(git, opts.defaultBranch)),
-      targets: [],
-    };
-  // Only pairs with an open side on a branch with stacking on; D1 binds at most 100 parameters per statement.
-  const openIds = open.filter((p) => on.includes(p.baseRef)).map((p) => p.id);
+  if (!branches.length) return { targets: [] };
+  // Only pairs with an open side; D1 binds at most 100 parameters per statement.
+  const openIds = open.map((p) => p.id);
   const edges = new Map<string, PrEdge>();
   for (const ids of chunks(openIds, 45))
     for (const e of await db
@@ -97,7 +70,7 @@ export async function stackTreeView(
         )
       )
       .all())
-      if (on.includes(e.landTarget)) edges.set(e.id, e);
+      if (branches.includes(e.landTarget)) edges.set(e.id, e);
   const isOpen = new Set(openIds);
   const others = [
     ...new Set(
@@ -138,8 +111,7 @@ export async function stackTreeView(
           open.map((p) => p.authorId)
         );
   return {
-    stacking: true,
-    targets: on.map((branch) => {
+    targets: branches.map((branch) => {
       const prs = open
         .filter((p) => p.baseRef === branch)
         .sort((x, y) => x.number - y.number);
@@ -204,7 +176,7 @@ export async function stackTreeView(
   };
 }
 
-/** One open PR's place in its target's tree; null when stacking is off there. */
+/** One open PR's place in its target's tree; null when it isn't open. */
 export async function stackViewFor(
   db: DrizzleDB,
   git: GitService,

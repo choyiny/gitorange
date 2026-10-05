@@ -19,7 +19,12 @@ import {
   reviewConfigured,
 } from '../review/classify';
 import { ignoreMatcher, readIgnore } from '../review/ignore';
-import { parsePolicy, readPolicy } from '../review/policy';
+import {
+  DEFAULT_CLASSIFIER,
+  parsePolicy,
+  readPolicy,
+  STACKING_DEFAULTS,
+} from '../review/policy';
 import {
   readDecision,
   routeDecision,
@@ -50,23 +55,30 @@ function capLines(text: string, max: number): string {
   return `${lines.slice(0, kept).join('\n')}\n…and ${lines.length - kept} more files`;
 }
 
-/** The stacking section of the target branch's review.yml; null when off or invalid. */
+/**
+ * Stacking's tuning from the target branch's review.yml. Without a valid one, the defaults and no
+ * `policySha`: there is no auto-merge review to wait for.
+ */
 async function stackingPolicy(git: GitService, baseSha: string) {
   const file = await readPolicy(git, baseSha);
-  if (!file) return null;
-  try {
-    const p = parsePolicy(file.text);
-    return p.stacking.enabled
-      ? { ...p.stacking, model: p.model, policySha: file.sha }
-      : null;
-  } catch {
-    return null;
-  }
+  if (file)
+    try {
+      const p = parsePolicy(file.text);
+      return { ...p.stacking, model: p.model, policySha: file.sha };
+    } catch {
+      // An invalid review.yml is reported on its review; stacking goes on with the defaults.
+    }
+  return {
+    ...STACKING_DEFAULTS,
+    model: DEFAULT_CLASSIFIER,
+    policySha: null as string | null,
+  };
 }
 
 /**
- * Starts a stack run for the PR's current head and base, once its auto-merge review has finished
- * (the run reads its summaries). Returns whether one was started.
+ * Starts a stack run for the PR's current head and base. With a valid review.yml on the target, waits
+ * until the head's auto-merge review has finished (the run reads its summaries). Returns whether one
+ * was started.
  */
 export async function ensureStacking(
   env: CloudflareBindings,
@@ -77,15 +89,16 @@ export async function ensureStacking(
 ): Promise<boolean> {
   if (!reviewConfigured(env) || pr.state !== 'open') return false;
   const policy = await stackingPolicy(git, shas.base);
-  if (!policy) return false;
-  const review = await classificationFor(
-    db,
-    pr.id,
-    shas.head,
-    policy.policySha
-  );
-  if (!review || (review.status !== 'done' && review.status !== 'failed'))
-    return false;
+  if (policy.policySha) {
+    const review = await classificationFor(
+      db,
+      pr.id,
+      shas.head,
+      policy.policySha
+    );
+    if (!review || (review.status !== 'done' && review.status !== 'failed'))
+      return false;
+  }
   const id = `stack-${pr.id}-${shas.head.slice(0, 12)}-${shas.base.slice(0, 12)}`;
   try {
     await env.MERGE_RESOLUTION.create({
@@ -176,7 +189,6 @@ export async function executeStacking(
     ]);
     if (!target || !head) return null;
     const policy = await stackingPolicy(git, target);
-    if (!policy) return null;
     const side = async (
       p: PullRequest,
       h: string,
@@ -436,7 +448,7 @@ export async function executeStacking(
 
 /**
  * Forgets the PR's failed pairs so a new run checks them again, and starts that run. Changes nothing when
- * stacking is off for the PR's target (`off`); `unavailable` when the run could not be started.
+ * AI isn't configured (`off`); `unavailable` when the run could not be started.
  */
 export async function retryFailedPairs(
   env: CloudflareBindings,
@@ -445,8 +457,7 @@ export async function retryFailedPairs(
   pr: PullRequest,
   shas: { base: string; head: string }
 ): Promise<'started' | 'off' | 'unavailable'> {
-  if (!reviewConfigured(env) || !(await stackingPolicy(git, shas.base)))
-    return 'off';
+  if (!reviewConfigured(env)) return 'off';
   // A retried run needs a new instance id: suffix with the time.
   const id = `stack-${pr.id}-${shas.head.slice(0, 12)}-retry-${Date.now()}`;
   await db

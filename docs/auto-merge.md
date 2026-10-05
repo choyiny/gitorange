@@ -144,22 +144,21 @@ migrations/meta/
 
 When several agents open pull requests at once, they often touch the same code. Stacking works out how open pull requests into the same branch relate and shows the result as a tree. Today it only shows relationships: nothing is retargeted, blocked, or reordered.
 
-It's off until you opt in, in the same `.gitorange/review.yml`:
+It's always on, whenever AI is configured, with or without a `.gitorange/review.yml`. The file's optional `stacking:` section only tunes it (these are the defaults):
 
 ```yaml
 stacking:
-  enabled: true
   max_open: 20 # check a pull request against this many open ones; beyond it, only those sharing a file
   related_above: 0.3 # Clef's "could these depend on each other?" probability above which a pair is related
   confident_above: 0.6 # from this confidence Clef's kind and direction stand without the reasoning model
 ```
 
-Clef uses the file's top-level `model`.
+Clef uses the file's top-level `model` (`clef` without a valid `review.yml`). `stacking.enabled`, which used to turn stacking on, is no longer used: it's accepted and ignored, so `enabled: false` doesn't turn it off.
 
-**How a pair is checked.** A `stack` run starts when a pull request's review finishes (or fails) and when the conflict sweep sees a branch move. It pairs the pull request with the other open pull requests into the same target (newest first) and with pull requests that landed there in the last 30 days and aren't in its history. For each pair:
+**How a pair is checked.** With a `review.yml` on the target branch, a `stack` run starts when a pull request's review finishes (or fails); without one (or with an invalid one), when the pull request is opened. In both cases it also starts when the conflict sweep sees a branch move. It pairs the pull request with the other open pull requests into the same target (newest first) and with pull requests that landed there in the last 30 days and aren't in its history. For each pair:
 
 1. A textual check merges the two heads and notes which files conflict.
-2. Clef decides over the one-line summaries from the review (file paths when there are none): are they related, which kind, and which goes first.
+2. Clef decides over the one-line summaries from the review (file paths when there are none, or no review): are they related, which kind, and which goes first.
 3. For related pairs, GLM-5.3 reads the diffs and writes the reason and, where needed, instructions for the author. It also decides the kind and direction, but only when Clef was unsure.
 
 A pair is saved only for the commits the run started from, so a push mid-run can't leave a stale answer. A pair that can't be checked shows as "Couldn't check against #N"; the retry button is in that pull request's **Stack** section (the Tree view only shows the label).
@@ -171,7 +170,7 @@ A pair is saved only for the commits the run started from, so a push mid-run can
 - **Conflicts:** #40 and #41 both rewrite the same function differently. One has to go first, and the other has to be redone on top of it.
 - **Independent:** #50 edits the docs and #51 fixes a bug elsewhere. Neither waits on the other. Independent pairs are recorded so they aren't checked again, but they aren't drawn.
 
-The **Tree** view on the Pull requests tab shows open pull requests with their builds-on, must-account-for, and conflict relationships, each pull request's **Stack** section lists its own relationships, and agents read both over MCP (`gitorange_get_pull_tree`, and `stack` on `gitorange_get_pull_request`). Closed-unmerged pull requests are ignored. While checks are still running, a pull request shows "checking…" (no check has started for its latest commit yet; `checking` in the API and MCP) or "checking #N…" (that pair is in progress; `pending`), and isn't called independent until they finish. With stacking on and nothing open, the Tree view says "No open pull requests".
+The **Tree** view on the Pull requests tab shows open pull requests with their builds-on, must-account-for, and conflict relationships, each pull request's **Stack** section lists its own relationships, and agents read both over MCP (`gitorange_get_pull_tree`, and `stack` on `gitorange_get_pull_request`). Closed-unmerged pull requests are ignored. While checks are still running, a pull request shows "checking…" (no check has started for its latest commit yet; `checking` in the API and MCP) or "checking #N…" (that pair is in progress; `pending`), and isn't called independent until they finish. With nothing open, the Tree view says "No open pull requests".
 
 **Cost.** Per PR head change, one Clef call per open PR into the same target and per landed candidate (up to 20 pull requests landed in the last 30 days), skipped for pairs already checked at the same commits, plus one GLM-5.3 call per related or conflicting pair.
 

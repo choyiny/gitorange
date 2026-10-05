@@ -41,27 +41,12 @@ export function StackTree({ repo }: { repo: RepoDetail }) {
       </div>
     );
   if (!q.data) return <Spinner />;
-  if (q.data.stacking && !q.data.targets.length)
+  if (!q.data.targets.length)
     return (
       <div className="blankslate">
         <GitBranchIcon size={24} className="color-fg-muted mb-2" />
         <h3 className="blankslate-heading">No open pull requests</h3>
         <p>Open pull requests show up here, stacked on what they build on.</p>
-      </div>
-    );
-  if (!q.data.targets.length)
-    return (
-      <div className="blankslate">
-        <GitBranchIcon size={24} className="color-fg-muted mb-2" />
-        <h3 className="blankslate-heading">Stacking is off</h3>
-        <p>
-          Add{' '}
-          <code>
-            stacking: {'{'} enabled: true {'}'}
-          </code>{' '}
-          to <code>.gitorange/review.yml</code> on the target branch, and
-          GitOrange works out how open pull requests build on each other.
-        </p>
       </div>
     );
   return (

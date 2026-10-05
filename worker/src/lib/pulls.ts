@@ -13,6 +13,7 @@ import { ensureResolution } from '../merge/auto';
 import { pullRef } from '../merge/land';
 import { ensureClassification } from '../review/classify';
 import { publishChange } from '../live/publish';
+import { ensureStacking } from '../stack/discover';
 
 /**
  * The commits a PR compares: live branches while open; once closed, `refs/pull/<n>/head` and
@@ -42,7 +43,8 @@ export type OpenPullResult =
   | { ok: false; status: 400 | 409; error: string };
 
 /**
- * Opens a PR and starts its review, AI conflict resolution if needed, and `pull_request` runs.
+ * Opens a PR and starts its review, AI conflict resolution if needed, stack discovery, and
+ * `pull_request` runs.
  * Caller checks push permission.
  */
 export async function openPull(opts: {
@@ -141,6 +143,13 @@ export async function openPull(opts: {
   opts.after(
     ensureResolution(env, db, git, pr, shas).catch((e) =>
       console.error('[merge] auto-resolve failed', e)
+    )
+  );
+  // Stack discovery: starts now when the target has no review.yml (no review to wait for); otherwise the
+  // review starts it when it ends.
+  opts.after(
+    ensureStacking(env, db, git, pr, shas).catch((e) =>
+      console.error('[stack] start failed', e)
     )
   );
   opts.after(
