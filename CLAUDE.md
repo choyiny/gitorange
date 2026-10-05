@@ -81,8 +81,12 @@ and better-auth. Git storage is **Cloudflare Artifacts**: one Artifacts repo per
 
 - ALL work happens on a new feature branch — never commit directly to `main`.
 - **NEVER push directly to `main`**.
-- **NEVER deploy** (`yarn deploy` or any `wrangler deploy`) — deployments are done by humans. The one
-  exception is the `/gitorange-onboarding` skill, which a deployer runs and confirms step by step.
+- **Deploy only when a person says so.** Run `yarn deploy` (or any `wrangler deploy`) and
+  `yarn db:migrate:prod` only when a person directs it in the conversation, or after you ask and they
+  confirm; never on your own initiative, and never as part of finishing a task. Deploy `main` from a clean
+  checkout of `origin/main` (a separate worktree with `wrangler.jsonc` copied in), never from a feature
+  branch or a dirty tree, and apply pending migrations before `yarn deploy`. Say what you deployed (the
+  commit) when done. The `/gitorange-onboarding` skill deploys step by step with the deployer's confirmation.
 - Submit work as a pull request for human review, on **git.xyspace.dev** (`origin`,
   `choyiny/gitorange`): push the branch, then open it with the `gitorange_create_pull_request` MCP tool
   (server `xy-space-gitorange`) and follow it with `gitorange_get_pull_request`. GitHub (`github` remote) is a
