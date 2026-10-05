@@ -1,4 +1,4 @@
-import { and, eq } from 'drizzle-orm';
+import { and, eq, ne, or } from 'drizzle-orm';
 import { publishChange } from '../live/publish';
 import type { DrizzleDB } from '../db/middleware';
 import {
@@ -56,7 +56,8 @@ export function squashCredits(
 }
 
 export type LandResult =
-  { ok: true; sha: string } | { ok: false; status: 400 | 409; error: string };
+  | { ok: true; sha: string; headSha: string }
+  | { ok: false; status: 400 | 409; error: string };
 
 /**
  * Squashes a pull request onto the target tip and pushes with compare-and-swap, including any
@@ -241,5 +242,47 @@ export async function landPull(opts: {
       )
     );
   }
-  return { ok: true, sha };
+  return { ok: true, sha, headSha };
+}
+
+/**
+ * After auto-merge lands a pull request, deletes its head branch with compare-and-swap on the
+ * merged head commit. Keeps it when someone pushed since, when it's the default branch, or when
+ * another open pull request uses it as base or head (a stack builds on it). Never throws.
+ */
+export async function deleteMergedBranch(opts: {
+  env: CloudflareBindings;
+  db: DrizzleDB;
+  repo: Repository;
+  git: GitService;
+  pr: Pick<PullRequest, 'id' | 'repositoryId' | 'headRef'>;
+  /** The head commit that was merged. */
+  headSha: string;
+}): Promise<boolean> {
+  const { env, db, repo, git, pr } = opts;
+  const branch = pr.headRef;
+  try {
+    if (branch === repo.defaultBranch) return false;
+    const inUse = await db
+      .select({ id: pullRequests.id })
+      .from(pullRequests)
+      .where(
+        and(
+          eq(pullRequests.repositoryId, pr.repositoryId),
+          eq(pullRequests.state, 'open'),
+          ne(pullRequests.id, pr.id),
+          or(eq(pullRequests.baseRef, branch), eq(pullRequests.headRef, branch))
+        )
+      )
+      .get();
+    if (inUse) return false;
+    if ((await git.resolve(branch)) !== opts.headSha) return false;
+    // A deletion starts no Actions run and leaves no PR to sweep, so a live ping is all it needs.
+    await git.deleteBranch(branch, opts.headSha);
+  } catch (e) {
+    console.warn('[merge] could not delete merged branch', pr.id, branch, e);
+    return false;
+  }
+  await publishChange(env, pr.repositoryId);
+  return true;
 }

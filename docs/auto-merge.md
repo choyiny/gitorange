@@ -21,6 +21,8 @@ All of these must hold for the pull request's latest commit:
 It merges the same way the button does: squashed onto the target branch's current tip, so history stays
 linear. The commit is authored as the pull request's author; the pull request shows **Auto-merge merged
 commit …**. A maintainer can turn auto-merge off (and back on) for one pull request in its merge box.
+Afterwards GitOrange deletes the pull request's branch, unless someone pushed to it since, it's the default
+branch, or another open pull request builds on it (as its base or head); a merge by hand keeps the branch.
 
 > Checks run on the pull request's own commit, not on the result rebased onto the latest target branch. If the
 > target branch moved in between, the merged result as a whole was never tested.

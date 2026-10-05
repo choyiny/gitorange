@@ -11,7 +11,7 @@ import {
 import { users } from '../db/auth.schema';
 import type { GitService } from '../git/service';
 import { findRepoById, gitFor } from '../lib/repos';
-import { landPull } from '../merge/land';
+import { deleteMergedBranch, landPull } from '../merge/land';
 import { latestResolution } from '../merge/resolution';
 import { classificationFor } from './classify';
 import { parsePolicy, readPolicy, type ReviewPolicy } from './policy';
@@ -245,6 +245,18 @@ export async function maybeAutoMerge(
     author: author ?? { name: 'GitOrange', email: 'noreply@gitorange' },
     after: (p) => void followUps.push(p),
   });
+  // Merged branches don't pile up; stacked or since-pushed ones are kept.
+  if (result.ok)
+    followUps.push(
+      deleteMergedBranch({
+        env,
+        db,
+        repo: found.repo,
+        git,
+        pr,
+        headSha: result.headSha,
+      })
+    );
   await Promise.allSettled(followUps);
   if (!result.ok)
     console.warn('[review] auto-merge did not land', pr.id, result.error);

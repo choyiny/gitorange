@@ -387,6 +387,11 @@ function Conversation({
                         You’re all set — the <code>{pr.headRef}</code> branch
                         can be safely deleted.
                       </>
+                    ) : pr.mergedAutomatically && !branchDeleted ? (
+                      <>
+                        The <code>{pr.headRef}</code> branch was deleted
+                        automatically.
+                      </>
                     ) : (
                       <>
                         The <code>{pr.headRef}</code> branch has been deleted.

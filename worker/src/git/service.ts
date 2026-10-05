@@ -563,8 +563,12 @@ export class GitService {
     );
   }
 
-  async deleteBranch(name: string) {
-    const sha = await this.resolve(name);
+  /**
+   * Deletes a branch. With `expected`, only while it still points there (compare-and-swap):
+   * a concurrent push wins and the push throws GitPushError.
+   */
+  async deleteBranch(name: string, expected?: string) {
+    const sha = expected ?? (await this.resolve(name));
     if (!sha) return;
     await this.client.push(
       [{ ref: `refs/heads/${name}`, old: sha, new: ZERO_SHA }],

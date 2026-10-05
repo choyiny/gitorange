@@ -6,6 +6,8 @@ import type { StepRunner } from '../merge/resolution';
 import { executeResolution } from '../merge/resolution';
 import { executeClassification } from '../review/classify';
 import { autoMergeForCommit } from '../review/auto-merge';
+import { deleteMergedBranch } from '../merge/land';
+import { findRepoById, gitFor } from '../lib/repos';
 import type {
   ClefQuestion,
   InvestigateRequest,
@@ -1153,5 +1155,147 @@ describe('review state in the pull request list', () => {
       'More'
     );
     expect(await listed(t, admin)).toEqual({ state: 'reviewing', flags: 0 });
+  });
+});
+
+describe('auto-merge deletes the merged branch', () => {
+  const ZERO = '0'.repeat(40);
+
+  /** Calls the cleanup directly, as auto-merge does after landing pull request #`number`. */
+  async function cleanup(t: TestEnv, number: number, headSha: string) {
+    const db = drizzle(t.env.DB, { schema });
+    const pr = (await db.query.pullRequests.findFirst({
+      where: (p, { eq }) => eq(p.number, number),
+    }))!;
+    const found = (await findRepoById(db, pr.repositoryId))!;
+    return deleteMergedBranch({
+      env: t.env,
+      db,
+      repo: found.repo,
+      git: gitFor(t.env, found.repo),
+      pr,
+      headSha,
+    });
+  }
+
+  async function mergeByHand(t: TestEnv, admin: string, number = 1) {
+    const res = await call(t, `/api/repos/octocat/app/pulls/${number}/merge`, {
+      cookie: admin,
+      json: {},
+    });
+    expect(res.status).toBe(200);
+    await settle(t);
+  }
+
+  it('deletes the head branch once auto-merge lands the pull request', async () => {
+    const { t, admin, repo } = await pullWith({ 'src/b.ts': 'b\n' });
+    await runReviews(t, fakeModels().models);
+    await settle(t);
+    const row = await pullRow(t);
+    expect(row).toMatchObject({ state: 'merged', merged_automatically: 1 });
+    expect(repo.refs.get('refs/heads/main')).toBe(row!.merge_commit_sha);
+    expect(repo.refs.has('refs/heads/feature')).toBe(false);
+    const d = (await (
+      await call(t, '/api/repos/octocat/app/pulls/1', { cookie: admin })
+    ).json()) as { headBranchExists: boolean };
+    expect(d.headBranchExists).toBe(false);
+  });
+
+  it('keeps the branch after a manual merge', async () => {
+    const { t, admin, repo } = await pullWith(
+      { 'src/b.ts': 'b\n' },
+      { policy: null }
+    );
+    const head = repo.refs.get('refs/heads/feature');
+    await mergeByHand(t, admin);
+    expect(repo.refs.get('refs/heads/feature')).toBe(head);
+  });
+
+  it('keeps the branch when someone pushed to it after the merged commit', async () => {
+    const { t, admin, repo } = await pullWith(
+      { 'src/b.ts': 'b\n' },
+      { policy: null }
+    );
+    const merged = repo.refs.get('refs/heads/feature')!;
+    await mergeByHand(t, admin);
+    const pushed = await commitPaths(
+      repo,
+      'feature',
+      { ...APP, 'src/b.ts': 'b2\n' },
+      'Later'
+    );
+    expect(await cleanup(t, 1, merged)).toBe(false);
+    expect(repo.refs.get('refs/heads/feature')).toBe(pushed);
+    // The ref update itself is compare-and-swap: a stale head is refused.
+    const db = drizzle(t.env.DB, { schema });
+    const found = (await findRepoById(
+      db,
+      [...(await db.query.repositories.findMany())][0].id
+    ))!;
+    await expect(
+      gitFor(t.env, found.repo).deleteBranch('feature', merged)
+    ).rejects.toThrow();
+    expect(repo.refs.get('refs/heads/feature')).toBe(pushed);
+    // At the merged commit it goes.
+    expect(await cleanup(t, 1, pushed)).toBe(true);
+    expect(repo.refs.has('refs/heads/feature')).toBe(false);
+  });
+
+  it('keeps a branch another open pull request builds on', async () => {
+    const { t, admin, repo } = await pullWith(
+      { 'src/b.ts': 'b\n' },
+      { policy: null }
+    );
+    const head = repo.refs.get('refs/heads/feature')!;
+    repo.refs.set('refs/heads/child', head);
+    await commitPaths(repo, 'child', { ...APP, 'src/c.ts': 'c\n' }, 'Child');
+    const opened = await call(t, '/api/repos/octocat/app/pulls', {
+      cookie: admin,
+      json: { title: 'Child', base: 'feature', head: 'child' },
+    });
+    expect(opened.status).toBe(201);
+    await mergeByHand(t, admin);
+    expect(await cleanup(t, 1, head)).toBe(false);
+    expect(repo.refs.get('refs/heads/feature')).toBe(head);
+  });
+
+  it('never deletes the default branch', async () => {
+    const { t, admin, repo } = await pullWith(
+      { 'src/b.ts': 'b\n' },
+      { policy: null }
+    );
+    // A pull request from main into an older release branch.
+    const main = repo.refs.get('refs/heads/main')!;
+    repo.refs.set('refs/heads/release', main);
+    const tip = await commitPaths(
+      repo,
+      'main',
+      { ...APP, 'src/m.ts': 'm\n' },
+      'Main moves on'
+    );
+    const opened = await call(t, '/api/repos/octocat/app/pulls', {
+      cookie: admin,
+      json: { title: 'Backport', base: 'release', head: 'main' },
+    });
+    expect(opened.status).toBe(201);
+    await mergeByHand(t, admin, 2);
+    expect(await cleanup(t, 2, tip)).toBe(false);
+    expect(repo.refs.get('refs/heads/main')).toBe(tip);
+  });
+
+  it('still merges when deleting the branch fails', async () => {
+    const { t, repo } = await pullWith({ 'src/b.ts': 'b\n' });
+    const receive = repo.receivePack.bind(repo);
+    repo.receivePack = async (body: Uint8Array) => {
+      if (new TextDecoder().decode(body).includes(`${ZERO} refs/heads/feature`))
+        throw new Error('storage down');
+      return receive(body);
+    };
+    await runReviews(t, fakeModels().models);
+    await settle(t);
+    const row = await pullRow(t);
+    expect(row).toMatchObject({ state: 'merged', merged_automatically: 1 });
+    expect(repo.refs.get('refs/heads/main')).toBe(row!.merge_commit_sha);
+    expect(repo.refs.has('refs/heads/feature')).toBe(true);
   });
 });
