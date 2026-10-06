@@ -166,6 +166,7 @@ jobs:
           worker/src/__tests__/agent-review-pi-contract.test.ts
           worker/src/__tests__/agent-review-checkout.test.ts
           worker/src/__tests__/agent-review-pi.test.ts
+          worker/src/__tests__/agent-review-pi-tombstone.test.ts
           worker/src/__tests__/pull-approvals.test.ts
           worker/src/__tests__/approvals.test.ts
           worker/src/__tests__/pull-states.test.ts

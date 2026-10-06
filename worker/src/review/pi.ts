@@ -157,7 +157,7 @@ export interface PiDeps {
 /**
  * Starts (or rejoins) the Pi review of a reviewing row: one AgentReviewer per row attempt, given exactly what the
  * single pass would send. Runs inside the agent's `review:<handle>` step; the DO's start is idempotent, so a retried
- * step joins the same run.
+ * step joins the same run, and a stopped DO (or a row no longer this attempt) starts nothing: skipped.
  */
 export async function startPiReview(
   deps: PiDeps,
@@ -182,6 +182,14 @@ export async function startPiReview(
       ? { instanceId: deps.instanceId, type: piEventType(row.id, generation) }
       : null,
   });
+  // Stopped (cancelled, superseded, abandoned) before or while this step ran: nothing to start or wait for.
+  if (effective.stopped)
+    return {
+      verdict: 'skipped',
+      ...NO_FINDINGS,
+      engine: 'pi',
+      stopped: PI_CANCELLED,
+    };
   // What the object runs with: a retried step joining an earlier start keeps that start's budgets, whatever the
   // settings say now.
   return {

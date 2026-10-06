@@ -18,6 +18,8 @@ export default defineConfig({
           // Fake R2 credentials: pre-signing is pure HMAC, so it works offline.
           R2_ACCESS_KEY_ID: 'test-access-key-id',
           R2_SECRET_ACCESS_KEY: 'test-secret-access-key',
+          // A stand-in so the AgentReviewer Durable Object can be constructed; no test calls a model through it.
+          AI: {},
         },
       },
     }),

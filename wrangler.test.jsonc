@@ -26,16 +26,19 @@
     },
   ],
   // Live updates: the real hub, so tests can open a WebSocket and hear pings. The Actions job
-  // queue: the real Durable Object (makeEnv gives each test a fresh instance name).
+  // queue: the real Durable Object (makeEnv gives each test a fresh instance name). The Pi
+  // reviewer: the real Durable Object, for its stop/start bookkeeping (no model or Artifacts here).
   "durable_objects": {
     "bindings": [
       { "name": "LIVE", "class_name": "LiveHub" },
       { "name": "ACTIONS_QUEUE", "class_name": "ActionsQueue" },
+      { "name": "AGENT_REVIEWER", "class_name": "AgentReviewer" },
     ],
   },
   "migrations": [
     { "tag": "v1", "new_sqlite_classes": ["LiveHub"] },
     { "tag": "v2", "new_sqlite_classes": ["ActionsQueue"] },
+    { "tag": "v3", "new_sqlite_classes": ["AgentReviewer"] },
   ],
   // No Actions containers or Workflow here: tests inject a fake ACTIONS_RUN and drive the
   // executor directly with a fake runner.

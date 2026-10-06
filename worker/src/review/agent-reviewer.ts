@@ -1,4 +1,5 @@
 import { DurableObject } from 'cloudflare:workers';
+import { drizzle } from 'drizzle-orm/d1';
 import { Workspace, type DurableObjectStorageLike } from '@cloudflare/computer';
 import { createPiTools } from '@cloudflare/computer/tools/pi-ai';
 import { createModels } from '@earendil-works/pi-ai/models';
@@ -13,10 +14,13 @@ import {
 import { PiHarness } from 'agents/harness/pi';
 import { Lifecycle } from 'agents/lifecycle';
 import { createAI } from 'agents/models/pi-ai';
+import { prReviewers } from '../db/app.schema';
+import { schema } from '../db/schema';
 import { aiGateway } from '../lib/ai-gateway';
 import { gitForName } from '../lib/repos';
 import { checkoutHead, notCheckedOutText } from './checkout';
 import { ignoreMatcher } from './ignore';
+import { sameAttempt } from './outcome';
 import {
   addPiResponse,
   fenceToolOutput,
@@ -25,6 +29,8 @@ import {
   PI_MAX_NUDGES,
   PI_NO_USAGE,
   PI_OPERATION,
+  PI_START_STOPPED,
+  PI_TOMBSTONE_MS,
   PI_TOOLS,
   piAnswerProblem,
   PiCounter,
@@ -94,7 +100,8 @@ function aiSettings(env: CloudflareBindings) {
  * commit's text files into /repo of a Cloudflare Computer workspace in this object's SQLite and submits one prompt;
  * pi then works through read-only tools (read, ls, find, grep — no shell, network, git or write), each result fenced
  * as untrusted. Only the final answer's text and counts ever leave this object; `stop` (or the `expire` job,
- * PI_EXPIRE_SLACK_MS after the wall clock ends) deletes everything it stored, the transcript included.
+ * PI_EXPIRE_SLACK_MS after the wall clock ends) deletes everything it stored, the transcript included, leaving only a
+ * tombstone (`stopped`) that makes a late start do nothing, itself deleted PI_TOMBSTONE_MS later.
  */
 export class AgentReviewer
   extends DurableObject<CloudflareBindings>
@@ -326,11 +333,35 @@ export class AgentReviewer
   }
 
   start(request: PiStartRequest): Promise<PiStartResult> {
+    if (this.gate.stopped) return Promise.resolve(PI_START_STOPPED);
     return this.gate.run(() => this.startOnce(request));
+  }
+
+  /** This reviewer row attempt (the request's id and generation, which name this object) is still reviewing. */
+  private async stillWanted(request: PiStartRequest): Promise<boolean> {
+    const row = await drizzle(this.env.DB, { schema })
+      .select({ id: prReviewers.id })
+      .from(prReviewers)
+      .where(
+        sameAttempt({
+          id: request.reviewerId,
+          createdAt: new Date(request.generation),
+        })
+      )
+      .get();
+    return row !== undefined;
   }
 
   private async startOnce(request: PiStartRequest): Promise<PiStartResult> {
     const gate = this.gate;
+    // Stopped before, maybe by an instance since evicted: a late start (a retried or replayed step) does nothing.
+    if ((await this.stopped()) !== undefined) return PI_START_STOPPED;
+    // Cancelled, superseded or retried since the Workflow read the row: stop whatever ran, start nothing.
+    if (!(await this.stillWanted(request))) {
+      gate.stop();
+      await this.halt();
+      return PI_START_STOPPED;
+    }
     const existing = await this.meta();
     // Joined: what this run runs with (a retried start may carry settings changed since).
     if (existing) return piStartResult(existing);
@@ -420,8 +451,37 @@ export class AgentReviewer
     // First, before any await: a start in flight stops at its next step, and no later one runs.
     this.gate.stop();
     await this.gate.settled();
-    // A start that died (or was stopped) after its draft left that, and maybe a run: wipe that too.
+    await this.halt();
+  }
+
+  /** Wipes what a start left (a draft, maybe a run), or tombstones a name that never started. */
+  private async halt() {
     if ((await this.meta()) || (await this.draft())) await this.wipe();
+    else if ((await this.stopped()) === undefined) await this.tombstone();
+  }
+
+  /** When this object was stopped, if it was. */
+  private stopped() {
+    return this.ctx.storage.get<number>('stopped');
+  }
+
+  /** Durable, unlike the gate: no later start runs, on any instance, until the alarm forgets this object. */
+  private async tombstone() {
+    const at = Date.now();
+    await this.ctx.storage.put('stopped', at);
+    await this.ctx.storage.setAlarm(at + PI_TOMBSTONE_MS);
+  }
+
+  /**
+   * A stopped object's only alarm forgets it, tombstone included (the Lifecycle's alarms were disabled and deleted with
+   * the rest); any other is the Lifecycle's (pi's jobs, `expire`).
+   */
+  async alarm() {
+    const stopped = await this.stopped();
+    if (stopped === undefined) return this.lifecycle.alarm();
+    if (Date.now() < stopped + PI_TOMBSTONE_MS)
+      return this.ctx.storage.setAlarm(stopped + PI_TOMBSTONE_MS);
+    await this.ctx.storage.deleteAll();
   }
 
   /** Lifecycle job: the review's hard stop, whether or not the Workflow came back. */
@@ -430,10 +490,9 @@ export class AgentReviewer
   }
 
   /**
-   * Aborts the run and deletes everything: workspace, transcript, counters, alarms. Final for this object: alarms stay
-   * disabled and the registry keeps the old reviewer, so a later start() on the same name (while this instance lives)
-   * would not run properly. Names are per reviewer row attempt (`<id>:<generation>`), so the Workflow never reuses one
-   * after stopping it; don't start a stopped name again.
+   * Aborts the run and deletes everything: workspace, transcript, counters, the Lifecycle's alarms. Final for this
+   * object: the tombstone written last makes any later start() on the same name do nothing (names are per reviewer row
+   * attempt, `<id>:<generation>`, so the Workflow never reuses one after stopping it).
    */
   private async wipe() {
     this.wiped = true;
@@ -443,5 +502,7 @@ export class AgentReviewer
     await this.harness.dispose();
     await this.ctx.storage.deleteAll();
     this.toolCalls.reset();
+    // After deleteAll, which would erase it.
+    await this.tombstone();
   }
 }

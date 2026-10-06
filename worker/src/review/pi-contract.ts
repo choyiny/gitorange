@@ -34,6 +34,8 @@ export const PI_EXPIRE_SLACK_MS = 15 * 60_000;
  * the reviewer row's created_at clock runs during it, which the stale-window bound (settings PI_MAX_MINUTES) counts.
  */
 export const PI_START_SLACK_MS = 30 * 60_000;
+/** A stopped DO keeps its tombstone this long (a late start finds it and does nothing), then forgets everything. */
+export const PI_TOMBSTONE_MS = 24 * 60 * 60_000;
 
 /**
  * One review's limits, from Site admin → Settings (read once when the review starts, carried in its step result
@@ -256,13 +258,19 @@ export type PiStatus = PiCounts & { startedAt: number } & (
 
 /**
  * What a start reports: when the run began, and what it runs with. A start that joins an earlier one reports what
- * that one stored, whatever the request says. (Optional for the Workflow's sake: it falls back to its request.)
+ * that one stored, whatever the request says. (Optional for the Workflow's sake: it falls back to its request.) Or
+ * `stopped`: the object was stopped, or its row is no longer this attempt reviewing, so nothing runs.
  */
-export type PiStartResult = {
-  startedAt: number;
-  model?: string;
-  limits?: Partial<PiLimits>;
-};
+export type PiStartResult =
+  | {
+      startedAt: number;
+      model?: string;
+      limits?: Partial<PiLimits>;
+      stopped?: undefined;
+    }
+  | { stopped: true };
+
+export const PI_START_STOPPED = { stopped: true } as const;
 
 /**
  * What a review runs with, in its object's storage (deleted with it): stored as `draft` before the checkout (so the
@@ -367,10 +375,13 @@ export class PiStartGate<T> {
 
 /** The AgentReviewer Durable Object, as the Workflow uses it; tests pass a fake. */
 export interface PiReviewerApi {
-  /** Checks out the head, starts the run. Idempotent: a second call returns the first one's start. */
+  /**
+   * Checks out the head, starts the run. Idempotent: a second call returns the first one's start. Once stopped (or
+   * when its row is no longer this attempt reviewing) it does nothing and reports `stopped`.
+   */
   start(request: PiStartRequest): Promise<PiStartResult>;
   status(): Promise<PiStatus>;
-  /** Aborts the run and deletes everything the DO stored (workspace, transcript). */
+  /** Aborts the run and deletes everything the DO stored (workspace, transcript), leaving a tombstone. */
   stop(): Promise<void>;
 }
 
