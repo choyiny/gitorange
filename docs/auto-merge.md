@@ -201,7 +201,7 @@ It's always on, whenever AI is configured, with built-in tuning: a pull request 
 2. Clef decides over the one-line summaries from the review (file paths when there are none, or no review): are they related, which kind, and which goes first.
 3. For related pairs, GLM-5.3 reads the diffs and writes the reason and, where needed, instructions for the author. It also decides the kind and direction, but only when Clef was unsure.
 
-A pair is saved only for the commits the run started from, so a push mid-run can't leave a stale answer. A pair that can't be checked shows as "Couldn't check against #N"; the retry button is in that pull request's **Stack** section (the Tree view only shows the label). A pair still being checked 30 minutes after its run claimed it belongs to a run that died: the next run checks it again, and the retry button resets it.
+A pair is saved only for the commits the run started from, so a push mid-run can't leave a stale answer. A pair that can't be checked shows as "Couldn't check against #N"; the retry button is in that pull request's **Stack** section (the Graph view doesn't show it). A pair still being checked 30 minutes after its run claimed it belongs to a run that died: the next run checks it again, and the retry button resets it.
 
 **The four kinds.**
 
@@ -210,7 +210,7 @@ A pair is saved only for the commits the run started from, so a push mid-run can
 - **Conflicts:** #40 and #41 both rewrite the same function differently. One has to go first, and the other has to be redone on top of it.
 - **Independent:** #50 edits the docs and #51 fixes a bug elsewhere. Neither waits on the other. Independent pairs are recorded so they aren't checked again, but they aren't drawn.
 
-The **Tree** view on the Pull requests tab shows open pull requests with their builds-on, must-account-for, and conflict relationships, each pull request's **Stack** section lists its own relationships, and agents read both over MCP (`gitorange_get_pull_tree`, and `stack` on `gitorange_get_pull_request`). Closed-unmerged pull requests are ignored. While checks are still running, a pull request shows "checking…" (no check has started for its latest commit yet; `checking` in the API and MCP) or "checking #N…" (that pair is in progress; `pending`), and isn't called independent until they finish. With nothing open, the Tree view says "No open pull requests".
+The **Graph** view on the Pull requests tab draws how open pull requests are slated to land, one Mermaid flowchart per land target: each open pull request is a node coloured by its state (click it to open the pull request), and arrows point at what lands first: solid for stacked on, dashed for waits on, dotted for lands after (an ordering edge), and red for must change for (a merged pull request gets its own node). A pull request with nothing ahead of it points into its land target, so each graph flows down into the branch; pull requests in a cycle are outlined in red under a note. Each pull request's **Stack** section lists its own relationships, and agents read the same data over MCP (`gitorange_get_pull_tree`, and `stack` on `gitorange_get_pull_request`). Closed-unmerged pull requests are ignored. While checks are still running, a pull request's Stack section shows "checking…" (no check has started for its latest commit yet; `checking` in the API and MCP) or "checking #N…" (that pair is in progress; `pending`), and isn't called independent until they finish. With nothing open, the Graph view says "Nothing is slated to land."
 
 ### Retargeting and blocking
 

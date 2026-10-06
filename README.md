@@ -86,7 +86,7 @@ newer one.
 | -------------------- | ---------------------------------------------------------------------------------------- | ---------------------------------------------------------------- |
 | **Builds on**        | #32 calls a helper that #31 adds                                                         | #32 is stacked on #31 and lands after it                         |
 | **Must account for** | #28 adds a setup check for every configuration variable; #29 adds a variable without one | #29 can't merge until a re-check says it added the check         |
-| **Conflicts**        | #40 and #41 rewrite the same function                                                    | The tree shows the order: the later one waits on the earlier     |
+| **Conflicts**        | #40 and #41 rewrite the same function                                                    | The graph shows the order: the later one waits on the earlier    |
 | **Independent**      | A docs change and an unrelated bug fix                                                   | Recorded, so the pair is never checked again at the same commits |
 
 Clef decides the relationship from the one-line summaries. GLM-5.3 reads the actual diffs only for related
@@ -147,7 +147,7 @@ open pull requests are found before either lands.
   [what's supported](#github-actions-compatibility).
 - **One command to deploy.** In [Claude Code](https://claude.com/claude-code), run `/gitorange-onboarding` and
   it creates the database and buckets, fills in your configuration, sets secrets, runs migrations, and deploys.
-- **Live pages.** Pull requests, reviews, Actions runs, the tree, and the Approvals page update over a WebSocket
+- **Live pages.** Pull requests, reviews, Actions runs, the pull request graph, and the Approvals page update over a WebSocket
   as things happen.
 - **One place for people.** The **Approvals** page lists everything waiting on you across repositories, and the
   header shows how many.

@@ -7,30 +7,9 @@ import {
   repoLinkHref,
   type RepoMarkdownContext,
 } from '@/lib/repoUrls';
+import { renderMermaid } from '@/lib/mermaid';
 
 marked.setOptions({ gfm: true, breaks: false });
-
-type MermaidApi = typeof import('mermaid').default;
-let mermaidLoad: Promise<MermaidApi> | null = null;
-let diagramCount = 0;
-
-/** Mermaid is large, so it loads only once a page has a diagram to draw. */
-function loadMermaid(dark: boolean): Promise<MermaidApi> {
-  mermaidLoad ??= import('mermaid').then((m) => m.default);
-  return mermaidLoad.then((mermaid) => {
-    mermaid.initialize({
-      startOnLoad: false,
-      // Diagrams come from repositories and models: no scripts, links, or raw HTML.
-      securityLevel: 'strict',
-      theme: dark ? 'dark' : 'default',
-      fontFamily: 'inherit',
-    });
-    return mermaid;
-  });
-}
-
-const prefersDark = () =>
-  window.matchMedia?.('(prefers-color-scheme: dark)').matches ?? false;
 
 /** Renders ```mermaid blocks in `root`; unparseable blocks stay as source with a note. */
 async function renderDiagrams(root: HTMLElement) {
@@ -38,19 +17,15 @@ async function renderDiagrams(root: HTMLElement) {
     ...root.querySelectorAll<HTMLElement>('pre > code.language-mermaid'),
   ];
   if (!blocks.length) return;
-  const mermaid = await loadMermaid(prefersDark());
   for (const code of blocks) {
     const pre = code.parentElement!;
     if (!pre.isConnected) continue;
     const source = code.textContent ?? '';
     try {
-      const { svg } = await mermaid.render(`mermaid-${++diagramCount}`, source);
+      const svg = await renderMermaid(source);
       const figure = document.createElement('div');
       figure.className = 'mermaid-diagram';
-      figure.innerHTML = DOMPurify.sanitize(svg, {
-        USE_PROFILES: { svg: true, svgFilters: true },
-        ADD_TAGS: ['foreignObject'],
-      });
+      figure.innerHTML = svg;
       pre.replaceWith(figure);
     } catch {
       const note = document.createElement('div');

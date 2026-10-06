@@ -5,7 +5,7 @@ import {
   CheckIcon,
   CommentIcon,
   GitPullRequestIcon,
-  ListOrderedIcon,
+  GitMergeIcon,
   ListUnorderedIcon,
 } from '@primer/octicons-react';
 import { api, qk, type RepoDetail } from '@/lib/uiApi';
@@ -15,14 +15,14 @@ import { ChecksBadge, useCommitStatuses } from '@/components/Checks';
 import { AiResolutionBadge, ReviewLabel } from '@/components/PullBadges';
 import { PullStateLabel } from '@/components/PullStateLabel';
 import { STATE_LABEL } from '@/lib/pullState';
-import { StackTree } from '@/components/StackTree';
+import { PullGraph } from '@/components/PullGraph';
 import { PrStateIcon } from './PrIcons';
 
-function storedView(): 'list' | 'tree' {
+function storedView(): 'list' | 'graph' {
   try {
-    return localStorage.getItem('gitorange.pulls.view') === 'tree'
-      ? 'tree'
-      : 'list';
+    const v = localStorage.getItem('gitorange.pulls.view');
+    // 'tree' was the Tree view this graph replaced.
+    return v === 'graph' || v === 'tree' ? 'graph' : 'list';
   } catch {
     return 'list';
   }
@@ -51,7 +51,7 @@ export default function Pulls() {
     (q.data?.pulls ?? []).map((p) => p.headSha)
   );
   const [view, setView] = useState(storedView);
-  const chooseView = (v: 'list' | 'tree') => {
+  const chooseView = (v: 'list' | 'graph') => {
     setView(v);
     try {
       localStorage.setItem('gitorange.pulls.view', v);
@@ -121,17 +121,17 @@ export default function Pulls() {
                 <ListUnorderedIcon /> List
               </button>
               <button
-                className={`btn btn-sm BtnGroup-item ${view === 'tree' ? 'selected' : ''}`}
-                aria-pressed={view === 'tree'}
-                onClick={() => chooseView('tree')}
+                className={`btn btn-sm BtnGroup-item ${view === 'graph' ? 'selected' : ''}`}
+                aria-pressed={view === 'graph'}
+                onClick={() => chooseView('graph')}
               >
-                <ListOrderedIcon /> Tree
+                <GitMergeIcon /> Graph
               </button>
             </div>
           )}
         </div>
-        {state === 'open' && view === 'tree' ? (
-          <StackTree repo={repo} />
+        {state === 'open' && view === 'graph' ? (
+          <PullGraph repo={repo} />
         ) : !q.data ? (
           <Spinner />
         ) : q.data.pulls.length === 0 ? (

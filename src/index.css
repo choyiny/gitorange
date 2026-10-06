@@ -585,3 +585,17 @@ body {
   flex-shrink: 0;
   white-space: nowrap;
 }
+
+/* The Pulls page's Graph view: one Mermaid flowchart per land target. */
+.pull-graph {
+  padding: 16px;
+  overflow-x: auto;
+  text-align: center;
+}
+.pull-graph svg {
+  max-width: 100%;
+  height: auto;
+}
+.pull-graph g.node:focus-visible {
+  outline: 2px solid var(--focus-outlineColor, #0969da);
+}
