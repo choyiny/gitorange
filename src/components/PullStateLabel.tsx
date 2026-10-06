@@ -1,10 +1,5 @@
 import type { PullState } from '@/lib/uiApi';
-import {
-  blocking,
-  reasonText,
-  STATE_CLASS,
-  STATE_LABEL,
-} from '@/lib/pullState';
+import { blocking, reasonText, STATE_CLASS, stateText } from '@/lib/pullState';
 
 /** The state as a Primer Label; the title lists the reasons. */
 export function PullStateLabel({
@@ -17,26 +12,20 @@ export function PullStateLabel({
 }) {
   if (!state) return null;
   const why = state.reasons.map(reasonText).join('; ');
-  const stacked = state.reasons.find((r) => r.kind === 'stacked_on');
-  const first = state.reasons.find(blocking) ?? state.reasons[0];
+  const { label, reason } = stateText(state);
   return (
     <>
       <span
         className={`Label ${STATE_CLASS[state.state]} v-align-middle`}
         title={why || undefined}
       >
-        {STATE_LABEL[state.state]}
-        {state.state === 'ready' && stacked
-          ? `, stacked on #${Number(stacked.pr)}`
-          : ''}
+        {label}
         {why && <span className="sr-only">: {why}</span>}
       </span>
-      {showReason && first && (
+      {showReason && reason && (
         <>
           {' '}
-          <span className="f6 color-fg-muted wb-break-word">
-            · {reasonText(first)}
-          </span>
+          <span className="f6 color-fg-muted wb-break-word">· {reason}</span>
         </>
       )}
     </>

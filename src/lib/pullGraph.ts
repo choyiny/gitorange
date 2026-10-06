@@ -1,4 +1,4 @@
-import { reasonText, STATE_LABEL } from './pullState';
+import { reasonText, STATE_LABEL, stateText } from './pullState';
 import type { PullStateName, StackDependency, StackTree } from './uiApi';
 
 /** One Mermaid flowchart per land target: how its open pull requests are slated to land. */
@@ -47,14 +47,6 @@ export function decodeEntities(text: string): string {
   });
 }
 
-const MAX_TITLE = 40;
-function truncate(s: string): string {
-  const cps = [...s];
-  return cps.length > MAX_TITLE
-    ? `${cps.slice(0, MAX_TITLE - 1).join('')}…`
-    : s;
-}
-
 type TipNode = StackTree['targets'][number]['nodes'][number];
 
 /** Plain-text hover details for a PR node, one item per line; set as an SVG title, never as markup. */
@@ -89,7 +81,17 @@ export function nodeTooltip(n: TipNode): string {
   return lines.join('\n');
 }
 
-const label = (text: string) => `["${mermaidText(text)}"]`;
+// `<br/>` is Mermaid's line break; each line is escaped on its own.
+const label = (...lines: string[]) =>
+  `["${lines.map(mermaidText).join('<br/>')}"]`;
+
+/** A PR node's text: its whole title, then its status as the list shows it. */
+function nodeLabel(n: TipNode): string {
+  const title = `#${n.number} ${n.title}`;
+  if (!n.pullState) return label(title);
+  const { label: state, reason } = stateText(n.pullState);
+  return label(title, reason ? `${state} · ${reason}` : state);
+}
 
 const CLASS: Record<PullStateName, string> = {
   ready: 'ready',
@@ -136,10 +138,7 @@ export function pullGraph(tree: StackTree): PullGraph[] {
     const open = new Set(t.nodes.map((n) => n.number));
     const landedTitle = new Map(t.landed.map((l) => [l.number, l.title]));
     const nodeLines = [`  land${label(t.branch)}`];
-    for (const n of t.nodes)
-      nodeLines.push(
-        `  pr${n.number}${label(`#${n.number} ${truncate(n.title)}`)}`
-      );
+    for (const n of t.nodes) nodeLines.push(`  pr${n.number}${nodeLabel(n)}`);
     const tips: Record<string, string> = {};
     for (const n of t.nodes) tips[`pr${n.number}`] = nodeTooltip(n);
     const extra = new Set<string>();
@@ -152,7 +151,7 @@ export function pullGraph(tree: StackTree): PullGraph[] {
           tips[id] = `#${d.number}${title ? ` ${title}` : ''} (merged)`;
         nodeLines.push(
           `  ${id}${label(
-            `#${d.number}${title ? ` ${truncate(title)}` : ''}${d.landed ? ' (merged)' : ''}`
+            `#${d.number}${title ? ` ${title}` : ''}${d.landed ? ' (merged)' : ''}`
           )}`
         );
       }

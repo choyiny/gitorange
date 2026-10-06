@@ -1,4 +1,4 @@
-import type { PullReason, PullStateName } from './uiApi';
+import type { PullReason, PullState, PullStateName } from './uiApi';
 
 export const STATE_LABEL: Record<PullStateName, string> = {
   agent_followup: 'Ready for agent followup',
@@ -77,4 +77,25 @@ export function reasonText(r: PullReason): string {
     default:
       return r.kind.replace(/_/g, ' ');
   }
+}
+
+/** The state as the list's label reads it ("Ready, stacked on #3"), and the first reason it shows beside it. */
+export function stateText(state: PullState): {
+  label: string;
+  reason: string | null;
+} {
+  const stacked = state.reasons.find((r) => r.kind === 'stacked_on');
+  const first = state.reasons.find(blocking) ?? state.reasons[0];
+  return {
+    label:
+      STATE_LABEL[state.state] +
+      (state.state === 'ready' && stacked
+        ? `, stacked on #${Number(stacked.pr)}`
+        : ''),
+    // A ready PR's label already says what it's stacked on.
+    reason:
+      first && !(state.state === 'ready' && first === stacked)
+        ? reasonText(first)
+        : null,
+  };
 }

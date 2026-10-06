@@ -75,7 +75,7 @@ describe('pullGraph', () => {
     expect(g.source).toMatch(/flowchart TD/);
     expect(g.source).toContain('land["main"]');
     expect(edges(g.source)).toEqual(['pr1 --> land', 'pr2 --> land']);
-    expect(g.source).toContain('pr1["#35;1 PR 1"]');
+    expect(g.source).toContain('pr1["#35;1 PR 1<br/>Ready"]');
   });
 
   it('turns off HTML labels', () => {
@@ -211,7 +211,10 @@ describe('pullGraph', () => {
     const lines = g.source.split('\n');
     // Every label is one quoted string with no quote, bracket, pipe, angle, backtick or percent inside.
     for (const l of lines.filter((l) => /^\s*(pr\d+|land|m\d+)\[/.test(l)))
-      expect(l.trim()).toMatch(/^\w+\["[^"[\]{}|<>`%\n]*"\]$/);
+      // The only markup is the line break between title and status that pullGraph adds itself.
+      expect(l.trim().split('<br/>').join(' ')).toMatch(
+        /^\w+\["[^"[\]{}|<>`%\n]*"\]$/
+      );
     expect(g.source).not.toContain('%%');
     expect(g.source).not.toMatch(/\bclick\b|javascript:|securityLevel/i);
     expect(lines.filter((l) => /^\s*classDef ready/.test(l))).toHaveLength(1);
@@ -225,12 +228,49 @@ describe('pullGraph', () => {
     ]);
   });
 
-  it('truncates long titles to about 40 characters', () => {
+  it('keeps long titles whole', () => {
     const [g] = pullGraph(
       tree({ branch: 'main', nodes: [node(1, { title: 'a'.repeat(100) })] })
     );
     const label = g.source.match(/pr1\["([^"]*)"\]/)![1];
-    expect(label).toBe(`#35;1 ${'a'.repeat(39)}#8230;`);
+    expect(label.split('<br/>')[0]).toBe(`#35;1 ${'a'.repeat(100)}`);
+  });
+
+  it("shows each PR's status as the list does: its label, then the first reason", () => {
+    const [g] = pullGraph(
+      tree({
+        branch: 'main',
+        nodes: [
+          node(1, {
+            pullState: {
+              state: 'human_review',
+              reasons: [
+                { kind: 'agent_flagged', agent: 'secagent', flags: [{}, {}] },
+              ],
+            },
+          }),
+          node(2, {
+            pullState: {
+              state: 'ready',
+              reasons: [{ kind: 'stacked_on', pr: 1 }],
+            },
+          }),
+          node(3, { pullState: { state: 'waiting', reasons: [] } }),
+        ],
+      })
+    );
+    const lines = (n: number) =>
+      decodeEntities(
+        g.source
+          .match(new RegExp(`pr${n}\\["([^"]*)"\\]`))![1]
+          .replace(/#(\d+);/g, '&#$1;')
+      ).split('<br/>');
+    expect(lines(1)).toEqual([
+      '#1 PR 1',
+      'Requires human review · @secagent flagged 2 findings for a person',
+    ]);
+    expect(lines(2)).toEqual(['#2 PR 2', 'Ready, stacked on #1']);
+    expect(lines(3)).toEqual(['#3 PR 3', 'Waiting for checks']);
   });
 });
 
