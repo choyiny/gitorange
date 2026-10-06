@@ -19,9 +19,13 @@ export async function approvalsAt(
   db: DrizzleDB,
   pullRequestId: string,
   headSha: string
-): Promise<{ userId: string; createdAt: Date }[]> {
+): Promise<{ userId: string; createdAt: Date; via: string | null }[]> {
   return db
-    .select({ userId: prApprovals.userId, createdAt: prApprovals.createdAt })
+    .select({
+      userId: prApprovals.userId,
+      createdAt: prApprovals.createdAt,
+      via: prApprovals.via,
+    })
     .from(prApprovals)
     .where(
       and(
@@ -73,7 +77,8 @@ function afterApprovals(
  * twice keeps the first approval. A new commit needs a new approval; `expectedHead` (the head the person saw)
  * refuses with 409 when the branch moved since. `followUps: false` (approve-and-merge) skips starting auto-merge
  * and settling states: the caller lands the pull request and settles itself. An approval stays recorded even
- * when the merge that follows is refused.
+ * when the merge that follows is refused. `via` (a moderator app over MCP) is recorded with the approval and its
+ * timeline event; an existing approval keeps its own.
  */
 export async function approvePull(
   env: CloudflareBindings,
@@ -82,7 +87,7 @@ export async function approvePull(
   pr: PullRequest,
   userId: string,
   after: (work: Promise<unknown>) => void,
-  opts: { followUps?: boolean; expectedHead?: string } = {}
+  opts: { followUps?: boolean; expectedHead?: string; via?: string | null } = {}
 ): Promise<ApprovalResult> {
   const head = await openHead(git, pr);
   if (!head.ok) return head;
@@ -104,14 +109,15 @@ export async function approvePull(
   const over = approvalOverrides({ ...inputs.get(pr.id)!, approvedBy: [] });
   const now = Date.now();
   const d1 = d1Of(db);
+  const via = opts.via ?? null;
   // One transaction: the approval and its timeline entry (once per person and commit) are written together.
   await d1.batch([
     d1
       .prepare(
-        `INSERT INTO pr_approvals (pull_request_id, head_sha, user_id, created_at) VALUES (?, ?, ?, ?)
+        `INSERT INTO pr_approvals (pull_request_id, head_sha, user_id, created_at, via) VALUES (?, ?, ?, ?, ?)
          ON CONFLICT DO NOTHING`
       )
-      .bind(pr.id, head.headSha, userId, Math.floor(now / 1000)),
+      .bind(pr.id, head.headSha, userId, Math.floor(now / 1000), via),
     // changes(): rows the INSERT above added (same transaction, the statement just before).
     d1
       .prepare(
@@ -122,7 +128,11 @@ export async function approvePull(
         crypto.randomUUID(),
         pr.repositoryId,
         pr.id,
-        JSON.stringify({ head_sha: head.headSha, over }),
+        JSON.stringify({
+          head_sha: head.headSha,
+          over,
+          ...(via ? { via } : {}),
+        }),
         userId,
         now,
         now

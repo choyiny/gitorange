@@ -53,6 +53,7 @@ const itemSchema = z.object({
           agentSha: z.string().nullable(),
           approvedBy: publicUserSchema.nullable(),
           approvedAt: z.string().nullable(),
+          approvedVia: z.string().nullable(),
           changesRequestedBy: publicUserSchema.nullable(),
           changesRequestedAt: z.string().nullable(),
           changesRequestedNote: z.string().nullable(),

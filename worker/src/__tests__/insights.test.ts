@@ -397,6 +397,7 @@ describe('repository insights', () => {
       user: user as never,
       baseURL: 'http://test.local',
       after: () => {},
+      moderator: null,
     };
     const result = await tool.handler(
       { repository: 'octocat/app', days: 7 },

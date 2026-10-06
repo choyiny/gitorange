@@ -24,7 +24,8 @@ records what the approval was given over, and when it is withdrawn — but never
 new commit, first. The merge box offers **Approve and merge** when review isn't satisfied yet. An approval is for
 one commit: the page sends the commit you saw, and if the branch moved since, the approval is refused (`409`) so
 you can look again. A new commit needs new reviews and a new approval. There is no way past review without a
-recorded review or approval, and agents can't approve over MCP.
+recorded review or approval, and agents can't approve over MCP except through an app the user marked as a moderator
+(Settings → MCP server → Connected apps), which approves as that user, recorded "via" the app.
 
 **Auto-merge** is on in every repository with at least one invited agent: a pull request lands on its own as soon
 as the conditions hold, with no merging user, and its branch is deleted unless another open pull request builds

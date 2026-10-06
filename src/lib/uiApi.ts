@@ -230,7 +230,7 @@ export type PullDetail = {
   review: PullReview | null;
   canMerge: boolean;
   /** People who approved the head commit, oldest first. */
-  approvals: { user: User; createdAt: string }[];
+  approvals: { user: User; createdAt: string; via: string | null }[];
   /** How this pull request stacks with other open ones; null once it isn't open. */
   stack: StackNode | null;
   pullState: PullState | null;
@@ -249,6 +249,8 @@ export type ReviewFlag = {
   agentSha: string | null;
   approvedBy: User | null;
   approvedAt: string | null;
+  /** The moderator app it was approved or dismissed through; null from the web UI. */
+  approvedVia: string | null;
   /** Someone asked for changes instead of approving; cleared when it's approved. */
   changesRequestedBy: User | null;
   changesRequestedAt: string | null;
@@ -547,8 +549,12 @@ export type McpConnection = {
   clientId: string;
   name: string;
   uri: string | null;
+  /** Host (or app scheme) its sign-in redirects to; tells apart apps with the same name. */
+  redirectHost: string | null;
   scopes: string[];
   connectedAt: string | null;
+  /** A moderator: may approve findings and pull requests as you over MCP. */
+  moderator: boolean;
 };
 
 export const INSIGHT_PERIODS = [7, 30, 90, 365] as const;
@@ -749,13 +755,20 @@ export const api = {
     apiFetch<{ team: Team }>('/api/team', { method: 'PUT', json: body }),
 
   mcp: () =>
-    apiFetch<{ serverUrl: string; serverName: string; tools: McpTool[] }>(
-      '/api/mcp'
-    ),
+    apiFetch<{
+      serverUrl: string;
+      serverName: string;
+      tools: McpTool[];
+      moderatorTools: McpTool[];
+    }>('/api/mcp'),
   mcpConnections: () => apiFetch<McpConnection[]>('/api/mcp/connections'),
   disconnectMcp: (clientId: string) =>
     apiFetch(`/api/mcp/connections/${encodeURIComponent(clientId)}`, {
       method: 'DELETE',
+    }),
+  setMcpModerator: (clientId: string, on: boolean) =>
+    apiFetch(`/api/mcp/connections/${encodeURIComponent(clientId)}/moderator`, {
+      method: on ? 'PUT' : 'DELETE',
     }),
   tokens: () => apiFetch<Token[]>('/api/tokens'),
   createToken: (body: { name: string; expiresInDays: number | null }) =>

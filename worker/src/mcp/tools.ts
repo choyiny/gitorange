@@ -23,6 +23,8 @@ import {
 import type { SessionUser } from '../variables';
 import { McpToolError } from './errors';
 import { PULL_TOOLS } from './pull-tools';
+import { MODERATOR_TOOLS } from './moderator-tools';
+import type { Moderator } from './moderators';
 
 export type ToolContext = {
   db: DrizzleDB;
@@ -31,6 +33,8 @@ export type ToolContext = {
   baseURL: string;
   /** Runs follow-up work after the response (reviews, Actions, conflict sweeps). */
   after: (work: Promise<unknown>) => void;
+  /** This connection as a moderator, read for this call; set only when calling a moderator tool. */
+  moderator: Moderator | null;
 };
 export type ToolResult = {
   content: Array<{ type: 'text'; text: string }>;
@@ -499,6 +503,13 @@ export const TOOL_MODULES: ToolModule[] = [
   ...PULL_TOOLS,
 ];
 export const TOOL_DEFINITIONS = TOOL_MODULES.map((m) => m.definition);
+/** Only for moderator connections: listed and callable after index.ts reads the moderator row on that call. */
+export const MODERATOR_TOOL_DEFINITIONS = MODERATOR_TOOLS.map(
+  (m) => m.definition
+);
+export const MODERATOR_TOOL_NAMES = new Set(
+  MODERATOR_TOOL_DEFINITIONS.map((d) => d.name)
+);
 export const TOOL_HANDLERS = new Map(
-  TOOL_MODULES.map((m) => [m.definition.name, m])
+  [...TOOL_MODULES, ...MODERATOR_TOOLS].map((m) => [m.definition.name, m])
 );

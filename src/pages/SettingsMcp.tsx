@@ -1,12 +1,13 @@
 import { useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import {
+  AlertIcon,
   EyeIcon,
   PencilIcon,
   PlugIcon,
   ShieldCheckIcon,
 } from '@primer/octicons-react';
-import { api, qk, type McpTool } from '@/lib/uiApi';
+import { api, qk, type McpConnection, type McpTool } from '@/lib/uiApi';
 import { errorMessage } from '@/lib/api';
 import { timeAgo } from '@/lib/format';
 import { Header } from '@/components/Header';
@@ -188,6 +189,18 @@ function ToolRow({ tool }: { tool: McpTool }) {
   );
 }
 
+/** A short client-id fragment and where the app's sign-in redirects, to tell apps of the same name apart. */
+function AppIdentity({ app }: { app: McpConnection }) {
+  return (
+    <>
+      <span className="text-mono" title={app.clientId}>
+        {app.clientId.slice(0, 8)}
+      </span>
+      {app.redirectHost && <>, redirects to {app.redirectHost}</>}
+    </>
+  );
+}
+
 export default function SettingsMcp() {
   const qc = useQueryClient();
   const appName = useAppName();
@@ -198,9 +211,28 @@ export default function SettingsMcp() {
   });
   const [client, setClient] = useState<Client>('claude-code');
   const [error, setError] = useState<string | null>(null);
+  const [confirming, setConfirming] = useState<string | null>(null);
+  // The app just made a moderator: its tool list is fetched on connect, so it needs reconnecting.
+  const [enabled, setEnabled] = useState<string | null>(null);
+  const moderator = useMutation({
+    mutationFn: ({ clientId, on }: { clientId: string; on: boolean }) =>
+      api.setMcpModerator(clientId, on),
+    onMutate: () => setError(null),
+    onSuccess: (_, { clientId, on }) => {
+      setError(null);
+      setConfirming(null);
+      setEnabled(on ? clientId : null);
+      return qc.invalidateQueries({ queryKey: qk.mcpConnections });
+    },
+    onError: (e) => setError(errorMessage(e)),
+  });
   const disconnect = useMutation({
     mutationFn: (clientId: string) => api.disconnectMcp(clientId),
-    onSuccess: () => qc.invalidateQueries({ queryKey: qk.mcpConnections }),
+    onMutate: () => setError(null),
+    onSuccess: () => {
+      setError(null);
+      return qc.invalidateQueries({ queryKey: qk.mcpConnections });
+    },
     onError: (e) => setError(errorMessage(e)),
   });
 
@@ -281,6 +313,16 @@ export default function SettingsMcp() {
                   <ToolRow key={t.name} tool={t} />
                 ))}
               </div>
+
+              <h3 className="f4 mb-2">Moderator tools</h3>
+              <p className="f6 color-fg-muted mb-2">
+                Only apps you mark as a moderator below see these.
+              </p>
+              <div className="Box mb-4">
+                {info.data.moderatorTools.map((t) => (
+                  <ToolRow key={t.name} tool={t} />
+                ))}
+              </div>
             </>
           )}
 
@@ -296,27 +338,100 @@ export default function SettingsMcp() {
               </div>
             ) : (
               connections.data.map((c) => (
-                <div
-                  key={c.clientId}
-                  className="Box-row d-flex flex-items-center"
-                  style={{ gap: 12 }}
-                >
-                  <PlugIcon className="color-fg-muted" />
-                  <div className="flex-1">
-                    <div className="text-bold">{c.name}</div>
-                    <div className="f6 color-fg-muted">
-                      {c.connectedAt
-                        ? `Connected ${timeAgo(c.connectedAt)}`
-                        : 'Connected'}
-                    </div>
-                  </div>
-                  <button
-                    className="btn btn-sm btn-danger"
-                    disabled={disconnect.isPending}
-                    onClick={() => disconnect.mutate(c.clientId)}
+                <div key={c.clientId} className="Box-row">
+                  <div
+                    className="d-flex flex-items-center flex-wrap"
+                    style={{ gap: 12 }}
                   >
-                    Disconnect
-                  </button>
+                    <PlugIcon className="color-fg-muted" />
+                    <div className="flex-1" style={{ minWidth: 160 }}>
+                      <div className="text-bold">
+                        {c.name}
+                        {c.moderator && (
+                          <span className="Label Label--attention ml-2">
+                            Moderator
+                          </span>
+                        )}
+                      </div>
+                      <div className="f6 color-fg-muted">
+                        {c.connectedAt
+                          ? `Connected ${timeAgo(c.connectedAt)}`
+                          : 'Connected'}
+                        {' · '}
+                        <AppIdentity app={c} />
+                      </div>
+                    </div>
+                    <label
+                      className="d-flex flex-items-center f6"
+                      style={{ gap: 4 }}
+                    >
+                      <input
+                        type="checkbox"
+                        checked={c.moderator}
+                        disabled={moderator.isPending}
+                        aria-label={`${c.name} is a moderator`}
+                        onChange={(e) => {
+                          if (e.target.checked) setConfirming(c.clientId);
+                          else {
+                            setConfirming(null);
+                            moderator.mutate({
+                              clientId: c.clientId,
+                              on: false,
+                            });
+                          }
+                        }}
+                      />
+                      Moderator
+                    </label>
+                    <button
+                      className="btn btn-sm btn-danger"
+                      disabled={disconnect.isPending}
+                      onClick={() => disconnect.mutate(c.clientId)}
+                    >
+                      Disconnect
+                    </button>
+                  </div>
+                  {c.moderator && enabled === c.clientId && (
+                    <p className="f6 color-fg-muted mt-2 mb-0" role="status">
+                      Reconnect the app to see the moderator tools.
+                    </p>
+                  )}
+                  {confirming === c.clientId && !c.moderator && (
+                    <div
+                      className="flash flash-warn mt-2 d-flex flex-items-center flex-wrap"
+                      style={{ gap: 8 }}
+                      role="group"
+                      aria-label={`Make ${c.name} a moderator`}
+                      aria-describedby={`moderator-confirm-${c.clientId}`}
+                    >
+                      <span
+                        id={`moderator-confirm-${c.clientId}`}
+                        className="flex-1"
+                        style={{ minWidth: 200 }}
+                      >
+                        Make <strong>{c.name}</strong> (<AppIdentity app={c} />)
+                        a moderator? A moderator can approve agent findings and
+                        pull requests as you.
+                      </span>
+                      <button
+                        className="btn btn-sm btn-danger"
+                        // Moves focus into the confirmation as it opens.
+                        autoFocus
+                        disabled={moderator.isPending}
+                        onClick={() =>
+                          moderator.mutate({ clientId: c.clientId, on: true })
+                        }
+                      >
+                        Make moderator
+                      </button>
+                      <button
+                        className="btn btn-sm"
+                        onClick={() => setConfirming(null)}
+                      >
+                        Cancel
+                      </button>
+                    </div>
+                  )}
                 </div>
               ))
             )}
@@ -327,6 +442,13 @@ export default function SettingsMcp() {
           >
             <ShieldCheckIcon size={14} /> Disconnecting stops an app
             immediately; it has to ask for your approval again to reconnect.
+          </p>
+          <p
+            className="f6 color-fg-attention mt-1 d-flex flex-items-center"
+            style={{ gap: 4 }}
+          >
+            <AlertIcon size={14} /> A moderator can approve agent findings and
+            pull requests as you.
           </p>
         </div>
       </div>

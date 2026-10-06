@@ -31,6 +31,7 @@ export function flagJson(f: PrReviewFlag, people: Map<string, PublicUser>) {
     agentSha: f.agentSha,
     approvedBy: f.approvedById ? (people.get(f.approvedById) ?? null) : null,
     approvedAt: f.approvedAt?.toISOString() ?? null,
+    approvedVia: f.approvedAt ? f.approvedVia : null,
     changesRequestedBy: f.changesRequestedById
       ? (people.get(f.changesRequestedById) ?? null)
       : null,

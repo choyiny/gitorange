@@ -9,6 +9,8 @@ import { isValidUsername } from '../lib/usernames';
 import { APIError, createAuthMiddleware } from 'better-auth/api';
 import { namespaceTaken } from '../lib/namespaces';
 import { isAgentUser } from '../agents/identity';
+import { eq } from 'drizzle-orm';
+import { mcpModerators } from '../db/app.schema';
 
 /** The /mcp URL: the OAuth protected resource and token audience (RFC 8707). */
 export const mcpResource = (baseURL: string) =>
@@ -66,6 +68,54 @@ export function oauthIssuer(baseURL: string) {
   return url.toString().replace(/\/$/, '');
 }
 
+/**
+ * A moderator app never gets a code without the consent screen. better-auth skips the screen once a consent exists,
+ * and a native client's loopback redirect matches any port, so any local process could otherwise open the authorize
+ * URL in the user's browser and catch a moderator token. This adds `prompt=consent` to every authorization of a
+ * client that is someone's moderator — the plugin then always redirects to the consent page — except when
+ * /oauth2/authorize is the plugin re-entering from POST /oauth2/consent: that is the screen being submitted (session
+ * and signed query already checked), and the plugin has just removed `consent` from the prompt itself.
+ *
+ * Re-entries after sign-in (the plugin's own after hook) and /oauth2/continue also come through here, so they are
+ * covered. `prompt=none` plus `consent` is invalid, so a silent request gets an error, never a code. Returns the
+ * context to merge, or undefined to leave the request as it is.
+ */
+async function moderatorAuthorizeNeedsConsent(
+  db: DrizzleD1Database<typeof schema>,
+  ctx: {
+    method?: string;
+    query?: unknown;
+    body?: unknown;
+    request?: Request;
+    authorizeSettings?: { isAuthorize?: boolean };
+  }
+) {
+  if (
+    ctx.request &&
+    new URL(ctx.request.url).pathname.endsWith('/oauth2/consent')
+  )
+    return;
+  // Where the plugin reads the parameters from: the form body of a POST to /oauth2/authorize, else the query.
+  const isAuthorize =
+    (ctx.authorizeSettings ?? { isAuthorize: true }).isAuthorize === true;
+  const key = ctx.method === 'POST' && isAuthorize ? 'body' : 'query';
+  const params = ctx[key];
+  if (!params || typeof params !== 'object') return;
+  const p = params as Record<string, unknown>;
+  if (typeof p.client_id !== 'string') return;
+  const moderator = await db
+    .select({ clientId: mcpModerators.clientId })
+    .from(mcpModerators)
+    .where(eq(mcpModerators.clientId, p.client_id))
+    .get();
+  if (!moderator) return;
+  const prompts = new Set(
+    (typeof p.prompt === 'string' ? p.prompt : '').split(' ').filter(Boolean)
+  );
+  prompts.add('consent');
+  return { [key]: { ...p, prompt: [...prompts].join(' ') } };
+}
+
 /** OAuth scopes MCP clients may request. */
 export const OAUTH_SCOPES = ['openid', 'profile', 'email', 'offline_access'];
 
@@ -116,6 +166,10 @@ function createAuth(env?: CloudflareBindings) {
       before: createAuthMiddleware(async (ctx) => {
         if (!env || !ctx.path.startsWith('/oauth2/')) return;
         await ensureMcpResource(db, baseURL);
+        if (ctx.path === '/oauth2/authorize') {
+          const context = await moderatorAuthorizeNeedsConsent(db, ctx);
+          if (context) return { context };
+        }
         if (ctx.path === '/oauth2/register') {
           const body = nativeClientRegistration(ctx.body);
           if (body) return { context: { body } };

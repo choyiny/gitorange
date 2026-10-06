@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import { withVia } from '@/lib/via';
 import { Link } from 'react-router-dom';
 import {
   ChevronDownIcon,
@@ -144,7 +145,10 @@ function ReviewerRow({
             approver={
               f.approvedAt
                 ? {
-                    label: f.approvedBy?.username ?? 'a former user',
+                    label: withVia(
+                      f.approvedBy?.username ?? 'a former user',
+                      f.approvedVia
+                    ),
                     user: f.approvedBy,
                   }
                 : approved.has(f.id)
@@ -226,7 +230,8 @@ function PersonApprovals({
                 style={{ gap: 4 }}
                 title={fullDate(a.createdAt)}
               >
-                <Avatar user={a.user} size={16} /> {a.user.username}
+                <Avatar user={a.user} size={16} />{' '}
+                {withVia(a.user.username, a.via)}
               </span>
             ))}
             <span className="f6 color-fg-success">approved this commit</span>
@@ -446,7 +451,10 @@ export function ReviewersBox({
                   approver={
                     f.approvedAt
                       ? {
-                          label: f.approvedBy?.username ?? 'a former user',
+                          label: withVia(
+                            f.approvedBy?.username ?? 'a former user',
+                            f.approvedVia
+                          ),
                           user: f.approvedBy,
                         }
                       : null

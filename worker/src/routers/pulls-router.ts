@@ -549,6 +549,8 @@ const reviewFlagSchema = z
     agentSha: z.string().nullable(),
     approvedBy: publicUserSchema.nullable(),
     approvedAt: z.string().nullable(),
+    /** The moderator app the approval or dismissal came through; null when made in the web UI. */
+    approvedVia: z.string().nullable(),
     changesRequestedBy: publicUserSchema.nullable(),
     changesRequestedAt: z.string().nullable(),
     changesRequestedNote: z.string().nullable(),
@@ -655,7 +657,12 @@ const getPullRoute = createRoute({
         canMerge: z.boolean(),
         /** People who approved the head commit, oldest first (a new commit needs a new approval). */
         approvals: z.array(
-          z.object({ user: publicUserSchema, createdAt: z.string() })
+          z.object({
+            user: publicUserSchema,
+            createdAt: z.string(),
+            /** The moderator app the approval came through; null when made in the web UI. */
+            via: z.string().nullable(),
+          })
         ),
         /** Place in the target's stack tree; null when the PR isn't open. */
         stack: stackNodeSchema.nullable(),
@@ -783,6 +790,7 @@ pullsRouter.openapi(getPullRoute, async (c) => {
       approvals: approvals.map((a) => ({
         user: people.get(a.userId) ?? ghost,
         createdAt: a.createdAt.toISOString(),
+        via: a.via,
       })),
       stack,
       pullState,
@@ -1125,6 +1133,7 @@ const approveFlagRoute = createRoute({
     ...json400Response,
     ...json403Response,
     ...json404Response,
+    ...json409Response,
   },
 });
 pullsRouter.openapi(approveFlagRoute, async (c) => {
@@ -1168,6 +1177,7 @@ const requestChangesFlagRoute = createRoute({
     ...json400Response,
     ...json403Response,
     ...json404Response,
+    ...json409Response,
   },
 });
 pullsRouter.openapi(requestChangesFlagRoute, async (c) => {

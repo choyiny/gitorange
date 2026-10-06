@@ -29,20 +29,24 @@ import { McpToolError } from './errors';
 import type { ToolContext, ToolModule } from './tools';
 import { landShas, landTargetOf } from '../lib/land-target';
 
-const text = (t: string) => ({ type: 'text' as const, text: t });
+export const text = (t: string) => ({ type: 'text' as const, text: t });
 const json = (v: unknown) => text(JSON.stringify(v, null, 2));
 
-function str(
+export function str(
   args: Record<string, unknown>,
   key: string,
   required: true
 ): string;
-function str(
+export function str(
   args: Record<string, unknown>,
   key: string,
   required?: false
 ): string | undefined;
-function str(args: Record<string, unknown>, key: string, required = false) {
+export function str(
+  args: Record<string, unknown>,
+  key: string,
+  required = false
+) {
   const v = args[key];
   if (v === undefined || v === null) {
     if (required) throw new McpToolError(`${key} is required.`);
@@ -54,25 +58,25 @@ function str(args: Record<string, unknown>, key: string, required = false) {
   return v;
 }
 
-function prNumber(args: Record<string, unknown>) {
+export function prNumber(args: Record<string, unknown>) {
   const n = args.number;
   if (typeof n !== 'number' || !Number.isInteger(n) || n < 1)
     throw new McpToolError('number must be a positive integer.');
   return n;
 }
 
-const repositoryProp = {
+export const repositoryProp = {
   type: 'string',
   description: 'Full name, e.g. "ada/analytical-engine".',
 };
-const numberProp = {
+export const numberProp = {
   type: 'integer',
   minimum: 1,
   description: 'The pull request number, e.g. 12.',
 };
 
 /** The repository the user names, if they can read it; one answer for missing and hidden. */
-async function repoFor(ctx: ToolContext, args: Record<string, unknown>) {
+export async function repoFor(ctx: ToolContext, args: Record<string, unknown>) {
   const fullName = str(args, 'repository', true)
     .trim()
     .replace(/\.git$/, '');
@@ -94,7 +98,7 @@ async function repoFor(ctx: ToolContext, args: Record<string, unknown>) {
   };
 }
 
-async function pullFor(
+export async function pullFor(
   ctx: ToolContext,
   repositoryId: string,
   fullName: string,
@@ -117,7 +121,7 @@ async function pullFor(
   return pr;
 }
 
-const pullUrl = (ctx: ToolContext, fullName: string, n: number) =>
+export const pullUrl = (ctx: ToolContext, fullName: string, n: number) =>
   `${ctx.baseURL}/${fullName}/pull/${n}`;
 
 const listPullRequests: ToolModule = {
@@ -290,9 +294,9 @@ const getPullRequest: ToolModule = {
       'Get one pull request: its description, branches and commits, whether it merges cleanly (or has ' +
       'conflicts, and what AI conflict resolution is doing about them), the Actions checks on its latest ' +
       'commit, "reviewers" (each invited agent\'s status and its findings by kind: needs_person for a person to ' +
-      'approve in the web UI, change_requested for this pull request\'s agent), "follow_ups" (open change requests ' +
+      'approve in the web UI or through a moderator app, with "via" naming that app, change_requested for this pull request\'s agent), "follow_ups" (open change requests ' +
       'for the pull request\'s agent: push a fix, which is reviewed afresh), "approved_by" (people who approved the ' +
-      'head commit), whether it will merge on its own and what it waits on (auto_merge, null when off), and recent comments. Call it again to ' +
+      'head commit; "approvals" adds the moderator app each was made "via", null for the web UI), whether it will merge on its own and what it waits on (auto_merge, null when off), and recent comments. Call it again to ' +
       'follow progress after pushing. For why a check failed, pass its run_number to gitorange_get_run_logs.' +
       ' "stack" says which pull request this one builds on, waits on, or must change for (with instructions).' +
       ' "pending" lists pull requests it is still being checked against, and "checking" is true until its first check starts;' +
@@ -392,6 +396,11 @@ const getPullRequest: ToolModule = {
     const approvedBy = approvals.map(
       (a) => approvers.get(a.userId)?.username ?? null
     );
+    // The same approvals with the moderator app each was made through (null: in the web UI).
+    const approvalsVia = approvals.map((a, i) => ({
+      user: approvedBy[i],
+      via: a.via,
+    }));
 
     return {
       content: [
@@ -450,9 +459,12 @@ const getPullRequest: ToolModule = {
                   ? 'changes_requested'
                   : 'open',
               changes_requested_note: f.changesRequestedNote,
+              // The moderator app it was approved or dismissed through; null in the web UI or while open.
+              via: f.approvedVia,
             })),
           })),
           approved_by: approvedBy,
+          approvals: approvalsVia,
           // What the pull request's agent should change: open change requests of agents still invited.
           follow_ups: (review?.reviewers ?? [])
             .filter((r) => r.invited && r.status === 'changes_requested')
@@ -645,7 +657,7 @@ const mergePullRequest: ToolModule = {
     if (!result.ok)
       throw new McpToolError(
         result.reason === 'review'
-          ? `${result.error} People approve in GitOrange's web UI (agents can't): ask the user to review it at ${pullUrl(ctx, fullName, pr.number)} or on their Approvals page.`
+          ? `${result.error} People approve in GitOrange's web UI, or through a moderator app: ask the user to review it at ${pullUrl(ctx, fullName, pr.number)} or on their Approvals page.`
           : result.error
       );
     return {

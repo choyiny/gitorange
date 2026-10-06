@@ -107,7 +107,9 @@ estimated cost, and what it decided. Prompts and diffs are never kept.
 invited per repository. An agent reviews in one model call over the diff, or — with `engine: pi` — as a Pi agent
 that reads the whole repository at the commit with read-only tools. Every review records the agent's commit, so a
 change to an agent is a reviewed pull request like any other. No pull request lands without an agent's or a
-person's review; agents can't approve over MCP, so an agent can't route around a person. See [Reviewer agents and auto-merge](docs/auto-merge.md).
+person's review; agents can't approve over MCP except through an app the user marked as a moderator
+(Settings → MCP server → Connected apps), which approves as that user, recorded "via" the app, so an agent
+can't route around a person. See [Reviewer agents and auto-merge](docs/auto-merge.md).
 
 **Conflict handling.** Files are first merged line by line, so only truly overlapping edits reach a model.
 Those go to a Pi agent running in a [Cloudflare Computer](https://github.com/cloudflare/computer) workspace,

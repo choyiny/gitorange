@@ -8,7 +8,7 @@ import {
   real,
 } from 'drizzle-orm/sqlite-core';
 import { sql } from 'drizzle-orm';
-import { users } from './auth.schema';
+import { oauthClients, oauthConsents, users } from './auth.schema';
 
 // The instance's one shared team. Its slug shares the URL namespace with usernames.
 export const teams = sqliteTable('teams', {
@@ -413,6 +413,8 @@ export const prReviewFlags = sqliteTable(
       onDelete: 'set null',
     }),
     approvedAt: integer('approved_at', { mode: 'timestamp' }),
+    // The connected app's name when a moderator app approved or dismissed it over MCP; null from the web.
+    approvedVia: text('approved_via'),
     // A person asked for changes instead of approving: blocks auto-merge until someone approves
     // (which clears these). Never set together with approved_at.
     changesRequestedById: text('changes_requested_by_id').references(
@@ -503,10 +505,39 @@ export const prApprovals = sqliteTable(
       .notNull()
       .references(() => users.id, { onDelete: 'cascade' }),
     createdAt: integer('created_at', { mode: 'timestamp' }).notNull(),
+    // The connected app's name when a moderator app approved over MCP; null from the web.
+    via: text('via'),
   },
   (t) => [primaryKey({ columns: [t.pullRequestId, t.headSha, t.userId] })]
 );
 export type PrApproval = typeof prApprovals.$inferSelect;
+
+// A connected MCP app the user lets make review decisions as them (Settings → MCP server → Connected apps). Read on
+// every MCP call. Bound to the consent it was turned on under: revoking that consent anywhere (Connected apps, or
+// better-auth's own delete-consent) deletes the row, and a later re-consent is a new consent that starts as an ordinary
+// connection. (Not a created_at comparison: better-auth stamps consents in whole seconds.)
+// Careful in migrations: a table rebuild of oauth_consents (drizzle's DROP + recreate for SQLite column changes, e.g.
+// after `yarn auth:update`) deletes every consent row, and this cascade takes every moderator with it — users then
+// turn moderator on again. A moderator app also always gets the consent screen (forced in worker/src/auth/index.ts).
+export const mcpModerators = sqliteTable(
+  'mcp_moderators',
+  {
+    userId: text('user_id')
+      .notNull()
+      .references(() => users.id, { onDelete: 'cascade' }),
+    clientId: text('client_id')
+      .notNull()
+      .references(() => oauthClients.clientId, { onDelete: 'cascade' }),
+    consentId: text('consent_id')
+      .notNull()
+      .references(() => oauthConsents.id, { onDelete: 'cascade' }),
+    createdAt: integer('created_at', { mode: 'timestamp' }).notNull(),
+  },
+  (t) => [
+    primaryKey({ columns: [t.userId, t.clientId] }),
+    index('mcp_moderators_consent_id_idx').on(t.consentId),
+  ]
+);
 
 // ── Stacking ─────────────────────────────────────────────────────────────────
 

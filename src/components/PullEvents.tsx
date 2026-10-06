@@ -141,8 +141,9 @@ export function PullEventItem({
       : [];
     return (
       <Row icon={<ShieldCheckIcon className="color-fg-success" />}>
-        {e.actor ? <strong>{e.actor.username}</strong> : 'A former user'}{' '}
-        approved <code>{(str(d.head_sha) ?? '').slice(0, 7)}</code>
+        {e.actor ? <strong>{e.actor.username}</strong> : 'A former user'}
+        {str(d.via) && <> via {str(d.via)}</>} approved{' '}
+        <code>{(str(d.head_sha) ?? '').slice(0, 7)}</code>
         {over.length > 0 && <> over {over.map(reasonText).join('; ')}</>}
         {when}
       </Row>
