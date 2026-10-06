@@ -15,9 +15,36 @@ describe('pull state text', () => {
     expect(
       reasonText({ kind: 'check_failed', run_number: 7, check: 'test' })
     ).toBe('the "test" check failed (run #7)');
-    expect(reasonText({ kind: 'flags_pending', count: 2 })).toBe(
-      '2 review flags await approval'
+    expect(
+      reasonText({
+        kind: 'agent_flagged',
+        agent: 'secagent',
+        flags: [
+          { id: 'f', title: 'Token' },
+          { id: 'g', title: 'Logging' },
+        ],
+      })
+    ).toBe('@secagent flagged 2 findings for a person');
+    expect(reasonText({ kind: 'needs_approval' })).toBe(
+      'no agent reviewed it: a person approves it'
     );
+    expect(
+      reasonText({
+        kind: 'agent_changes_requested',
+        agent: 'secagent',
+        changes: [{ id: 'c', title: 'Rotate it', detail: null }],
+      })
+    ).toBe('@secagent requested 1 change');
+    expect(reasonText({ kind: 'agent_reviewing', agent: null })).toBe(
+      'agents are reviewing'
+    );
+    expect(
+      reasonText({
+        kind: 'agent_review_failed',
+        agent: 'dataagent',
+        error: 'x',
+      })
+    ).toBe("@dataagent's review failed");
     expect(
       reasonText({ kind: 'must_account_for', pr: 28, landed: false })
     ).toBe('must account for #28');
@@ -28,9 +55,6 @@ describe('pull state text', () => {
   it('omits a missing number instead of printing NaN', () => {
     expect(reasonText({ kind: 'check_failed', check: null })).toBe(
       'a check failed'
-    );
-    expect(reasonText({ kind: 'flags_pending' })).toBe(
-      'review flags await approval'
     );
     expect(reasonText({ kind: 'changes_requested' })).toBe(
       'changes requested on review flags'

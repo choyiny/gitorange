@@ -1,5 +1,3 @@
-import type { ReviewPolicy } from './policy';
-
 export type CheckRun = {
   runNumber: number;
   status: string;
@@ -14,8 +12,8 @@ export type CheckJob = {
   conclusion: string | null;
   runNumber: number;
 };
-/** review.yml's `checks.require`, or `any` when there is no (valid) review.yml. */
-export type CheckRequirement = ReviewPolicy['checks']['require'] | 'any';
+/** Which checks hold a commit: `any` (the default: any failed or running latest run), `all` (also waits for a first run), `none`, or named jobs. */
+export type CheckRequirement = 'all' | 'any' | 'none' | string[];
 export type CheckVerdict =
   | { kind: 'failed'; reason: string; runNumber: number; check: string | null }
   | {

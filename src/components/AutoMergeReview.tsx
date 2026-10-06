@@ -2,61 +2,33 @@ import { useState } from 'react';
 import {
   AlertIcon,
   CheckCircleFillIcon,
-  ChevronDownIcon,
-  ChevronRightIcon,
   ClockIcon,
   FileDiffIcon,
   ShieldCheckIcon,
-  SparkleFillIcon,
   StopIcon,
 } from '@primer/octicons-react';
 import {
   api,
-  type ClassifierAnswer,
   type PullDetail,
-  type PullReview,
   type RepoDetail,
   type ReviewFlag,
 } from '@/lib/uiApi';
-import { errorMessage } from '@/lib/api';
-import { useCurrentUser } from '@/lib/auth';
-import { fullDate, timeAgo } from '@/lib/format';
+import { ApiError, errorMessage } from '@/lib/api';
 import { Avatar } from './Avatar';
 import { Markdown } from './Markdown';
 import { Spinner } from './Spinner';
-import { AgentRunLink } from './AgentRunLink';
 
 /** The timeline comment's anchor, linked from the merge box. */
 export const REVIEW_ANCHOR = 'auto-merge-review';
 
-const model = (m: string) => m.replace(/^@cf\/[^/]+\//, '');
-
-function answerText(a: ClassifierAnswer | null): string {
-  if (!a) return '—';
-  if (a.type === 'noul') return `yes ${Math.round(a.value * 100)}%`;
-  if (a.type === 'choice')
-    return `${a.value} (${Math.round(a.confidence * 100)}%)`;
-  return Number(a.value).toFixed(1);
-}
-
-/** What the flag's number is: a probability, a choice, or a score. */
-function flagValue(f: ReviewFlag): string | null {
-  const v = f.value as ClassifierAnswer | null;
-  if (f.source !== 'question' || !v) return null;
-  return answerText(v);
-}
-
-const PROGRESS: Record<string, string> = {
-  summarizing: 'Summarizing each changed file…',
-  classifying: 'Classifying the changes…',
-  investigating: 'Looking into what needs a person…',
-};
-
 /** Runs an action, then waits for the page to reload before reporting it done. */
-function useAction(onChange: () => Promise<unknown> | void) {
+export function useAction(onChange: () => Promise<unknown> | void) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const run = async (fn: () => Promise<unknown>) => {
+  const run = async (
+    fn: () => Promise<unknown>,
+    opts?: { sendingNote?: boolean }
+  ) => {
     setBusy(true);
     setError(null);
     try {
@@ -64,7 +36,13 @@ function useAction(onChange: () => Promise<unknown> | void) {
       await onChange();
       return true;
     } catch (e) {
-      setError(errorMessage(e));
+      const moved = e instanceof ApiError && e.status === 409;
+      setError(
+        errorMessage(e) +
+          (moved && opts?.sendingNote ? ' Your note was not sent.' : '')
+      );
+      // A 409 means the pull request moved: show what changed. A failed reload doesn't hide the error.
+      if (moved) await Promise.resolve(onChange()).catch(() => {});
       return false;
     } finally {
       setBusy(false);
@@ -89,7 +67,9 @@ export function AutoMergeStatus({
   const { state, reasons } = review.autoMerge;
   const { busy, error, run } = useAction(onChange);
   const enabled = state !== 'disabled';
-  const pendingFlags = review.flags.some((f) => !f.approvedAt);
+  const pendingFlags = review.reviewers.some((r) =>
+    r.flags.some((f) => !f.approvedAt)
+  );
   let line: React.ReactNode;
   if (state === 'ready')
     line = (
@@ -207,13 +187,13 @@ export function Flag({
   canApprove: boolean;
   approving: boolean;
   requestingChanges: boolean;
-  /** The review model is still looking into flags. */
+  /** The agent is still reviewing, so a finding may not have its detail yet. */
   investigating: boolean;
   onApprove: () => void;
   /** Resolves to whether it worked, so the note box closes only then. */
   onRequestChanges: (note: string) => Promise<boolean>;
 }) {
-  const value = flagValue(f);
+  const change = f.kind === 'change_requested';
   const [composing, setComposing] = useState(false);
   const [note, setNote] = useState('');
   const changes = approver ? null : changesRequester;
@@ -242,7 +222,9 @@ export function Flag({
             style={{ gap: 8 }}
           >
             <span className="text-bold">{f.title}</span>
-            {value && <span className="Label Label--attention">{value}</span>}
+            {change && (
+              <span className="Label Label--danger">Change requested</span>
+            )}
           </div>
           {f.paths.length > 0 && (
             <div className="f6 mt-1 d-flex flex-wrap" style={{ gap: 4 }}>
@@ -337,11 +319,11 @@ export function Flag({
                 style={{ gap: 4 }}
               >
                 {approver.user && <Avatar user={approver.user} size={16} />}
-                Approved by {approver.label}
+                {change ? 'Dismissed' : 'Approved'} by {approver.label}
               </span>
             ) : canApprove ? (
               <>
-                {!composing && (
+                {!composing && !change && (
                   <button
                     className="btn btn-sm"
                     disabled={busy}
@@ -357,8 +339,11 @@ export function Flag({
                 >
                   {approving ? (
                     <>
-                      <Spinner size={12} /> Approving…
+                      <Spinner size={12} />{' '}
+                      {change ? 'Dismissing…' : 'Approving…'}
                     </>
+                  ) : change ? (
+                    'Dismiss'
                   ) : (
                     <>
                       <ShieldCheckIcon /> Approve
@@ -372,257 +357,6 @@ export function Flag({
               )
             )}
           </div>
-        </div>
-      </div>
-    </div>
-  );
-}
-
-function HowReviewed({ review }: { review: PullReview }) {
-  const c = review.classification!;
-  const [open, setOpen] = useState(false);
-  if (!c.files.length && !review.questions.some((q) => q.answer)) return null;
-  return (
-    <div className="mt-2">
-      <button
-        className="btn-link f6 color-fg-muted"
-        onClick={() => setOpen((v) => !v)}
-      >
-        {open ? <ChevronDownIcon /> : <ChevronRightIcon />} How this was
-        reviewed
-      </button>
-      {open && (
-        <div className="mt-2 f6">
-          {c.files.length > 0 && (
-            <>
-              <div className="color-fg-muted mb-1">
-                Each changed file, summarized by{' '}
-                <code>{model(c.summaryModel)}</code>:
-              </div>
-              <ul className="ml-3 mb-2">
-                {c.files.map((f) => (
-                  <li key={f.path}>
-                    <code>{f.path}</code>{' '}
-                    <span className="color-fg-success">+{f.additions}</span>{' '}
-                    <span className="color-fg-danger">−{f.deletions}</span>{' '}
-                    {f.summary}
-                  </li>
-                ))}
-              </ul>
-            </>
-          )}
-          {review.questions.some((q) => q.answer) && (
-            <>
-              <div className="color-fg-muted mb-1">
-                Questions from <code>.gitorange/review.yml</code>, answered by{' '}
-                <code>{model(c.classifierModel)}</code> from those summaries:
-              </div>
-              <table className="width-full">
-                <tbody>
-                  {review.questions.map((q) => (
-                    <tr key={q.id}>
-                      <td className="pr-2 py-1">
-                        {q.flagged ? (
-                          <AlertIcon className="color-fg-attention" />
-                        ) : (
-                          <CheckCircleFillIcon className="color-fg-success" />
-                        )}
-                      </td>
-                      <td className="pr-2 py-1">{q.ask}</td>
-                      <td className="pr-2 py-1 text-mono">
-                        {answerText(q.answer)}
-                      </td>
-                      <td className="py-1 color-fg-muted">{q.threshold}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </>
-          )}
-        </div>
-      )}
-    </div>
-  );
-}
-
-/** The auto-merge review timeline comment: flags, explanations, and per-flag Approve buttons. */
-export function ReviewComment({
-  repo,
-  d,
-  onChange,
-}: {
-  repo: RepoDetail;
-  d: PullDetail;
-  onChange: () => Promise<unknown> | void;
-}) {
-  const me = useCurrentUser();
-  const review = d.review!;
-  const c = review.classification;
-  const open = d.pull.state === 'open';
-  const { busy, error, run } = useAction(onChange);
-  // Approvals confirmed by the server but not yet in the reloaded page.
-  const [approved, setApproved] = useState<Set<string>>(new Set());
-  const [approving, setApproving] = useState<string | null>(null);
-  // Requests for changes confirmed by the server but not yet reloaded: flag id → note.
-  const [requested, setRequested] = useState<Map<string, string>>(new Map());
-  const [requesting, setRequesting] = useState<string | null>(null);
-  const o = repo.owner.username;
-  const n = d.pull.number;
-
-  const approve = async (id: string) => {
-    setApproving(id);
-    await run(async () => {
-      await api.approveFlag(o, repo.name, n, id);
-      setApproved((s) => new Set(s).add(id));
-      setRequested((m) => {
-        const next = new Map(m);
-        next.delete(id);
-        return next;
-      });
-    });
-    setApproving(null);
-  };
-  const requestChanges = async (id: string, note: string) => {
-    setRequesting(id);
-    const ok = await run(async () => {
-      await api.requestFlagChanges(o, repo.name, n, id, note);
-      setRequested((m) => new Map(m).set(id, note.trim()));
-    });
-    setRequesting(null);
-    return ok;
-  };
-
-  const pending = review.flags.filter(
-    (f) => !f.approvedAt && !approved.has(f.id)
-  ).length;
-  const changesRequested = review.flags.filter(
-    (f) =>
-      !f.approvedAt &&
-      !approved.has(f.id) &&
-      (requested.has(f.id) || f.changesRequestedAt)
-  ).length;
-  const notes = [
-    review.flags.length > pending
-      ? `${review.flags.length - pending} approved`
-      : '',
-    changesRequested ? `changes requested on ${changesRequested}` : '',
-  ].filter(Boolean);
-  let summary: React.ReactNode;
-  if (!c || (PROGRESS[c.status] && !review.flags.length))
-    summary = (
-      <div
-        className="d-flex flex-items-center color-fg-muted"
-        style={{ gap: 8 }}
-      >
-        <Spinner size={16} />
-        {c ? PROGRESS[c.status] : 'Starting the review…'}
-      </div>
-    );
-  else if (c.status === 'failed')
-    summary = (
-      <>
-        <div className="flash flash-error mb-2">
-          The review failed: {c.errorMessage ?? 'unknown error'}
-        </div>
-        {open && d.canMerge && (
-          <button
-            className="btn btn-sm"
-            disabled={busy}
-            onClick={() => run(() => api.retryReview(o, repo.name, n))}
-          >
-            Try the review again
-          </button>
-        )}
-      </>
-    );
-  else if (!review.flags.length)
-    summary = (
-      <p className="mb-0">
-        <CheckCircleFillIcon className="color-fg-success" /> Nothing in this
-        change needs a person under <code>.gitorange/review.yml</code>.
-      </p>
-    );
-  else
-    summary = (
-      <p className="mb-2">
-        {pending
-          ? `${pending === 1 ? 'This needs' : `These ${pending} need`} a person before the pull request can merge on its own${
-              notes.length ? ` (${notes.join(', ')})` : ''
-            }:`
-          : review.flags.length === 1
-            ? 'The flagged item was approved.'
-            : review.flags.length === 2
-              ? 'Both flagged items were approved.'
-              : `All ${review.flags.length} flagged items were approved.`}
-      </p>
-    );
-
-  return (
-    <div className="d-flex mb-3" style={{ gap: 16 }} id={REVIEW_ANCHOR}>
-      <div
-        className="d-none d-md-flex flex-items-center flex-justify-center circle color-bg-done-emphasis color-fg-on-emphasis flex-shrink-0"
-        style={{ width: 40, height: 40 }}
-      >
-        <SparkleFillIcon size={20} />
-      </div>
-      <div
-        className="timeline-comment comment-arrow flex-1"
-        style={{ minWidth: 0 }}
-      >
-        <div className="timeline-comment-header">
-          <span className="text-bold color-fg-default">Auto-merge</span>
-          {c ? (
-            <span title={fullDate(c.createdAt)}>
-              reviewed <code>{c.headSha.slice(0, 7)}</code>{' '}
-              {timeAgo(c.createdAt)}
-            </span>
-          ) : (
-            <span>is reviewing this pull request</span>
-          )}
-          <span className="flex-1" />
-          <AgentRunLink
-            repo={repo}
-            number={d.pull.number}
-            kind="review"
-            className="f6 mr-2"
-          />
-          <span className="Label">bot</span>
-        </div>
-        <div className="p-2 p-sm-3">
-          {error && <div className="flash flash-error mb-2">{error}</div>}
-          {summary}
-          {review.flags.map((f) => {
-            const serverApprover = f.approvedAt
-              ? {
-                  label: f.approvedBy?.username ?? 'a former user',
-                  user: f.approvedBy,
-                }
-              : null;
-            const localApprover =
-              !serverApprover && approved.has(f.id)
-                ? { label: 'you', user: null }
-                : null;
-            const localNote = requested.get(f.id);
-            return (
-              <Flag
-                key={f.id}
-                f={f}
-                approver={serverApprover ?? localApprover}
-                changesRequester={
-                  localNote !== undefined
-                    ? { label: 'you', user: null, note: localNote || null }
-                    : serverChangesRequester(f)
-                }
-                canApprove={open && d.canMerge && !!me}
-                approving={approving === f.id}
-                requestingChanges={requesting === f.id}
-                investigating={c?.status === 'investigating'}
-                onApprove={() => approve(f.id)}
-                onRequestChanges={(note) => requestChanges(f.id, note)}
-              />
-            );
-          })}
-          {c && c.status === 'done' && <HowReviewed review={review} />}
         </div>
       </div>
     </div>

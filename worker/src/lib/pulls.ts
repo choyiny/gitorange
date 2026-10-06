@@ -12,7 +12,7 @@ import type { GitService } from '../git/service';
 import { queueRuns } from '../actions/trigger';
 import { ensureResolution } from '../merge/auto';
 import { pullRef } from '../merge/land';
-import { ensureClassification } from '../review/classify';
+import { ensureHeadReview } from '../review/head';
 import { publishChange } from '../live/publish';
 import { ensureStacking } from '../stack/discover';
 import { landTargetIs, landTargetOf } from './land-target';
@@ -140,7 +140,7 @@ export async function openPull(opts: {
   // A new PR's base is its land target, so these are also its land shas.
   const shas = { base: baseSha, head: headSha };
   opts.after(
-    ensureClassification(env, db, git, pr, shas).catch((e) =>
+    ensureHeadReview(env, db, pr, shas).catch((e) =>
       console.error('[review] start failed', e)
     )
   );
@@ -150,8 +150,7 @@ export async function openPull(opts: {
       console.error('[merge] auto-resolve failed', e)
     )
   );
-  // Stack discovery: starts now when the target has no review.yml (no review to wait for); otherwise the
-  // review starts it when it ends.
+  // Stack discovery: starts now where no agent reviews (nothing to wait for); otherwise the review starts it.
   opts.after(
     ensureStacking(env, db, git, pr, shas).catch((e) =>
       console.error('[stack] start failed', e)

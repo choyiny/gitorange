@@ -7,6 +7,7 @@ import {
   DID_NOT_FINISH,
   closeOpenSteps,
 } from '../agent-runs/record';
+import { stopStaleReviews } from '../review/head';
 
 /** Runs deleted per batch, and batches per invocation (a backlog clears over several days). */
 const BATCH = 100;
@@ -20,6 +21,9 @@ export type RetentionStatus = {
   deletedAgentRuns?: number;
   /** Agent runs still marked running long after they started, closed as failed. */
   closedAgentRuns?: number;
+  /** Reviews of a commit, and single agents' reviews, left in progress over 2 h (their Workflow died), stopped. */
+  stoppedReviews?: number;
+  stoppedReviewers?: number;
   /** More finished runs were past the cutoff than one invocation deletes. */
   more: boolean;
 };
@@ -155,12 +159,18 @@ export async function runActionsRetention(
     if (pruned.more) more = true;
   }
   const closedAgent = await closeStaleAgentRuns(db, now);
+  const stopped = await stopStaleReviews(env, db, now).catch((e: unknown) => {
+    console.error('[review] could not stop stale reviews', e);
+    return { reviews: 0, reviewers: 0 };
+  });
   const status: RetentionStatus = {
     at: now.toISOString(),
     retentionDays: days,
     deletedRuns: deleted,
     deletedAgentRuns: deletedAgent,
     closedAgentRuns: closedAgent,
+    stoppedReviews: stopped.reviews,
+    stoppedReviewers: stopped.reviewers,
     more,
   };
   await db

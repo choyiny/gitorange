@@ -142,7 +142,7 @@ describe('refreshing an agent from AGENT.md', () => {
     });
     const res = await call(s.t, '/api/repos/secagent/secagent/pulls/1/merge', {
       cookie: s.admin,
-      json: {},
+      json: { approve: true },
     });
     expect(res.status).toBe(200);
     await settle(s.t);

@@ -36,20 +36,10 @@ export function reasonText(r: PullReason): string {
         : 'changes requested on review flags';
     case 'conflicts_unresolved':
       return "conflicts AI couldn't resolve";
-    case 'review_policy_invalid':
-      return r.where === 'pull_request'
-        ? "this pull request's .gitorange/review.yml is invalid"
-        : '.gitorange/review.yml on the target branch is invalid';
     case 'must_account_for':
       return `must account for #${n(r.pr)}${r.branch ? `, after rebasing onto ${String(r.branch)}` : ''}`;
     case 'rebase_onto':
       return `rebase onto #${n(r.pr)} (${String(r.branch)})`;
-    case 'review_failed':
-      return 'the auto-merge review failed';
-    case 'flags_pending':
-      return has(r.count)
-        ? `${s(n(r.count), 'review flag')} await${n(r.count) === 1 ? 's' : ''} approval`
-        : 'review flags await approval';
     case 'cycle':
       return `depends in a circle on ${prs(r.prs)}`;
     case 'checks_running':
@@ -60,8 +50,6 @@ export function reasonText(r: PullReason): string {
         : r.started
           ? 'checks are running'
           : 'no checks have run yet';
-    case 'review_running':
-      return 'the auto-merge review is running';
     case 'resolution_running':
       return 'AI is resolving conflicts';
     case 'stack_checking':
@@ -72,6 +60,20 @@ export function reasonText(r: PullReason): string {
       return `stacked on #${n(r.pr)}`;
     case 'waits_on':
       return `waits on #${n(r.pr)}`;
+    case 'agent_reviewing':
+      return r.agent
+        ? `@${String(r.agent)} is reviewing`
+        : 'agents are reviewing';
+    case 'agent_flagged':
+      return `@${String(r.agent)} flagged ${s(((r.flags as unknown[]) ?? []).length, 'finding')} for a person`;
+    case 'agent_changes_requested':
+      return `@${String(r.agent)} requested ${s(((r.changes as unknown[]) ?? []).length, 'change')}`;
+    case 'agent_review_failed':
+      return r.agent
+        ? `@${String(r.agent)}'s review failed`
+        : 'the review failed';
+    case 'needs_approval':
+      return 'no agent reviewed it: a person approves it';
     default:
       return r.kind.replace(/_/g, ' ');
   }

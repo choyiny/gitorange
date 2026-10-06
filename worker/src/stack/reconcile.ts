@@ -10,12 +10,14 @@ import { findRepoById, gitFor } from '../lib/repos';
 import { landTargetIs } from '../lib/land-target';
 import { pingingSteps } from '../live/publish';
 import type { StepRunner } from '../merge/resolution';
-import { MODEL_RETRIES, reviewConfigured } from '../review/classify';
+import { MODEL_RETRIES } from '../review/detail';
+import { reviewConfigured } from '../review/head';
 import { d1Of, recordEvent } from '../pulls/events';
 import { settleStates } from '../pulls/settle';
 import { pullStates } from '../pulls/signals';
 import { STATE_RANK } from '../pulls/state';
-import { stackingPolicy, summariesFor } from './discover';
+import { summariesFor } from './discover';
+import { stackingTuning } from './defaults';
 import { linearize, type OrderEdge } from './linearize';
 import { readOrder, type PrSide, type StackModels } from './models';
 import { chunks, stackTreeView } from './view';
@@ -60,7 +62,7 @@ export async function executeReconcile(
     const git = gitFor(env, found.repo);
     const tip = await git.resolve(params.landTarget);
     if (!tip) return null;
-    const policy = await stackingPolicy(git, tip);
+    const policy = stackingTuning();
     const open = await db
       .select()
       .from(pullRequests)

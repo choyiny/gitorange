@@ -31,18 +31,20 @@ without also changing the screens they work in. Repositories, branches, pull req
   tells each agent what to do about it.
 - **Conflicts are resolved by an agent, not left in the queue.** A durable [Pi](https://pi.dev) agent
   resolves text conflicts in a sandboxed workspace, told what each side was trying to do.
-- **People only see what needs a person.** Auto-merge lands everything else. The **Approvals** page holds the
-  few changes your rules say a human must read, each with an explanation, a diagram, and the lines that matter.
+- **Reviewers are agents.** Each concern — security, data, docs — is an agent with its own repository of
+  instructions and knowledge. Clef decides which agents a commit concerns; they review it and either approve, ask
+  the pull request's agent for a change, or raise a finding for a person. People see only those findings, on the
+  **Approvals** page, each with an explanation, a diagram, and the lines that matter.
 
 It's single-tenant and runs entirely on your own Cloudflare account, as one Worker. There are no servers, VMs,
 or runners to operate.
 
-<img alt="A pull request in GitOrange: checks, the auto-merge review, and AI conflict resolution" src="docs/screenshots/pull-request.jpg" />
+<img alt="A pull request in GitOrange: checks, reviews, and AI conflict resolution" src="docs/screenshots/pull-request.jpg" />
 
 ## How a change moves through GitOrange
 
 <p align="center">
-  <img src="docs/images/how-it-works.png" width="960" alt="An agent opens a pull request; Clef picks which test modules the change can affect and those run as parallel check jobs on Cloudflare Containers, while GLM-5.3-flash summarizes each changed file; Clef answers the review questions (flagged answers get a GLM-5.3 investigation) and compares the pull request with other open and recently landed ones to build a stack tree; the pull request's state then sends it back to the agent to fix and push again, to a person on the Approvals page, keeps it waiting while something runs, or lets it land on its own with a rebase-merge.">
+  <img src="docs/images/how-it-works.png" width="960" alt="An agent opens a pull request; Clef picks which test modules the change can affect and those run as parallel check jobs on Cloudflare Containers, while GLM-5.3-flash summarizes each changed file; Clef asks which invited reviewer agents the change concerns and each of them reviews it with GLM-5.3, and Clef compares the pull request with other open and recently landed ones to build a stack tree; the pull request's state then sends it back to the agent to fix and push again, to a person on the Approvals page, keeps it waiting while something runs, or lets it land on its own with a rebase-merge.">
 </p>
 
 1. **An agent opens a pull request**, through `git push` and the [Model Context Protocol (MCP) server](#built-for-agents) or the web UI.
@@ -50,23 +52,24 @@ or runners to operate.
    [`gitorange/relevance@v1`](docs/ci-relevance.md), Clef skips the test modules a change can't affect (unsure,
    pushes to `main`, and shared files run everything), and the rest run as parallel jobs, at most N at once in an
    instance-wide queue.
-3. **Every changed file gets a one-line summary**, written by GLM-5.3-flash. These summaries are what the
-   decision model reads, so review never truncates a large pull request.
-4. **Clef answers the questions in your `.gitorange/review.yml`**, from those summaries: "does this change how
-   data is stored?", "does it touch authentication?", "how risky is it?". Each answer has a probability, and
-   your thresholds decide what is flagged. GLM-5.3 investigates each flag: one sentence, a before/after table, a
-   diagram, and excerpts cut from the real diff.
+3. **Every changed file gets a one-line summary**, written by GLM-5.3-flash. These summaries are what the decision
+   model reads, so review never truncates a large pull request.
+4. **Clef asks each invited reviewer agent's question**, from those summaries: "does this touch authentication?",
+   "does this change how data is stored?". Each agent whose probability crosses its threshold reviews the change
+   with GLM-5.3, reading its own instructions and knowledge, the summaries and the diff. It approves, asks for a
+   change it is sure of, or raises a finding for a person: one sentence, a before/after table, a diagram, and
+   excerpts cut from the real diff.
 5. **Clef also compares the pull request with every other open one** into the same branch, and with ones that
    landed since it branched. Related pairs get a closer read of the real diffs, and the result is a stack tree: a
    pull request can be stacked on a parent (retargeted onto its branch), ordered after another, wait on one, or
    have to account for one.
-6. **The pull request's state tells the next actor what to do.** An agent with a failed check, a requested
-   change, a dependency to account for, or a parent to rebase onto sees exactly that, with the run number or the
-   instructions. A person sees only flags that need approval, on the Approvals page. While checks, review, or stack
-   discovery are still running, the pull request is waiting.
-7. **It merges on its own** once its checks pass and every flag is approved, and its branch is deleted unless
-   another open pull request builds on it; pull requests stacked on it move onto `main`. If `main` moved and the
-   change now conflicts, a Pi agent resolves the conflict first.
+6. **The pull request's state tells the next actor what to do.** An agent with a failed check, a change an agent
+   requested, a dependency to account for, or a parent to rebase onto sees exactly that. A person sees only
+   findings that need them, failed agent reviews, and pull requests no agent reviewed, on the Approvals page. While
+   checks, agents, or stack discovery are still running, the pull request is waiting.
+7. **It merges on its own** once its checks pass and its agents approved (or a person approved what they
+   flagged), and its branch is deleted unless another open pull request builds on it; pull requests stacked on it
+   move onto `main`. If `main` moved and the change now conflicts, a Pi agent resolves the conflict first.
 
 ## Built for many agents at once
 
@@ -77,8 +80,7 @@ retried or duplicated trigger for the same commits never does the work twice. A 
 atomic compare-and-insert, so concurrent updates never record a change twice or let an older result overwrite a
 newer one.
 
-**Coordination.** GitOrange always builds a tree of the open pull requests, with or without a
-`.gitorange/review.yml`:
+**Coordination.** GitOrange always builds a tree of the open pull requests:
 
 | Relationship         | Example                                                                                  | What happens                                                     |
 | -------------------- | ---------------------------------------------------------------------------------------- | ---------------------------------------------------------------- |
@@ -92,7 +94,7 @@ pairs, to write the reason and the instructions, and decides only when Clef's co
 tree stable from one push to the next.
 
 **Context preservation.** Nothing an agent needs lives only in a chat transcript. Each relationship stores its
-reason and instructions. Each review flag stores its explanation, a before/after table, a Mermaid diagram, and
+reason and instructions. Each agent finding stores its explanation, a before/after table, a Mermaid diagram, and
 excerpts cut from the real diff. Each conflict resolution stores what it changed and why. Every state change is
 on the pull request's timeline. An agent picking up the work later reads all of it from
 `gitorange_get_pull_request`.
@@ -101,10 +103,10 @@ on the pull request's timeline. An agent picking up the work later reads all of 
 in the Actions tab under **Agent**, step by step: how long each step took, which model it called, the tokens and
 estimated cost, and what it decided. Prompts and diffs are never kept.
 
-**Review.** You write the rules as plain questions in `.gitorange/review.yml`, on the target branch, so a pull
-request can't loosen its own rules. People approve or request changes per flag. Auto-merge waits, and an agent
-merging over MCP is refused, while any flag is waiting; a maintainer can still merge by hand. See
-[Auto-merge](docs/auto-merge.md).
+**Review.** Reviewers are agents you write, each in its own repository (`AGENT.md`: when it reviews, and how),
+invited per repository. Every review records the agent's commit, so a change to an agent is a reviewed pull
+request like any other. No pull request lands without an agent's or a person's review; agents can't approve over
+MCP, so an agent can't route around a person. See [Reviewer agents and auto-merge](docs/auto-merge.md).
 
 **Conflict handling.** Files are first merged line by line, so only truly overlapping edits reach a model.
 Those go to a Pi agent running in a [Cloudflare Computer](https://github.com/cloudflare/computer) workspace,
@@ -122,11 +124,12 @@ open pull requests are found before either lands.
   be disconnected instantly from **Settings → MCP server**.
 - **A work queue.** `gitorange_list_pull_requests` with `state: "agent_followup"` returns the pull requests
   waiting on an agent, each with structured reasons: `check_failed` with the run number,
-  `must_account_for` with instructions, `changes_requested`, `conflicts_unresolved`.
+  `agent_changes_requested` with the requested changes, `must_account_for` with instructions,
+  `changes_requested`, `conflicts_unresolved`.
 - **Everything else an agent needs:** create repositories, open and comment on pull requests, read Actions step
-  logs to see why a check failed, read the stack tree (`gitorange_get_pull_tree`), and merge. Approving a review
-  flag needs the user's explicit request, and merging is refused while flags wait, so an agent can't route
-  around a person.
+  logs to see why a check failed, read the stack tree (`gitorange_get_pull_tree`), and merge. Approving is for
+  people in the web UI, and merging is refused until review is satisfied, so an agent can't route around a
+  person.
 - **A ready-made prompt** on every repository (**Code → AI agent**) sets up a teammate who doesn't use git,
   with Git LFS, branches, and pull requests, through their own coding agent. A second prompt imports an
   existing GitHub repository and can keep it in sync.
@@ -145,10 +148,9 @@ open pull requests are found before either lands.
   as things happen.
 - **One place for people.** The **Approvals** page lists everything waiting on you across repositories, and the
   header shows how many.
-- **Opt in gradually.** Without a `.gitorange/review.yml`, GitOrange behaves like an ordinary code host with
-  checks, conflict resolution, and the stack tree (which also holds a dependent pull request until what it
-  needs has landed). Add review questions when you want auto-merge, and a
-  `stacking:` section to tune how pull requests are compared.
+- **Opt in gradually.** Without invited agents, GitOrange behaves like an ordinary code host with checks,
+  conflict resolution, and the stack tree: a person approves and merges. Invite agents when you want reviews and
+  auto-merge.
 
 ## Built on Cloudflare
 
@@ -195,23 +197,9 @@ The first visit asks you to create the admin account. Create a repository, conne
 **Settings → MCP server**, and push. Prefer to set it up by hand? See [Setup](docs/setup.md) (about seven
 steps).
 
-To turn on auto-merge, commit a `.gitorange/review.yml` to your default branch:
-
-```yaml
-model: clef
-checks:
-  require: all
-human_review:
-  questions:
-    data_model:
-      ask: Does this change alter how data is stored?
-      above: 0.3
-    security:
-      ask: Does this change touch authentication, authorization, or secrets?
-      above: 0.2
-```
-
-Full reference: [Auto-merge](docs/auto-merge.md).
+To turn on reviews and auto-merge, create an agent in **Site admin → Agents**, edit its `AGENT.md` (who it is,
+which changes it reviews, how it judges), and invite it in a repository's **Settings → Agents**. Full reference:
+[Reviewer agents and auto-merge](docs/auto-merge.md).
 
 ## Screenshots
 
@@ -272,7 +260,8 @@ amounts:
   ([pricing](https://developers.cloudflare.com/containers/pricing/)).
 - **AI:** Clef calls, summaries, explanations, and conflict resolution bill per token on
   [Workers AI](https://developers.cloudflare.com/workers-ai/platform/pricing/). A typical small pull request is
-  one summary per file and one Clef call; reasoning models run only when something is flagged or related.
+  one summary per file and one Clef call; reasoning models run once per agent the change concerns, and for
+  related pull requests.
 - **Git LFS and logs:** R2, with the first 10 GB-month free
   ([pricing](https://developers.cloudflare.com/r2/pricing/)).
 
@@ -286,8 +275,8 @@ actual numbers.
   request or Dismiss a dependency from the pull request page.
 - **Auto-merge tests the pull request's own commit, not the rebased result.** If the target moved since the
   checks ran, the merged result as a whole wasn't tested. Landing one at a time on tested commits is planned.
-- **Review reads one-line summaries.** A summary that leaves something out can't be flagged; ask about what
-  must never slip through in plain terms.
+- **Clef reads one-line summaries.** An agent's trigger sees the summaries, not the diff, so a summary that
+  leaves something out can't request that agent; ask its trigger question in plain terms.
 - **AI resolves text conflicts only.** Binary files, a file deleted on one side but changed on the other, and
   generated files (lockfiles, migration snapshots, `.orangeignore`d paths) are left to the pull request's
   agent to resolve or regenerate locally.
@@ -300,7 +289,7 @@ actual numbers.
 ## Documentation
 
 [Setup](docs/setup.md) · [Configuration](docs/configuration.md) · [Architecture](docs/architecture.md) ·
-[Local development](docs/development.md) · [Auto-merge, states, and stacking](docs/auto-merge.md) ·
+[Local development](docs/development.md) · [Reviewer agents, states, and stacking](docs/auto-merge.md) ·
 [Skipping irrelevant tests](docs/ci-relevance.md)
 
 ## Contributing

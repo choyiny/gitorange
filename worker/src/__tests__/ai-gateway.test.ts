@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { env } from 'cloudflare:test';
 import { aiGateway } from '../lib/ai-gateway';
-import { workersAiModels } from '../review/models';
+import { workersAiAgentModels } from '../review/models';
 
 /** A fake AI binding that records each call's gateway option and answers like a chat model. */
 function recordingEnv(gatewayId: string) {
@@ -15,11 +15,9 @@ function recordingEnv(gatewayId: string) {
           {
             message: {
               content: JSON.stringify({
-                files: ['a.ts'],
-                detail: 'Adds a.',
-                changes: [{ what: 'a', before: 'none', after: 'a' }],
-                diagram: ['flowchart LR', 'A --> B'],
-                snippets: [],
+                verdict: 'approve',
+                summary: 'Adds a.',
+                findings: [],
               }),
             },
             finish_reason: 'stop',
@@ -42,7 +40,7 @@ function recordingEnv(gatewayId: string) {
 describe('AI Gateway', () => {
   it('routes every review call through the gateway, tagged with its feature', async () => {
     const { env: e, calls } = recordingEnv('default');
-    const models = workersAiModels(
+    const models = workersAiAgentModels(
       e,
       { summary: '@cf/zai-org/glm-5.3-flash', review: '@cf/zai-org/glm-5.3' },
       { classificationId: 'c1' }
@@ -54,23 +52,22 @@ describe('AI Gateway', () => {
       deletions: 0,
       diff: '+a',
     });
-    await models.classify('clef', { files: [] }, {});
-    await models.selectFiles!({ flag: 'f', summaries: 's', paths: ['a.ts'] });
-    await models.investigate({
-      flag: 'f',
-      title: 't',
-      description: '',
-      summaries: 's',
-      diffs: 'd',
-      paths: ['a.ts'],
-    });
+    await models.trigger({ files: [] }, { secagent: 'Auth?' });
+    await models.review(
+      {
+        handle: 'secagent',
+        agentSha: 'a'.repeat(40),
+        instructions: 'Look for secrets.',
+        knowledge: { files: [], unread: [] },
+        title: 't',
+        description: '',
+        summaries: 's',
+        diffs: 'd',
+      },
+      ['a.ts']
+    );
     expect(calls.map((c) => c.options)).toEqual(
-      [
-        'review-summary',
-        'review-classify',
-        'review-select',
-        'review-investigate',
-      ].map((feature) => ({
+      ['review-summary', 'review-trigger', 'review-agent'].map((feature) => ({
         gateway: {
           id: 'default',
           metadata: {
@@ -98,7 +95,7 @@ describe('AI Gateway', () => {
               },
             },
     };
-    const models = workersAiModels(
+    const models = workersAiAgentModels(
       { ...e, AI } as never,
       { summary: '@cf/zai-org/glm-5.3-flash', review: '@cf/zai-org/glm-5.3' },
       { classificationId: 'no-such-classification' }
@@ -110,7 +107,7 @@ describe('AI Gateway', () => {
       deletions: 0,
       diff: '+a',
     });
-    await models.classify('clef', { files: [] }, {});
+    await models.trigger({ files: [] }, {});
     const rows = (
       await env.DB.prepare(
         'SELECT feature, model, tokens_in, tokens_out, tokens_cached, classification_id, repository_id FROM ai_usage ORDER BY feature DESC'
@@ -118,20 +115,20 @@ describe('AI Gateway', () => {
     ).results;
     expect(rows).toEqual([
       {
+        feature: 'review-trigger',
+        model: '@cf/cloudflare/clef',
+        tokens_in: null,
+        tokens_out: null,
+        tokens_cached: null,
+        classification_id: 'no-such-classification',
+        repository_id: null,
+      },
+      {
         feature: 'review-summary',
         model: '@cf/zai-org/glm-5.3-flash',
         tokens_in: 120,
         tokens_out: 30,
         tokens_cached: 20,
-        classification_id: 'no-such-classification',
-        repository_id: null,
-      },
-      {
-        feature: 'review-classify',
-        model: '@cf/cloudflare/clef',
-        tokens_in: null,
-        tokens_out: null,
-        tokens_cached: null,
         classification_id: 'no-such-classification',
         repository_id: null,
       },

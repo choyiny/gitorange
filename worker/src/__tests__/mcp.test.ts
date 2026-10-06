@@ -1,10 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { app } from '../index';
 import { mcpServerName } from '../lib/app-name';
-import { drizzle } from 'drizzle-orm/d1';
-import { schema } from '../db/schema';
-import type { StepRunner } from '../merge/resolution';
-import { executeClassification } from '../review/classify';
 import {
   addMember,
   bootstrapAdmin,
@@ -14,6 +10,13 @@ import {
   type TestEnv,
 } from './helpers/app';
 import { commitPaths } from './helpers/seed';
+import {
+  AGENT_MD,
+  agentModels,
+  invitedAgent,
+  runReviews,
+  startReview,
+} from './helpers/reviews';
 
 const ORIGIN = 'http://test.local';
 const REDIRECT = 'http://127.0.0.1:33418/callback';
@@ -320,7 +323,6 @@ describe('MCP server', () => {
       ['gitorange_create_pull_request', false],
       ['gitorange_comment_pull_request', false],
       ['gitorange_merge_pull_request', false],
-      ['gitorange_approve_review_flag', false],
       ['gitorange_request_changes_on_review_flag', false],
       ['gitorange_get_run_logs', true],
     ]);
@@ -481,7 +483,7 @@ describe('MCP server', () => {
     const res = await call(t, '/api/mcp', { cookie: admin });
     const body = (await res.json()) as { serverUrl: string; tools: unknown[] };
     expect(body.serverUrl).toBe(`${ORIGIN}/mcp`);
-    expect(body.tools).toHaveLength(14);
+    expect(body.tools).toHaveLength(13);
     expect((await call(t, '/api/mcp')).status).toBe(401);
   });
 });
@@ -533,8 +535,8 @@ describe('instance name', () => {
 });
 
 describe('MCP pull request tools', () => {
-  /** A repository with main (optionally holding review.yml) and a pushed feature branch. */
-  async function repoWithBranch(policy?: string) {
+  /** A repository with main and a pushed feature branch. */
+  async function repoWithBranch() {
     const t = makeEnv({ actions: true });
     const admin = await bootstrapAdmin(t);
     const { access_token } = await connect(t, admin);
@@ -543,10 +545,7 @@ describe('MCP pull request tools', () => {
       visibility: 'internal',
     });
     const repo = [...t.fake.repos.values()][0];
-    const base = {
-      'README.md': '# app\n',
-      ...(policy ? { '.gitorange/review.yml': policy } : {}),
-    };
+    const base = { 'README.md': '# app\n' };
     const main = await commitPaths(repo, 'main', base, 'Initial commit');
     repo.refs.set('refs/heads/feature', main);
     await commitPaths(
@@ -559,11 +558,15 @@ describe('MCP pull request tools', () => {
   }
 
   it('says whose move it is, and lists what needs the agent', async () => {
-    const { t, token, repo } = await repoWithBranch();
+    const { t, admin, token, repo } = await repoWithBranch();
     await tool(t, token, 'gitorange_create_pull_request', {
       repository: 'octocat/app',
       head: 'feature',
       title: 'Add a',
+    });
+    await call(t, '/api/repos/octocat/app/pulls/1/approval', {
+      cookie: admin,
+      method: 'POST',
     });
     const head = repo.refs.get('refs/heads/feature')!;
     await t.env.DB.prepare(
@@ -626,6 +629,10 @@ describe('MCP pull request tools', () => {
       });
     }
     await settle(t);
+    await call(t, '/api/repos/octocat/app/pulls/1/approval', {
+      cookie: admin,
+      method: 'POST',
+    });
     await call(t, '/api/repos/octocat/app/pulls/2', {
       cookie: admin,
       method: 'PATCH',
@@ -658,7 +665,7 @@ describe('MCP pull request tools', () => {
   });
 
   it('opens, inspects, comments on, and merges a pull request', async () => {
-    const { t, token, repo } = await repoWithBranch();
+    const { t, admin, token, repo } = await repoWithBranch();
     const opened = await tool(t, token, 'gitorange_create_pull_request', {
       repository: 'octocat/app',
       head: 'feature',
@@ -719,11 +726,18 @@ describe('MCP pull request tools', () => {
         conflicts: [],
         ai_conflict_resolution: null,
       },
-      auto_merge: null, // no .gitorange/review.yml
+      auto_merge: null, // no agent is invited
+      reviewers: [],
+      follow_ups: [],
       recent_comments: [{ author: 'octocat', body: 'Looks good.' }],
       can_merge: true,
     });
 
+    // No agent reviews this repository: a person approves (in the web UI) before an agent may merge.
+    await call(t, '/api/repos/octocat/app/pulls/1/approval', {
+      cookie: admin,
+      method: 'POST',
+    });
     const merged = await tool(t, token, 'gitorange_merge_pull_request', {
       repository: 'octocat/app',
       number: 1,
@@ -748,61 +762,50 @@ describe('MCP pull request tools', () => {
     });
   });
 
-  /** An open pull request whose review raised one flag (auto-merge off, so it stays open). */
-  async function flaggedPull() {
-    const { t, admin, token } = await repoWithBranch(
-      'checks:\n  require: none\nhuman_review:\n  questions:\n    data_model:\n      ask: Does this change stored data?\n      above: 0.3\n'
-    );
+  /** An open pull request #1 that @secagent reviewed: one finding for a person, one change request. */
+  async function reviewedPull() {
+    const { t, admin, token } = await repoWithBranch();
+    await invitedAgent(t, admin, 'secagent', AGENT_MD());
     await tool(t, token, 'gitorange_create_pull_request', {
       repository: 'octocat/app',
       head: 'feature',
       title: 'Add a',
     });
-    await settle(t);
-    const started = t.actions.resolutions.find(
-      (r) => (r.params as { classificationId?: string }).classificationId
-    )!;
-    // Keep it open: an approval would otherwise auto-merge it.
-    await t.env.DB.prepare(
-      'UPDATE pull_requests SET auto_merge_disabled_at = 1'
-    ).run();
-    await executeClassification(
-      {
-        env: t.env,
-        db: drizzle(t.env.DB, { schema }),
-        step: {
-          do: async (_n: string, a: unknown, b?: unknown) =>
-            ((b ?? a) as () => Promise<unknown>)(),
-        } as unknown as StepRunner,
-        models: {
-          summarize: async (f) => `Changes ${f.path}.`,
-          classify: async () => ({ data_model: { type: 'noul', value: 0.9 } }),
-          investigate: async () => ({
-            detail: 'Stores a new field.',
-            diagram: null,
-            snippets: [],
-            paths: [],
-          }),
-        },
-      },
-      (started.params as { classificationId: string }).classificationId
+    await startReview(t);
+    await runReviews(
+      t,
+      agentModels({
+        review: () => ({
+          verdict: 'findings',
+          summary: 'Two concerns.',
+          findings: [
+            {
+              kind: 'needs_person',
+              title: 'New export',
+              detail: 'Exports a new constant.',
+              changes: [],
+              diagram: null,
+              snippets: [],
+              paths: ['src/a.ts'],
+            },
+            {
+              kind: 'change_requested',
+              title: 'Name it',
+              detail: 'Rename a to answer.',
+              changes: [],
+              diagram: null,
+              snippets: [],
+              paths: ['src/a.ts'],
+            },
+          ],
+        }),
+      }).models
     );
-
     return { t, admin, token };
   }
 
-  const getPull = async (t: TestEnv, token: string) =>
-    JSON.parse(
-      (
-        await tool(t, token, 'gitorange_get_pull_request', {
-          repository: 'octocat/app',
-          number: 1,
-        })
-      ).content[0].text
-    );
-
-  it('refuses to merge past review flags a person has not approved', async () => {
-    const { t, token } = await flaggedPull();
+  it('reports reviewers, findings by kind, and change requests as follow-ups; merging waits for a person', async () => {
+    const { t, admin, token } = await reviewedPull();
     const got = JSON.parse(
       (
         await tool(t, token, 'gitorange_get_pull_request', {
@@ -811,113 +814,139 @@ describe('MCP pull request tools', () => {
         })
       ).content[0].text
     );
-    expect(got.auto_merge).toMatchObject({
-      state: 'disabled',
-      flags: [
-        {
-          id: expect.any(String),
-          title: 'Does this change stored data?',
-          finding: 'Stores a new field.',
-          state: 'pending',
-          approved_by: null,
-          changes_requested_by: null,
-          changes_requested_note: null,
-        },
-      ],
-    });
+    expect(got.reviewers).toMatchObject([
+      {
+        agent: 'secagent',
+        status: 'changes_requested',
+        requested: true,
+        probability: 0.9,
+        findings: [
+          { kind: 'needs_person', title: 'New export', state: 'open' },
+          { kind: 'change_requested', title: 'Name it', state: 'open' },
+        ],
+      },
+    ]);
+    expect(got.follow_ups).toMatchObject([
+      {
+        agent: 'secagent',
+        title: 'Name it',
+        instructions: expect.stringContaining('Rename a to answer.'),
+      },
+    ]);
+    expect(got.approved_by).toEqual([]);
+    expect(got.reasons.map((r: { kind: string }) => r.kind)).toContain(
+      'agent_changes_requested'
+    );
     const refused = await tool(t, token, 'gitorange_merge_pull_request', {
       repository: 'octocat/app',
       number: 1,
     });
     expect(refused.isError).toBe(true);
     expect(refused.content[0].text).toMatch(
-      /1 review flag waiting for a person's approval/
+      /People approve in GitOrange's web UI/
     );
-  });
-
-  it('approves flags and requests changes on them as the signed-in user, with merge permission', async () => {
-    const { t, admin, token } = await flaggedPull();
-    const flagId = (await getPull(t, token)).auto_merge.flags[0].id as string;
-    const args = { repository: 'octocat/app', number: 1, flag_id: flagId };
-
-    // Same permission as the web UI: a member who can only read can't decide on flags.
-    const reader = await addMember(t, admin, 'grace');
-    const { access_token: readerToken } = await connect(t, reader);
-    for (const name of [
-      'gitorange_approve_review_flag',
-      'gitorange_request_changes_on_review_flag',
-    ]) {
-      const denied = await tool(t, readerToken, name, args);
-      expect(denied.isError).toBe(true);
-      expect(denied.content[0].text).toMatch(/permission/);
-    }
-    const unknown = await tool(t, token, 'gitorange_approve_review_flag', {
-      ...args,
-      flag_id: 'nope',
+    // A person approves the commit in the web UI; the agent's change request still holds it.
+    await call(t, '/api/repos/octocat/app/pulls/1/approval', {
+      cookie: admin,
+      method: 'POST',
     });
-    expect(unknown.isError).toBe(true);
-    expect(unknown.content[0].text).toMatch(/has no review flag nope/);
-
-    // Requesting changes pings open pages and approval inboxes.
-    const res = await app.fetch(
-      new Request(`${ORIGIN}/api/live`, {
-        headers: { Upgrade: 'websocket', Cookie: admin },
-      }),
-      t.env,
-      t.ctx
-    );
-    const ws = res.webSocket!;
-    ws.accept();
-    const pings: string[] = [];
-    ws.addEventListener('message', (e) => pings.push(String(e.data)));
-
-    const requested = await tool(
-      t,
-      token,
-      'gitorange_request_changes_on_review_flag',
-      { ...args, note: '  Add a down migration.  ' }
-    );
-    expect(requested.isError).toBeUndefined();
-    await settle(t);
-    await new Promise((r) => setTimeout(r, 50));
-    expect(pings).toContain('{"type":"approvals"}');
-    ws.close();
-    expect((await getPull(t, token)).auto_merge.flags[0]).toMatchObject({
-      id: flagId,
-      state: 'changes_requested',
-      approved_by: null,
-      changes_requested_by: 'octocat',
-      changes_requested_note: 'Add a down migration.',
-    });
-    // Still blocks merging.
-    const refused = await tool(t, token, 'gitorange_merge_pull_request', {
+    await settle(t); // the approval's auto-merge attempt finishes (held) before the agent tries
+    const held = await tool(t, token, 'gitorange_merge_pull_request', {
       repository: 'octocat/app',
       number: 1,
     });
-    expect(refused.isError).toBe(true);
-
-    // Approving clears the request; then changes can't be requested on it any more.
-    const approved = await tool(
+    expect(held.isError).toBe(true);
+    expect(held.content[0].text).toMatch(/@secagent requested 1 change/);
+    // Once a person dismisses it, the approval counts: auto-merge lands it (agents review this repository).
+    await call(
       t,
-      token,
-      'gitorange_approve_review_flag',
-      args
+      `/api/repos/octocat/app/pulls/1/review/flags/${got.reviewers[0].findings[1].id}/approve`,
+      { cookie: admin, method: 'POST' }
     );
-    expect(approved.isError).toBeUndefined();
-    expect((await getPull(t, token)).auto_merge.flags[0]).toMatchObject({
-      state: 'approved',
-      approved_by: 'octocat',
-      changes_requested_by: null,
-      changes_requested_note: null,
+    await settle(t);
+    const after = JSON.parse(
+      (
+        await tool(t, token, 'gitorange_get_pull_request', {
+          repository: 'octocat/app',
+          number: 1,
+        })
+      ).content[0].text
+    );
+    expect(after).toMatchObject({
+      state: 'merged',
+      merged: { automatically: true },
     });
-    const late = await tool(
+  });
+
+  it('cannot approve over MCP, and requests changes only on findings for a person', async () => {
+    const { t, token } = await reviewedPull();
+    const got = JSON.parse(
+      (
+        await tool(t, token, 'gitorange_get_pull_request', {
+          repository: 'octocat/app',
+          number: 1,
+        })
+      ).content[0].text
+    );
+    const [person, change] = got.reviewers[0].findings;
+    const approve = await tool(t, token, 'gitorange_approve_review_flag', {
+      repository: 'octocat/app',
+      number: 1,
+      flag_id: person.id,
+    });
+    expect(approve.isError).toBe(true);
+    expect(approve.content[0].text).toBe(
+      'Unknown tool: gitorange_approve_review_flag'
+    );
+    const ok = await tool(
       t,
       token,
       'gitorange_request_changes_on_review_flag',
-      args
+      {
+        repository: 'octocat/app',
+        number: 1,
+        flag_id: person.id,
+        note: 'Not yet.',
+      }
     );
-    expect(late.isError).toBe(true);
-    expect(late.content[0].text).toMatch(/already approved/);
+    expect(ok.isError).toBeFalsy();
+    const no = await tool(
+      t,
+      token,
+      'gitorange_request_changes_on_review_flag',
+      {
+        repository: 'octocat/app',
+        number: 1,
+        flag_id: change.id,
+      }
+    );
+    expect(no.isError).toBe(true);
+  });
+
+  it('refuses to request changes for a member who can only read', async () => {
+    const { t, admin } = await reviewedPull();
+    const db = t.env.DB;
+    const flagId = (await db
+      .prepare(`SELECT id FROM pr_review_flags WHERE kind = 'needs_person'`)
+      .first<{ id: string }>())!.id;
+    const reader = await addMember(t, admin, 'grace');
+    const { access_token } = await connect(t, reader);
+    const denied = await tool(
+      t,
+      access_token,
+      'gitorange_request_changes_on_review_flag',
+      { repository: 'octocat/app', number: 1, flag_id: flagId, note: 'no' }
+    );
+    expect(denied.isError).toBe(true);
+    expect(denied.content[0].text).toMatch(/permission/);
+    expect(
+      await db
+        .prepare(
+          'SELECT changes_requested_at AS at FROM pr_review_flags WHERE id = ?'
+        )
+        .bind(flagId)
+        .first()
+    ).toEqual({ at: null });
   });
 
   it('needs push access to open or merge, and hides repositories you cannot read', async () => {
@@ -1036,7 +1065,7 @@ describe('MCP run logs', () => {
 });
 
 describe('stacking tools', () => {
-  it('reports the tree and a PR’s stack without a review.yml, and hides private repos', async () => {
+  it('reports the tree and a PR’s stack, and hides private repos', async () => {
     const t = makeEnv({ actions: true });
     const admin = await bootstrapAdmin(t);
     await call(t, '/api/repos', {
@@ -1090,8 +1119,7 @@ describe('stacking tools', () => {
       json: { name: 'app', visibility: 'private' },
     });
     const repo = [...t.fake.repos.values()][0];
-    const policy = 'stacking:\n  enabled: true\n';
-    const files = { 'a.txt': 'a\n', '.gitorange/review.yml': policy };
+    const files = { 'a.txt': 'a\n' };
     const main = await commitPaths(repo, 'main', files, 'base');
     for (const [branch, title] of [
       ['one', 'One'],

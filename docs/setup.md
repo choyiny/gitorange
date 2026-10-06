@@ -57,7 +57,7 @@ Fill in:
 
 Keep `triggers.crons` as shipped: a daily job deletes Actions runs past their retention (set in **Site admin → Settings**, 90 days by default). `APP_NAME`, `FROM_EMAIL`, and the model variables are defaults that a site admin can change later in **Site admin → Settings** without a deploy.
 
-Leave the AI variables at their defaults unless you want different models. `AI_GATEWAY: "default"` logs every Workers AI call (requests, tokens, cost) in an AI Gateway that Cloudflare creates on first use; set it to `"off"` to skip the gateway. Keep the `containers`, `durable_objects`, `exports`, `workflows`, and `ai` entries as shipped: they run Actions, AI conflict resolution, the auto-merge review, and live page updates.
+Leave the AI variables at their defaults unless you want different models. `AI_GATEWAY: "default"` logs every Workers AI call (requests, tokens, cost) in an AI Gateway that Cloudflare creates on first use; set it to `"off"` to skip the gateway. Keep the `containers`, `durable_objects`, `exports`, `workflows`, and `ai` entries as shipped: they run Actions, AI conflict resolution, reviewer agents' reviews, and live page updates.
 
 `wrangler.jsonc` is gitignored, so your IDs stay out of the repository. See [Configuration](configuration.md) for every key.
 
@@ -106,10 +106,10 @@ Then:
 
 Commits link to a member's profile when their author email matches the member's account email or a verified alternate. Each member adds the addresses they commit with under **avatar → Settings → Emails** and clicks the verification link they're sent.
 
-## Actions and auto-merge
+## Actions and reviews
 
 - **Actions:** workflow files in `.github/workflows/` (GitHub Actions syntax) run on pushes and pull requests, each job in its own container. See the repository's **Actions** tab.
-- **Auto-merge:** add a `.gitorange/review.yml` to a repository's default branch to turn on the AI review: pull requests that pass CI and raise no flags merge on their own, and flagged ones wait for a person on the **Approvals** page. `.orangeignore` keeps generated files out of the review. See [Auto-merge](auto-merge.md).
+- **Reviews and auto-merge:** create reviewer agents in **Site admin → Agents** and invite them in a repository's **Settings → Agents**: each new commit is reviewed by the agents it concerns, and a pull request that passes CI and its agents' reviews merges on its own; findings for a person wait on the **Approvals** page. Without agents, a person approves and merges. `.orangeignore` keeps generated files out of reviews. See [Reviewer agents](auto-merge.md).
 - **AI conflict resolution** needs no setup: conflicting pull requests are resolved automatically.
 
 ## Connecting AI tools (MCP)
@@ -151,4 +151,4 @@ Start with **Site admin → Setup**: it shows what's misconfigured and how to fi
 - **LFS uploads fail with `403 SignatureDoesNotMatch` or `AccessDenied`** — the R2 token doesn't have Object Read & Write on the bucket named in `LFS_BUCKET_NAME`, or `R2_ACCOUNT_ID` is wrong.
 - **`wrangler deploy` says it "could not finish applying its Durable Object-managed Container application settings"** — the Worker deployed; run `yarn deploy` again to finish.
 - **Actions jobs never start** — Docker wasn't running when you deployed, so the runner image wasn't built.
-- **No AI resolution or auto-merge review** — the `ai` binding or the `MERGE_RESOLUTION` Workflow is missing, or (for review) the repository has no `.gitorange/review.yml` on its default branch.
+- **No AI resolution or agent reviews** — the `ai` binding or the `MERGE_RESOLUTION` Workflow is missing, or (for reviews) the repository has no invited agents.

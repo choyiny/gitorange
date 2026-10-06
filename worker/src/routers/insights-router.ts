@@ -51,7 +51,7 @@ const insightsSchema = z
       pendingPullsNow: z.number(),
       byKind: z.array(
         z.object({
-          source: z.enum(['question', 'limit']),
+          source: z.enum(['question', 'limit', 'agent']),
           key: z.string(),
           title: z.string(),
           raised: z.number(),
@@ -104,7 +104,7 @@ const insightsRoute = createRoute({
 insightsRouter.openapi(insightsRoute, async (c) => {
   const { days } = c.req.valid('query');
   return c.json(
-    await repoInsights(c.get('db'), c.get('git'), c.get('repo'), Number(days)),
+    await repoInsights(c.env, c.get('db'), c.get('repo'), Number(days)),
     200
   );
 });

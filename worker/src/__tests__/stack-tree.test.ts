@@ -1,6 +1,5 @@
 import { describe, expect, it } from 'vitest';
 import { env } from 'cloudflare:test';
-import { parsePolicy, PolicyError } from '../review/policy';
 import type { ClassifierAnswer } from '../db/app.schema';
 import {
   parseRecheck,
@@ -13,45 +12,6 @@ import {
 } from '../stack/models';
 import { buildTree, type EdgeInput } from '../stack/tree';
 import { linearize, type Choose } from '../stack/linearize';
-
-describe('review.yml stacking', () => {
-  it('has defaults', () => {
-    expect(parsePolicy('model: clef\n').stacking).toEqual({
-      max_open: 20,
-      related_above: 0.3,
-      confident_above: 0.6,
-    });
-  });
-
-  it('reads every field', () => {
-    expect(
-      parsePolicy(
-        'stacking:\n  max_open: 5\n  related_above: 0.5\n  confident_above: 0.8\n'
-      ).stacking
-    ).toEqual({
-      max_open: 5,
-      related_above: 0.5,
-      confident_above: 0.8,
-    });
-  });
-
-  it('accepts and ignores the old enabled key', () => {
-    for (const old of ['true', 'false'])
-      expect(
-        parsePolicy(`stacking:\n  enabled: ${old}\n  max_open: 5\n`).stacking
-      ).toEqual({ max_open: 5, related_above: 0.3, confident_above: 0.6 });
-  });
-
-  it('rejects unknown keys and out-of-range values', () => {
-    for (const bad of [
-      'stacking:\n  enable: true\n',
-      'stacking:\n  max_open: 1\n',
-      'stacking:\n  related_above: 1.5\n',
-      'stacking:\n  confident_above: -0.1\n',
-    ])
-      expect(() => parsePolicy(bad)).toThrow(PolicyError);
-  });
-});
 
 const answers = (
   related: number,

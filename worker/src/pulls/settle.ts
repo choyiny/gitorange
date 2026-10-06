@@ -3,11 +3,12 @@ import type { DrizzleDB } from '../db/middleware';
 import {
   mergeResolutions,
   prClassifications,
+  prReviewers,
   pullRequests,
 } from '../db/app.schema';
 import { publishChange } from '../live/publish';
 import { findRepoById, gitFor } from '../lib/repos';
-import { reviewConfigured } from '../review/classify';
+import { reviewConfigured } from '../review/head';
 import { recordStates } from './events';
 import { pullStates } from './signals';
 import { landTargetIs, landTargetOf } from '../lib/land-target';
@@ -62,6 +63,8 @@ type Payload = {
   sweep?: { repositoryId: string };
   stack?: { pullRequestId: string };
   reconcile?: { repositoryId: string; landTarget: string };
+  headReview?: { id: string };
+  reviewer?: { id: string };
 };
 
 /**
@@ -79,6 +82,22 @@ export async function repositoryForPayload(
     };
   if (p.sweep) return { repositoryId: p.sweep.repositoryId };
   let prId = p.stack?.pullRequestId;
+  if (!prId && p.headReview)
+    prId = (
+      await db
+        .select({ id: prClassifications.pullRequestId })
+        .from(prClassifications)
+        .where(eq(prClassifications.id, p.headReview.id))
+        .get()
+    )?.id;
+  if (!prId && p.reviewer)
+    prId = (
+      await db
+        .select({ id: prReviewers.pullRequestId })
+        .from(prReviewers)
+        .where(eq(prReviewers.id, p.reviewer.id))
+        .get()
+    )?.id;
   if (!prId && p.classificationId)
     prId = (
       await db

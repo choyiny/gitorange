@@ -23,12 +23,6 @@ export type Reason =
   | { kind: 'changes_requested'; flags: number }
   | { kind: 'conflicts_unresolved'; files: string[]; error: string | null }
   | {
-      kind: 'review_policy_invalid';
-      /** pull_request: this PR's own review.yml; target: the target branch's. */
-      where: 'pull_request' | 'target';
-      error: string;
-    }
-  | {
       kind: 'must_account_for';
       pr: number;
       landed: boolean;
@@ -37,21 +31,36 @@ export type Reason =
       branch: string | null;
     }
   | { kind: 'rebase_onto'; pr: number; branch: string; why: string }
-  | { kind: 'review_failed'; error: string | null }
-  | { kind: 'flags_pending'; count: number }
   | { kind: 'cycle'; prs: number[] }
   | {
       kind: 'checks_running';
-      /** The required check waited on, when review.yml names them. */
+      /** The check waited on, when one is named. */
       check: string | null;
       /** False while no run (or no run of that check) exists yet. */
       started: boolean;
     }
-  | { kind: 'review_running' }
   | { kind: 'resolution_running' }
   | { kind: 'stack_checking'; prs: number[] }
   | { kind: 'stacked_on'; pr: number }
-  | { kind: 'waits_on'; pr: number };
+  | { kind: 'waits_on'; pr: number }
+  /** An agent (null: the review of this commit) hasn't finished. */
+  | { kind: 'agent_reviewing'; agent: string | null }
+  /** An agent's needs_person findings wait for a person. */
+  | {
+      kind: 'agent_flagged';
+      agent: string;
+      flags: { id: string; title: string }[];
+    }
+  /** An agent asked the author for these changes (resolved by a new push, or dismissed by a person). */
+  | {
+      kind: 'agent_changes_requested';
+      agent: string;
+      changes: { id: string; title: string; detail: string | null }[];
+    }
+  /** An agent's review (null: the review of this commit) failed: fix the agent, retry, or remove it. */
+  | { kind: 'agent_review_failed'; agent: string | null; error: string | null }
+  /** No agent was requested: a person approves the commit. */
+  | { kind: 'needs_approval' };
 export type ReasonKind = Reason['kind'];
 
 // Adding a kind to Reason without listing it here is a type error.
@@ -59,18 +68,19 @@ const KINDS: Record<ReasonKind, true> = {
   check_failed: true,
   changes_requested: true,
   conflicts_unresolved: true,
-  review_policy_invalid: true,
   must_account_for: true,
   rebase_onto: true,
-  review_failed: true,
-  flags_pending: true,
   cycle: true,
   checks_running: true,
-  review_running: true,
   resolution_running: true,
   stack_checking: true,
   stacked_on: true,
   waits_on: true,
+  agent_reviewing: true,
+  agent_flagged: true,
+  agent_changes_requested: true,
+  agent_review_failed: true,
+  needs_approval: true,
 };
 export const REASON_KINDS = Object.keys(KINDS) as [ReasonKind, ...ReasonKind[]];
 
@@ -85,17 +95,17 @@ export function reasonState(r: Reason): PullStateName | null {
     // Not accounted for and not dismissed: stackReasons emits it only then.
     case 'must_account_for':
     case 'rebase_onto':
+    case 'agent_changes_requested':
       return 'agent_followup';
-    case 'review_policy_invalid':
-      return r.where === 'pull_request' ? 'agent_followup' : 'human_review';
-    case 'review_failed':
-    case 'flags_pending':
     case 'cycle':
+    case 'agent_flagged':
+    case 'agent_review_failed':
+    case 'needs_approval':
       return 'human_review';
     case 'checks_running':
-    case 'review_running':
     case 'resolution_running':
     case 'stack_checking':
+    case 'agent_reviewing':
       return 'waiting';
     case 'stacked_on':
     case 'waits_on':

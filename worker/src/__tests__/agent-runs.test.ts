@@ -1,13 +1,12 @@
 import { describe, expect, it } from 'vitest';
 import { drizzle } from 'drizzle-orm/d1';
 import { schema } from '../db/schema';
-import type { ClassifierAnswer } from '../db/app.schema';
 import type { StepRunner } from '../merge/resolution';
 import { executeResolution } from '../merge/resolution';
 import type { ResolveResult } from '../merge/resolver';
 import { executeSweep, type SweepParams } from '../merge/auto';
-import { executeClassification } from '../review/classify';
-import type { ReviewModels } from '../review/models';
+import { executeHeadReview } from '../review/head';
+import type { AgentReviewModels } from '../review/models';
 import { executeStacking, type StackParams } from '../stack/discover';
 import type { StackModels } from '../stack/models';
 import {
@@ -32,6 +31,7 @@ import {
   type TestEnv,
 } from './helpers/app';
 import { commitFiles, commitPaths } from './helpers/seed';
+import { AGENT_MD, invitedAgent } from './helpers/reviews';
 
 const dbOf = (t: TestEnv) => drizzle(t.env.DB, { schema });
 
@@ -151,17 +151,6 @@ function watchedDb(t: TestEnv, fail: (sql: string) => boolean = () => false) {
 
 // ── review ────────────────────────────────────────────────────────────────────
 
-const POLICY = `
-model: clef
-checks:
-  require: none
-human_review:
-  questions:
-    data_model:
-      ask: Does this change alter how data is stored?
-      above: 0.3
-`;
-
 async function reviewPull() {
   const t = makeEnv({ actions: true });
   const admin = await bootstrapAdmin(t);
@@ -170,10 +159,8 @@ async function reviewPull() {
     json: { name: 'app', visibility: 'private' },
   });
   const repo = [...t.fake.repos.values()][0];
-  const base = {
-    'src/app.ts': 'export const a = 1;\n',
-    '.gitorange/review.yml': POLICY,
-  };
+  await invitedAgent(t, admin, 'secagent', AGENT_MD());
+  const base = { 'src/app.ts': 'export const a = 1;\n' };
   const main = await commitPaths(repo, 'main', base, 'base');
   repo.refs.set('refs/heads/feature', main);
   const head = await commitPaths(
@@ -188,19 +175,16 @@ async function reviewPull() {
   });
   await settle(t);
   const review = t.actions.resolutions.find(
-    (s) => (s.params as { classificationId?: string }).classificationId
+    (s) => (s.params as { headReview?: unknown }).headReview
   )!;
   return { t, admin, head, review };
 }
 
-/** Fake review models that record usage the way the Workers AI ones do. */
+/** Fake agent review models that record usage the way the Workers AI ones do. */
 function reviewModels(
   t: TestEnv,
-  opts: { failClassify?: boolean } = {}
-): ReviewModels {
-  const answers: Record<string, ClassifierAnswer> = {
-    data_model: { type: 'noul', value: 0.9 },
-  };
+  opts: { failReview?: boolean } = {}
+): AgentReviewModels {
   const use = (
     feature: Parameters<typeof recordAiUsage>[1]['feature'],
     model: string,
@@ -220,18 +204,27 @@ function reviewModels(
       await use('review-summary', '@cf/zai-org/glm-5.3-flash', 1000, 100);
       return `Changes ${f.path}.`;
     },
-    classify: async () => {
-      if (opts.failClassify) throw new Error('model down');
-      await use('review-classify', '@cf/cloudflare/clef', 2000, 0);
-      return answers;
+    trigger: async (_state, questions) => {
+      await use('review-trigger', '@cf/cloudflare/clef', 2000, 0);
+      return Object.fromEntries(Object.keys(questions).map((h) => [h, 0.9]));
     },
-    investigate: async () => {
-      await use('review-investigate', '@cf/zai-org/glm-5.3', 5000, 800);
+    review: async () => {
+      if (opts.failReview) throw new Error('model down');
+      await use('review-agent', '@cf/zai-org/glm-5.3', 5000, 800);
       return {
-        detail: 'Adds column y to table x.',
-        diagram: null,
-        snippets: [],
-        paths: ['migrations/0001.sql'],
+        verdict: 'findings',
+        summary: 'Adds column y.',
+        findings: [
+          {
+            kind: 'needs_person',
+            title: 'New column',
+            detail: 'Adds column y to table x.',
+            changes: [],
+            diagram: null,
+            snippets: [],
+            paths: ['migrations/0001.sql'],
+          },
+        ],
       };
     },
   };
@@ -240,7 +233,7 @@ function reviewModels(
 async function runReview(
   t: TestEnv,
   instance: { id: string; params: unknown },
-  models: ReviewModels,
+  models: AgentReviewModels,
   opts: { step?: StepRunner; recorderDb?: ReturnType<typeof dbOf> } = {}
 ) {
   const db = dbOf(t);
@@ -251,9 +244,9 @@ async function runReview(
     { instanceId: instance.id, payload },
     opts.step ?? durableSteps().step,
     (step) =>
-      executeClassification(
+      executeHeadReview(
         { env: t.env, db, step, models },
-        payload.classificationId!
+        payload.headReview!.id
       )
   );
 }
@@ -280,9 +273,10 @@ describe('agent runs: recording', () => {
       'load',
       'summary:0',
       'save-files',
-      'classify',
-      'flags',
-      'investigate:0',
+      'agents',
+      'trigger',
+      'reviewers',
+      'review:secagent',
       'finish',
       'stacking',
       'auto-merge',
@@ -301,41 +295,42 @@ describe('agent runs: recording', () => {
       (1000 * 0.15 + 100 * 0.5) / 1e6,
       12
     );
-    expect(by('classify')).toMatchObject({
+    expect(by('trigger')).toMatchObject({
       model: '@cf/cloudflare/clef',
       tokens_in: 2000,
       tokens_out: 0,
     });
-    expect(by('classify').decision).toContain('data_model: yes 0.90');
-    expect(by('flags').decision).toContain('data_model');
-    expect(by('investigate:0')).toMatchObject({
+    expect(by('trigger').decision).toContain('@secagent 0.90');
+    expect(by('reviewers').decision).toBe('Requested @secagent (0.90)');
+    expect(by('review:secagent')).toMatchObject({
       model: '@cf/zai-org/glm-5.3',
       tokens_in: 5000,
       tokens_out: 800,
     });
-    expect(by('investigate:0').decision).toContain('data_model');
+    expect(by('review:secagent').decision).toBe('1 finding: 1 needs a person');
     // Usage rows point at the step that made them.
     const usage = await t.env.DB.prepare(
       'SELECT feature, agent_step_id FROM ai_usage ORDER BY created_at'
     ).all<{ feature: string; agent_step_id: string }>();
     expect(
-      usage.results.find((u) => u.feature === 'review-classify')!.agent_step_id
-    ).toBe(by('classify').id);
+      usage.results.find((u) => u.feature === 'review-trigger')!.agent_step_id
+    ).toBe(by('trigger').id);
   });
 
   it('marks the run failed when a step fails, with a short error', async () => {
     const { t, review } = await reviewPull();
-    await runReview(t, review, reviewModels(t, { failClassify: true }));
+    await runReview(t, review, reviewModels(t, { failReview: true }));
     const [run] = await runs(t);
     expect(run.status).toBe('failed');
-    expect(run.error).toMatch(/classifier could not be reached/);
+    expect(run.error).toBe(
+      "@secagent's review failed: The review model failed: model down"
+    );
     const steps = await stepsOf(t, run.id);
-    const classify = steps.find((s) => s.name === 'classify')!;
-    expect(classify.status).toBe('failed');
-    expect(classify.error).toBe('model down');
-    // MODEL_RETRIES: the first attempt and 3 retries.
-    expect(classify.attempts).toBe(4);
-    expect(steps.map((s) => s.name)).toContain('fail');
+    const reviewStep = steps.find((s) => s.name === 'review:secagent')!;
+    expect(reviewStep.status).toBe('failed');
+    expect(reviewStep.error).toBe('The review model failed: model down');
+    // AGENT_REVIEW_RETRIES: the first attempt and 2 retries.
+    expect(reviewStep.attempts).toBe(3);
   });
 
   it('marks the run failed and rethrows when the Workflow body throws', async () => {
@@ -404,7 +399,7 @@ describe('agent runs: recording', () => {
   it('fails the steps a closed run left unfinished', async () => {
     const { t } = await reviewPull();
     const repoId = (await t.env.DB.prepare(
-      'SELECT id FROM repositories'
+      "SELECT id FROM repositories WHERE name = 'app'"
     ).first<{
       id: string;
     }>())!.id;
@@ -477,7 +472,7 @@ describe('agent runs: recording', () => {
   it('closes a stale-closed run for real', async () => {
     const { t } = await reviewPull();
     const repoId = (await t.env.DB.prepare(
-      'SELECT id FROM repositories'
+      "SELECT id FROM repositories WHERE name = 'app'"
     ).first<{
       id: string;
     }>())!.id;
@@ -656,7 +651,7 @@ describe('agent runs: conflict resolution, sweep, stack discovery', () => {
   it('records a sweep', async () => {
     const { t } = await conflictingPull();
     const repoId = (await t.env.DB.prepare(
-      'SELECT id FROM repositories'
+      "SELECT id FROM repositories WHERE name = 'app'"
     ).first<{
       id: string;
     }>())!.id;
@@ -835,7 +830,7 @@ describe('agent runs: API', () => {
     const { t, admin, review } = await reviewPull();
     await runReview(t, review, reviewModels(t));
     const repoId = (await t.env.DB.prepare(
-      'SELECT id FROM repositories'
+      "SELECT id FROM repositories WHERE name = 'app'"
     ).first<{
       id: string;
     }>())!.id;
@@ -932,15 +927,16 @@ describe('agent runs: API', () => {
       'Load',
       'Summarize file 1',
       'Save summaries',
-      'Classify',
-      'Record flags',
-      'Investigate flag 1',
+      'Read invited agents',
+      'Ask which agents this concerns',
+      'Request reviewers',
+      'Review by @secagent',
       'Finish',
       'Start stack discovery',
       'Try auto-merge',
     ]);
-    expect(body.steps[3]).toMatchObject({
-      name: 'classify',
+    expect(body.steps[4]).toMatchObject({
+      name: 'trigger',
       status: 'succeeded',
       attempts: 1,
       model: '@cf/cloudflare/clef',
@@ -967,7 +963,7 @@ describe('agent runs: API', () => {
   it('shows a run left running for hours as not finished', async () => {
     const { t, admin } = await reviewPull();
     const repoId = (await t.env.DB.prepare(
-      'SELECT id FROM repositories'
+      "SELECT id FROM repositories WHERE name = 'app'"
     ).first<{
       id: string;
     }>())!.id;
@@ -1034,7 +1030,7 @@ describe('agent runs: retention', () => {
   it('says there is more when the last prune batch was full', async () => {
     const { t } = await reviewPull();
     const repoId = (await t.env.DB.prepare(
-      'SELECT id FROM repositories'
+      "SELECT id FROM repositories WHERE name = 'app'"
     ).first<{
       id: string;
     }>())!.id;
@@ -1057,7 +1053,7 @@ describe('agent runs: retention', () => {
   it('closes runs left running for over 2 hours, with their open steps', async () => {
     const { t } = await reviewPull();
     const repoId = (await t.env.DB.prepare(
-      'SELECT id FROM repositories'
+      "SELECT id FROM repositories WHERE name = 'app'"
     ).first<{
       id: string;
     }>())!.id;
@@ -1090,7 +1086,7 @@ describe('agent runs: retention', () => {
     const { t, review } = await reviewPull();
     await runReview(t, review, reviewModels(t));
     const repoId = (await t.env.DB.prepare(
-      'SELECT id FROM repositories'
+      "SELECT id FROM repositories WHERE name = 'app'"
     ).first<{
       id: string;
     }>())!.id;

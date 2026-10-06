@@ -7,11 +7,12 @@ import {
   GitPullRequestIcon,
 } from '@primer/octicons-react';
 import { api, qk, type ApprovalItem } from '@/lib/uiApi';
-import { errorMessage } from '@/lib/api';
+import { ApiError, errorMessage } from '@/lib/api';
 import { timeAgo } from '@/lib/format';
 import { Header } from '@/components/Header';
 import { PullStateLabel, PullStateReasons } from '@/components/PullStateLabel';
 import { Spinner } from '@/components/Spinner';
+import { Avatar } from '@/components/Avatar';
 import { Flag, serverChangesRequester } from '@/components/AutoMergeReview';
 import { useApprovalPages } from '@/lib/approvals';
 
@@ -26,21 +27,41 @@ function Item({ item }: { item: ApprovalItem }) {
   const [requested, setRequested] = useState<Map<string, string>>(new Map());
   const [busy, setBusy] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const act = async (key: string, fn: () => Promise<unknown>) => {
+  const act = async (
+    key: string,
+    fn: () => Promise<unknown>,
+    opts?: { sendingNote?: boolean }
+  ) => {
     setBusy(key);
     setError(null);
     try {
       await fn();
-      await qc.invalidateQueries({ queryKey: qk.approvals });
       return true;
     } catch (e) {
-      setError(errorMessage(e));
+      setError(
+        errorMessage(e) +
+          (e instanceof ApiError && e.status === 409 && opts?.sendingNote
+            ? ' Your note was not sent.'
+            : '')
+      );
       return false;
     } finally {
+      // Also after a refusal (409: the branch moved): the list and the pull request show the new state.
+      void qc.invalidateQueries({ queryKey: ['repo', owner, name] });
+      await qc.invalidateQueries({ queryKey: qk.approvals });
       setBusy(null);
     }
   };
 
+  const changeRequested =
+    !!item.pullState?.reasons.some(
+      (r) => r.kind === 'agent_changes_requested'
+    ) ||
+    item.agents.some(
+      (g) =>
+        g.status === 'changes_requested' ||
+        g.flags.some((f) => f.kind === 'change_requested' && !f.approvedAt)
+    );
   return (
     <div className="Box mb-3">
       <div
@@ -63,7 +84,8 @@ function Item({ item }: { item: ApprovalItem }) {
       <div className="Box-body">
         {error && <div className="flash flash-error mb-2">{error}</div>}
         {item.pullState?.state === 'human_review' &&
-          !item.flags.length &&
+          !item.agents.length &&
+          !item.needsApproval &&
           !item.reviewFailed &&
           !item.resolutionFailed &&
           !item.stackStale.length &&
@@ -146,45 +168,120 @@ function Item({ item }: { item: ApprovalItem }) {
             </button>
           </div>
         )}
-        {item.flags.map((f) => {
-          const localNote = requested.get(f.id);
-          return (
-            <Flag
-              key={f.id}
-              f={f}
-              approver={
-                approved.has(f.id) ? { label: 'you', user: null } : null
+        {item.needsApproval && (
+          <div
+            className="flash flash-warn mb-2 d-flex flex-items-center flex-wrap"
+            style={{ gap: 8 }}
+          >
+            <AlertIcon />
+            <span className="flex-1" style={{ minWidth: 200 }}>
+              No agent reviewed this commit: a person approves it.
+              {changeRequested && (
+                <span className="color-fg-attention">
+                  {' '}
+                  Approving does not override an agent&apos;s change request:
+                  dismiss it, or wait for a fix.
+                </span>
+              )}
+            </span>
+            <Link to={prUrl} className="btn btn-sm">
+              Review the changes
+            </Link>
+            <button
+              className="btn btn-sm btn-primary"
+              disabled={busy !== null || !item.pull.headSha}
+              aria-label="Approve this commit"
+              onClick={() =>
+                act('approve', () =>
+                  api.approvePull(owner, name, n, item.pull.headSha!)
+                )
               }
-              changesRequester={
-                localNote !== undefined
-                  ? { label: 'you', user: null, note: localNote || null }
-                  : serverChangesRequester(f)
-              }
-              canApprove
-              approving={busy === f.id}
-              requestingChanges={busy === `changes:${f.id}`}
-              investigating={false}
-              onApprove={() =>
-                act(f.id, async () => {
-                  await api.approveFlag(owner, name, n, f.id);
-                  setApproved((s) => new Set(s).add(f.id));
-                })
-              }
-              onRequestChanges={(note) =>
-                act(`changes:${f.id}`, async () => {
-                  await api.requestFlagChanges(owner, name, n, f.id, note);
-                  setRequested((m) => new Map(m).set(f.id, note.trim()));
-                })
-              }
-            />
-          );
-        })}
+            >
+              {busy === 'approve' ? 'Approving…' : 'Approve'}
+            </button>
+          </div>
+        )}
+        {item.agents.map((g) => (
+          <div key={g.reviewerId} className="mb-2">
+            <div
+              className="d-flex flex-items-center flex-wrap mb-1"
+              style={{ gap: 6 }}
+            >
+              <Avatar user={g.agent} size={16} />
+              <Link to={`/${g.agent.username}`} className="text-bold f6">
+                @{g.agent.username}
+              </Link>
+              {g.status === 'failed' && (
+                <>
+                  <span className="f6 color-fg-danger flex-1">
+                    Review failed: {g.error ?? 'unknown error'}
+                  </span>
+                  <button
+                    className="btn btn-sm"
+                    disabled={busy !== null}
+                    aria-label={`Retry @${g.agent.username}'s review`}
+                    onClick={() =>
+                      act(`retry:${g.reviewerId}`, () =>
+                        api.retryReviewer(owner, name, n, g.reviewerId)
+                      )
+                    }
+                  >
+                    {busy === `retry:${g.reviewerId}` ? 'Starting…' : 'Retry'}
+                  </button>
+                </>
+              )}
+            </div>
+            {g.flags.map((f) => {
+              const localNote = requested.get(f.id);
+              return (
+                <Flag
+                  key={f.id}
+                  f={f}
+                  approver={
+                    approved.has(f.id) ? { label: 'you', user: null } : null
+                  }
+                  changesRequester={
+                    localNote !== undefined
+                      ? { label: 'you', user: null, note: localNote || null }
+                      : serverChangesRequester(f)
+                  }
+                  canApprove
+                  approving={busy === f.id}
+                  requestingChanges={busy === `changes:${f.id}`}
+                  investigating={false}
+                  onApprove={() =>
+                    act(f.id, async () => {
+                      await api.approveFlag(owner, name, n, f.id);
+                      setApproved((s) => new Set(s).add(f.id));
+                    })
+                  }
+                  onRequestChanges={(note) =>
+                    act(
+                      `changes:${f.id}`,
+                      async () => {
+                        await api.requestFlagChanges(
+                          owner,
+                          name,
+                          n,
+                          f.id,
+                          note
+                        );
+                        setRequested((m) => new Map(m).set(f.id, note.trim()));
+                      },
+                      { sendingNote: true }
+                    )
+                  }
+                />
+              );
+            })}
+          </div>
+        ))}
       </div>
     </div>
   );
 }
 
-/** Open pull requests waiting on the user: flags, failed reviews, failed conflict resolutions. */
+/** Open pull requests waiting on the user: agents' findings, failed reviews, approvals, failed conflict resolutions. */
 export default function Approvals() {
   const q = useApprovalPages();
   const count = q.data?.pages[0]?.count ?? 0;
@@ -224,9 +321,9 @@ export default function Approvals() {
             <CheckCircleIcon size={24} className="color-fg-success mb-2" />
             <h3 className="blankslate-heading">Nothing is waiting on you</h3>
             <p>
-              Flags from auto-merge reviews, failed reviews, conflicts AI
-              couldn&apos;t resolve, and pull requests that need a person&apos;s
-              decision show up here.
+              Findings agents raised for a person, failed agent reviews, pull
+              requests no agent reviewed, conflicts AI couldn&apos;t resolve,
+              and pull requests that need a person&apos;s decision show up here.
             </p>
           </div>
         ) : (

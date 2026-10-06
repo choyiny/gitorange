@@ -7,8 +7,13 @@ import { drizzle } from 'drizzle-orm/d1';
 import { schema } from '../db/schema';
 import { executeSweep, type SweepParams } from './auto';
 import { executeResolution, type StepRunner } from './resolution';
-import { executeClassification } from '../review/classify';
-import { workersAiModels } from '../review/models';
+import {
+  executeHeadReview,
+  executeReviewerRetry,
+  stopLegacyReview,
+} from '../review/head';
+import { headReviewId } from '../review/keys';
+import { workersAiAgentModels } from '../review/models';
 import { getSettings } from '../lib/settings';
 import { executeStacking, type StackParams } from '../stack/discover';
 import { workersAiStackModels } from '../stack/models';
@@ -16,42 +21,30 @@ import { recordAgentRun } from '../agent-runs/record';
 import { settleAfterPayload } from '../pulls/settle';
 import { executeReconcile, type ReconcileParams } from '../stack/reconcile';
 
+type PayloadKey =
+  | 'resolutionId'
+  | 'sweep'
+  | 'classificationId'
+  | 'stack'
+  | 'reconcile'
+  | 'headReview'
+  | 'reviewer';
+/** Exactly one payload key is set. */
+type Only<K extends PayloadKey, V> = { [P in K]: V } & {
+  [P in Exclude<PayloadKey, K>]?: undefined;
+};
+
 export type MergeResolutionParams =
-  | {
-      resolutionId: string;
-      sweep?: undefined;
-      classificationId?: undefined;
-      stack?: undefined;
-      reconcile?: undefined;
-    }
-  | {
-      sweep: SweepParams;
-      resolutionId?: undefined;
-      classificationId?: undefined;
-      stack?: undefined;
-      reconcile?: undefined;
-    }
-  | {
-      classificationId: string;
-      resolutionId?: undefined;
-      sweep?: undefined;
-      stack?: undefined;
-      reconcile?: undefined;
-    }
-  | {
-      stack: StackParams;
-      resolutionId?: undefined;
-      sweep?: undefined;
-      classificationId?: undefined;
-      reconcile?: undefined;
-    }
-  | {
-      reconcile: ReconcileParams;
-      resolutionId?: undefined;
-      sweep?: undefined;
-      classificationId?: undefined;
-      stack?: undefined;
-    };
+  | Only<'resolutionId', string>
+  | Only<'sweep', SweepParams>
+  /** A review.yml review started before reviewer agents (stopped on arrival). */
+  | Only<'classificationId', string>
+  | Only<'stack', StackParams>
+  | Only<'reconcile', ReconcileParams>
+  /** Review one head commit with the repository's agents. */
+  | Only<'headReview', { id: string }>
+  /** Retry one agent's failed review (pr_reviewers.id). */
+  | Only<'reviewer', { id: string }>;
 
 /**
  * MERGE_RESOLUTION: runs an AI resolution attempt, an auto-merge review, a conflict sweep, stacking discovery, or a
@@ -80,20 +73,36 @@ export class MergeResolutionWorkflow extends WorkflowEntrypoint<
   ) {
     const db = drizzle(this.env.DB, { schema });
     const p = event.payload;
-    if (p.classificationId) {
+    if (p.headReview || p.reviewer) {
       const ids = await getSettings(db, this.env, [
         'ai.summary_model',
         'ai.review_model',
       ]);
-      const models = workersAiModels(
-        this.env,
-        { summary: ids['ai.summary_model'], review: ids['ai.review_model'] },
-        { classificationId: p.classificationId }
-      );
-      await executeClassification(
-        { env: this.env, db, step: runner, models },
-        p.classificationId
-      );
+      const reviewer = p.reviewer
+        ? await db.query.prReviewers.findFirst({
+            where: (x, { eq }) => eq(x.id, p.reviewer!.id),
+            columns: { pullRequestId: true, headSha: true },
+          })
+        : undefined;
+      const reviewId =
+        p.headReview?.id ??
+        (reviewer
+          ? headReviewId(reviewer.pullRequestId, reviewer.headSha)
+          : undefined);
+      const deps = {
+        env: this.env,
+        db,
+        step: runner,
+        models: workersAiAgentModels(
+          this.env,
+          { summary: ids['ai.summary_model'], review: ids['ai.review_model'] },
+          { classificationId: reviewId }
+        ),
+      };
+      if (p.headReview) await executeHeadReview(deps, p.headReview.id);
+      else await executeReviewerRetry(deps, p.reviewer!.id);
+    } else if (p.classificationId) {
+      await stopLegacyReview(db, p.classificationId);
     } else if (p.stack) {
       const ids = await getSettings(db, this.env, ['ai.review_model']);
       const pr = p.stack.pullRequestId;

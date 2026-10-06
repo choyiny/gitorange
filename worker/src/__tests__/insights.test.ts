@@ -3,7 +3,10 @@ import { drizzle } from 'drizzle-orm/d1';
 import { eq } from 'drizzle-orm';
 import { schema } from '../db/schema';
 import {
+  agents,
   mergeResolutions,
+  prReviewers,
+  repositoryAgents,
   prClassifications,
   prReviewFlags,
   pullRequests,
@@ -11,7 +14,6 @@ import {
   workflowRuns,
 } from '../db/app.schema';
 import { users } from '../db/auth.schema';
-import { makeBlob } from '../git/objects';
 import { TOOL_HANDLERS } from '../mcp/tools';
 import type { RepoInsights } from '../lib/insights';
 import {
@@ -22,21 +24,12 @@ import {
   type TestEnv,
 } from './helpers/app';
 
-const POLICY = `
-model: clef
-human_review:
-  questions:
-    security:
-      ask: Does this touch authentication?
-      above: 0.5
-`;
-
 const HOUR = 3600;
 const DAY = 86400;
 
 /**
  * A repository with a known history, written straight into D1 (timestamps relative to now):
- *  #1 auto-merged, hands off: reviewed "auto", CI red then green 30 min after opening
+ *  #1 auto-merged, hands off: reviewed with no flags, CI red then green 30 min after opening
  *  #2 auto-merged after two flags were approved; AI resolution failed, then applied
  *  #3 merged by a person after 3 days, never reviewed
  *  #4 closed without merging; its review failed
@@ -60,8 +53,6 @@ async function seed(t: TestEnv, cookie: string, name = 'app') {
     .from(users)
     .where(eq(users.username, 'octocat'))
     .get())!;
-  const policy = await makeBlob(POLICY);
-  [...t.fake.repos.values()].at(-1)!.add(policy);
 
   const now = Math.floor(Date.now() / 1000);
   const at = (secondsAgo: number) => new Date((now - secondsAgo) * 1000);
@@ -114,15 +105,13 @@ async function seed(t: TestEnv, cookie: string, name = 'app') {
     key: string,
     n: number,
     ago: number,
-    status: 'done' | 'failed',
-    verdict: 'auto' | 'human' | null
+    status: 'done' | 'failed'
   ) => ({
-    id: `${repo.id}-${key}`,
+    id: `${id(n)}-${key}`, // a head review's id: <pull request id>-<head sha>
     pullRequestId: id(n),
     headSha: key,
-    policySha: policy.sha,
+    policySha: '',
     status,
-    verdict,
     summaryModel: 'glm',
     classifierModel: 'clef',
     createdAt: at(ago),
@@ -130,12 +119,19 @@ async function seed(t: TestEnv, cookie: string, name = 'app') {
   await db
     .insert(prClassifications)
     .values([
-      review('c1', 1, 10 * DAY, 'done', 'auto'),
-      review('c2', 2, 5 * DAY, 'done', 'human'),
-      review('c4', 4, 4 * DAY, 'failed', null),
-      review('c5a', 5, 2 * DAY, 'done', 'human'),
-      review('c5b', 5, DAY, 'done', 'human'),
+      review('c1', 1, 10 * DAY, 'done'),
+      review('c2', 2, 5 * DAY, 'done'),
+      review('c4', 4, 4 * DAY, 'failed'),
+      review('c5a', 5, 2 * DAY, 'done'),
+      review('c5b', 5, DAY, 'done'),
     ]);
+  const reviewPull: Record<string, number> = {
+    c1: 1,
+    c2: 2,
+    c4: 4,
+    c5a: 5,
+    c5b: 5,
+  };
   const flag = (
     key: string,
     classification: string,
@@ -145,7 +141,7 @@ async function seed(t: TestEnv, cookie: string, name = 'app') {
     approvedAfter?: number
   ) => ({
     id: `${repo.id}-${key}`,
-    classificationId: `${repo.id}-${classification}`,
+    classificationId: `${id(reviewPull[classification])}-${classification}`,
     source,
     key: flagKey,
     paths: [],
@@ -154,14 +150,41 @@ async function seed(t: TestEnv, cookie: string, name = 'app') {
       ? { approvedById: admin.id, approvedAt: at(ago - approvedAfter) }
       : {}),
   });
+  // The admin's user row stands in for an agent.
+  await db.insert(agents).values({
+    userId: admin.id,
+    name: 'Stand-in',
+    triggerAsk: 'Anything?',
+    triggerAbove: 0.5,
+    createdAt: at(30 * DAY),
+  });
   await db
-    .insert(prReviewFlags)
-    .values([
-      flag('f1', 'c2', 'question', 'security', 5 * DAY, HOUR),
-      flag('f2', 'c2', 'limit', 'max_files', 5 * DAY, 3 * HOUR),
-      flag('f3', 'c5a', 'question', 'security', 2 * DAY),
-      flag('f4', 'c5b', 'question', 'security', DAY),
-    ]);
+    .insert(repositoryAgents)
+    .values({ repositoryId: repo.id, agentId: admin.id, createdAt: at(DAY) });
+  await db.insert(prReviewers).values({
+    id: `${repo.id}-rv5`,
+    pullRequestId: id(5),
+    headSha: 'c5b',
+    agentId: admin.id,
+    requested: true,
+    status: 'flagged',
+    createdAt: at(DAY),
+  });
+  // #5's branch is at its newer reviewed commit.
+  t.fake.repos.get(repo.artifactsName)!.refs.set('refs/heads/f5', 'c5b');
+  await db.insert(prReviewFlags).values([
+    flag('f1', 'c2', 'question', 'security', 5 * DAY, HOUR),
+    flag('f2', 'c2', 'limit', 'max_files', 5 * DAY, 3 * HOUR),
+    flag('f3', 'c5a', 'question', 'security', 2 * DAY),
+    flag('f4', 'c5b', 'question', 'security', DAY),
+    {
+      ...flag('f5', 'c5b', 'question', `${admin.id}:t`, DAY),
+      source: 'agent' as const,
+      agentId: admin.id,
+      kind: 'needs_person' as const,
+      value: { title: 'T' },
+    },
+  ]);
   const resolution = (
     key: string,
     n: number,
@@ -261,19 +284,26 @@ describe('repository insights', () => {
       pullsNeedingHuman: 2,
     });
     expect(body.flags).toEqual({
-      raised: 4,
+      raised: 5,
       approved: 2,
       medianTimeToApproval: 2 * HOUR,
-      // The superseded review's flag on #5 is not waiting on anyone.
+      // Only the agent's finding for a person on #5's head review waits (the Approvals rule).
       pendingNow: 1,
       pendingPullsNow: 1,
       byKind: [
         {
           source: 'question',
           key: 'security',
-          title: 'Does this touch authentication?',
+          title: 'security', // a retired question: its id
           raised: 3,
           approved: 1,
+        },
+        {
+          source: 'agent',
+          key: 'octocat',
+          title: '@octocat',
+          raised: 1,
+          approved: 0,
         },
         {
           source: 'limit',

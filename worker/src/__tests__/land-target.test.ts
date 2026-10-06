@@ -2,13 +2,13 @@ import { describe, expect, it } from 'vitest';
 import { landTargetOf } from '../lib/land-target';
 import { bootstrapAdmin, call, makeEnv, settle } from './helpers/app';
 import { commitPaths } from './helpers/seed';
+import { AGENT_MD, invitedAgent } from './helpers/reviews';
 import { drizzle } from 'drizzle-orm/d1';
 import { schema } from '../db/schema';
 import type { StepRunner } from '../merge/resolution';
 import { executeSweep } from '../merge/auto';
 import { onRefsUpdated } from '../actions/trigger';
 import { findRepoById, gitFor } from '../lib/repos';
-import { readPolicy } from '../review/policy';
 
 describe('land target', () => {
   it('is the base a pull request was opened against', async () => {
@@ -61,11 +61,9 @@ jobs:
 
 /**
  * PR #1 parent → main and PR #2 child → main, with #2 then stacked by hand on `parent` (as Task 8's retargeting
- * does). The parent branch has no review.yml: anything still reading `base_ref` as the target loses the policy.
+ * does).
  */
-async function stackedByHand(
-  opts: { conflict?: boolean; stacking?: boolean } = {}
-) {
+async function stackedByHand(opts: { conflict?: boolean } = {}) {
   const t = makeEnv({ actions: true });
   const admin = await bootstrapAdmin(t);
   await call(t, '/api/repos', {
@@ -73,17 +71,15 @@ async function stackedByHand(
     json: { name: 'app', visibility: 'internal' },
   });
   const repo = [...t.fake.repos.values()][0];
-  // Checks are required and never pass, so nothing lands on its own.
-  const policy = `checks:\n  require: all\n${opts.stacking ? 'stacking:\n  enabled: true\n' : ''}`;
+  // Auto-merge is on where agents review; its review never runs here, so nothing lands on its own.
+  await invitedAgent(t, admin, 'secagent', AGENT_MD());
   const base = {
     'a.txt': 'a\n',
-    '.gitorange/review.yml': policy,
     '.github/workflows/ci.yml': CI,
   };
   const main = await commitPaths(repo, 'main', base, 'base');
   repo.refs.set('refs/heads/parent', main);
-  const { ['.gitorange/review.yml']: _drop, ...withoutPolicy } = base;
-  const parentFiles = { ...withoutPolicy, 'p.txt': 'p\n' };
+  const parentFiles = { ...base, 'p.txt': 'p\n' };
   await commitPaths(repo, 'parent', parentFiles, 'Parent');
   repo.refs.set('refs/heads/child', repo.refs.get('refs/heads/parent')!);
   const childFiles = {
@@ -116,7 +112,9 @@ async function stackedByHand(
     "UPDATE pull_requests SET base_ref = 'parent' WHERE number = 2"
   ).run();
   const db = drizzle(t.env.DB, { schema });
-  const repoId = (await t.env.DB.prepare('SELECT id FROM repositories').first<{
+  const repoId = (await t.env.DB.prepare(
+    "SELECT id FROM repositories WHERE name = 'app'"
+  ).first<{
     id: string;
   }>())!.id;
   const found = (await findRepoById(db, repoId))!;
@@ -150,22 +148,30 @@ const detail = async (
     pullState: { reasons: { kind: string }[] } | null;
   };
 
+/** Every Actions run so far passed (the merge button refuses while checks run). */
+const passChecks = (s: Awaited<ReturnType<typeof stackedByHand>>) =>
+  s.t.env.DB.prepare(
+    "UPDATE workflow_runs SET status = 'completed', conclusion = 'success'"
+  ).run();
+
 describe('readers of the land target', () => {
-  it('reads review.yml from the land target (review, auto-merge, list, states, sweep)', async () => {
+  it('reviews and lands against the land target (review, auto-merge, list, states, sweep)', async () => {
     const s = await stackedByHand();
     const d = await detail(s, 2);
     expect(d.pull).toMatchObject({ baseRef: 'parent', landTarget: 'main' });
     expect(d.review).not.toBeNull();
     expect(d.review!.autoMerge.state).not.toBe('off');
-    expect(d.pullState!.reasons.map((r) => r.kind)).toContain('review_running');
+    expect(d.pullState!.reasons.map((r) => r.kind)).toContain(
+      'agent_reviewing'
+    );
     const list = (await (
       await call(s.t, '/api/repos/octocat/app/pulls', { cookie: s.admin })
     ).json()) as {
       pulls: { number: number; review: unknown }[];
     };
     expect(list.pulls.find((p) => p.number === 2)!.review).not.toBeNull();
-    // A new head is reviewed under main's review.yml.
-    await commitPaths(
+    // A new head is reviewed: the sweep starts its agents' review.
+    const next = await commitPaths(
       s.repo,
       'child',
       { ...s.childFiles, 'c2.txt': 'x\n' },
@@ -175,16 +181,12 @@ describe('readers of the land target', () => {
       { env: s.t.env, db: s.db, step },
       { repositoryId: s.repoId, branches: ['child'] }
     );
-    const mainPolicy = (await readPolicy(
-      s.git,
-      s.repo.refs.get('refs/heads/main')!
-    ))!.sha;
     const latest = await s.t.env.DB.prepare(
-      'SELECT policy_sha AS sha FROM pr_classifications WHERE pull_request_id = ? AND head_sha = ?'
+      'SELECT id FROM pr_classifications WHERE pull_request_id = ? AND head_sha = ?'
     )
-      .bind(s.pr2, s.repo.refs.get('refs/heads/child')!)
-      .first<{ sha: string }>();
-    expect(latest?.sha).toBe(mainPolicy);
+      .bind(s.pr2, next)
+      .first<{ id: string }>();
+    expect(latest?.id).toBe(`${s.pr2}-${next}`);
   });
 
   it('runs pull_request workflows filtered by the land target', async () => {
@@ -197,7 +199,9 @@ describe('readers of the land target', () => {
       'More'
     );
     const next = s.repo.refs.get('refs/heads/child')!;
-    const admin = (await s.t.env.DB.prepare('SELECT id FROM users').first<{
+    const admin = (await s.t.env.DB.prepare(
+      "SELECT id FROM users WHERE username = 'octocat'"
+    ).first<{
       id: string;
     }>())!.id;
     await onRefsUpdated(
@@ -298,9 +302,10 @@ describe('readers of the land target', () => {
     const s = await stackedByHand();
     const parentTip = s.repo.refs.get('refs/heads/parent');
     const mainTip = s.repo.refs.get('refs/heads/main')!;
+    await passChecks(s);
     const res = await call(s.t, '/api/repos/octocat/app/pulls/2/merge', {
       cookie: s.admin,
-      json: {},
+      json: { approve: true },
     });
     expect(res.status).toBe(200);
     expect(s.repo.refs.get('refs/heads/parent')).toBe(parentTip);
@@ -310,7 +315,7 @@ describe('readers of the land target', () => {
   });
 
   it('groups the stack tree by land target', async () => {
-    const s = await stackedByHand({ stacking: true });
+    const s = await stackedByHand();
     const tree = (await (
       await call(s.t, '/api/repos/octocat/app/pulls/tree', { cookie: s.admin })
     ).json()) as {
@@ -322,7 +327,7 @@ describe('readers of the land target', () => {
   });
 
   it('treats a row with a null land_target as landing into its base, as before', async () => {
-    const s = await stackedByHand({ stacking: true });
+    const s = await stackedByHand();
     // As on rows written before the column: no land_target, base_ref is the target.
     await s.t.env.DB.prepare(
       "UPDATE pull_requests SET base_ref = 'main', land_target = NULL"
@@ -338,9 +343,10 @@ describe('readers of the land target', () => {
       tree.targets.map((t) => [t.branch, t.nodes.map((n) => n.number)])
     ).toEqual([['main', [1, 2]]]); // SQL filters (landTargetIs) see it too
     const mainTip = s.repo.refs.get('refs/heads/main')!;
+    await passChecks(s);
     const res = await call(s.t, '/api/repos/octocat/app/pulls/1/merge', {
       cookie: s.admin,
-      json: {},
+      json: { approve: true },
     });
     expect(res.status).toBe(200);
     expect(

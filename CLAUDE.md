@@ -27,7 +27,7 @@ and better-auth. Git storage is **Cloudflare Artifacts**: one Artifacts repo per
   plus an `agents` row; refused at `session.create.before`, the PAT lookup in `git-http.ts`, and `getMcpSession`.
   Its repository `<handle>/<handle>` holds `AGENT.md` (`config.ts`), `avatar.png`, `knowledge/`; `refreshAgentConfig`
   re-caches `AGENT.md` after pushes/merges to its default branch (one indexed lookup for other repositories).
-  Invitations: `repository_agents`. Reviews come in milestone 2.
+  Invitations: `repository_agents`. Reviews: see the Reviews bullet.
 - Git LFS (`worker/src/lfs-http.ts`, `worker/src/lib/lfs.ts`): Batch API at `/<owner>/<repo>.git/info/lfs/...`,
   sharing the git endpoint's auth. Bytes go client ↔ R2 directly via pre-signed URLs (needs the
   `R2_ACCESS_KEY_ID`/`R2_SECRET_ACCESS_KEY` secrets); D1 `lfs_objects` holds bare R2 keys, never URLs. One copy
@@ -52,12 +52,16 @@ and better-auth. Git storage is **Cloudflare Artifacts**: one Artifacts repo per
   `MergeResolver` DO (Cloudflare Computer workspace + Pi Durable harness, model `RESOLVER_MODEL` via the `AI`
   binding). A valid resolution (`merge_resolutions.status = 'proposed'` for the current shas) makes the PR mergeable.
   Tests drive `executeResolution`/`executeSweep` with fake steps and a fake resolver.
-- Auto-merge (`worker/src/review/`): opt-in via `.gitorange/review.yml` on the target branch. Per head commit: GLM
-  one-liner per file → Clef classifies the one-liners against the policy's questions → flags (questions, limits; no
-  path rules) investigated by GLM-5.3 (one sentence + before/after table + Mermaid diagram + excerpts cut from the real diff) and approved by
-  people (`pr_classifications`, `pr_review_flags`). `.orangeignore` (target branch, gitignore syntax, plus lockfiles) keeps generated files out of model calls. `maybeAutoMerge` lands via `landPull` (shared with the merge
-  button) when `autoMergeStatus` is ready. `GET /api/approvals` (`review/inbox.ts`) feeds the global Approvals page.
-  Tests drive `executeClassification` with fake models.
+- Reviews (`worker/src/review/`): reviewer agents invited per repository (`repository_agents`). Per head commit
+  (`pr_classifications`, id `<pr id>-<head sha>`): GLM one-liner per file → one Clef call over every agent's
+  `trigger.ask` (`pr_reviewers`, requested iff p ≥ above; unsure = requested) → each requested agent reviews in one
+  GLM-5.3 call at its repository's default-branch SHA (`agent_sha`; `AGENT.md` + `knowledge/` ≤ 20 files / 64 KB)
+  → approve or findings (`pr_review_flags.kind` `needs_person` | `change_requested`). `review/gate.ts`
+  (`reviewVerdict`) is the only landing rule for review; a person's `pr_approvals` row satisfies it except over an
+  agent's open `change_requested` finding (dismiss it or push), and is recorded as an `approved` event (withdrawing: `withdrawn`). `landPull`:
+  stack gate → checks → review. Auto-merge is on iff the repository invites ≥ 1 agent. `.orangeignore` and lockfiles
+  stay out of model calls. Tests drive `executeHeadReview`/`executeReviewerRetry` with fake `AgentReviewModels`
+  (`helpers/reviews.ts`). `GET /api/approvals` (`review/inbox.ts`) groups findings by agent.
 - Agent runs (`worker/src/agent-runs/`): every `MERGE_RESOLUTION` Workflow is recorded as `agent_runs` + `agent_steps` (Actions
   tab → Agent) by one wrapper at the entrypoint (`recordAgentRun`): ids are the instance id and `<run>:<step name>` (replay-safe),
   writes never throw. Model calls land on their step via an `AsyncLocalStorage` context read by `recordAiUsage`
@@ -76,9 +80,8 @@ and better-auth. Git storage is **Cloudflare Artifacts**: one Artifacts repo per
   wrangler var it replaced or a built-in value. Read with `getSetting`/`getSettings` only where used, never per request;
   deploy-time facts (BASE_URL, bucket names) stay in wrangler. A daily Cron Trigger (`scheduled()` in `index.ts`) runs
   `runActionsRetention` (`worker/src/actions/retention.ts`).
-- Stacking (`worker/src/stack/`): always on when AI is configured; `stacking:` in `.gitorange/review.yml` only tunes it
-  (`enabled` is accepted and ignored). A `stack` run on `MERGE_RESOLUTION` (after the review finishes — or on PR open
-  when the target has no valid review.yml — and from the sweep) pairs a PR with open PRs into the same target and
+- Stacking (`worker/src/stack/`): always on when AI is configured, with `STACKING_DEFAULTS` (`stack/defaults.ts`). A `stack` run on `MERGE_RESOLUTION` (after the review finishes — or on PR open
+  where no agent is invited — and from the sweep) pairs a PR with open PRs into the same target and
   recently landed ones: textual check (`planMerge(headA, headB)`), Clef decides over the review's one-liners (paths without one)
   (`STACK_QUESTIONS`, `routeDecision`), the reasoning model explains related pairs from diffs (and decides when Clef
   is unsure) → one `pr_edges` row per pair. `buildTree` (pure) derives parents, waits-on, must-account-for, cycles.
@@ -115,7 +118,7 @@ and better-auth. Git storage is **Cloudflare Artifacts**: one Artifacts repo per
   `choyiny/gitorange`): push the branch, then open it with the `gitorange_create_pull_request` MCP tool
   (server `xy-space-gitorange`) and follow it with `gitorange_get_pull_request`. GitHub (`github` remote) is a
   mirror for CodeQL and Dependabot; keep it in sync with `git push github main` after merges. Never approve
-  auto-merge review flags on someone's behalf.
+  pull requests or review findings on someone's behalf.
 
 ## Package Manager
 

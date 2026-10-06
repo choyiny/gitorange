@@ -10,7 +10,7 @@ import type { GitService } from '../git/service';
 import type { DrizzleDB } from '../db/middleware';
 import type { RefUpdate } from '../actions/trigger';
 import { findRepoById, gitFor } from '../lib/repos';
-import { ensureClassification } from '../review/classify';
+import { ensureHeadReview } from '../review/head';
 import { ensureStacking } from '../stack/discover';
 import {
   cancelStale,
@@ -112,11 +112,23 @@ export async function executeSweep(
         const git = gitFor(env, repo as Repository);
         const shas = await tips(git, pr as PullRequest);
         if (!shas) return false;
-        // New commits on the PR, or a new review.yml on its target: review for auto-merge.
-        await ensureClassification(env, db, git, pr as PullRequest, shas);
-        // The target moved (a PR landed) or the head moved: discovery runs again for new pairs.
-        await ensureStacking(env, db, git, pr as PullRequest, shas);
-        return true;
+        // Each in its own try: one failing never skips the other.
+        let ok = true;
+        try {
+          // New commits on the PR: its agents review them.
+          await ensureHeadReview(env, db, pr as PullRequest, shas);
+        } catch (e) {
+          console.error('[review] sweep: review not started', pr.id, e);
+          ok = false;
+        }
+        try {
+          // The target moved (a PR landed) or the head moved: discovery runs again for new pairs.
+          await ensureStacking(env, db, git, pr as PullRequest, shas);
+        } catch (e) {
+          console.error('[stack] sweep: discovery not started', pr.id, e);
+          ok = false;
+        }
+        return ok;
       } catch (e) {
         console.error('[review] sweep failed', pr.id, e);
         return false;

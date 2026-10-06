@@ -1,12 +1,13 @@
 import { OpenAPIHono, createRoute, z } from '@hono/zod-openapi';
 import { and, desc, eq, isNull } from 'drizzle-orm';
-import { repositories, teams } from '../db/app.schema';
+import { repositories, reviewerStatuses, teams } from '../db/app.schema';
 import { users } from '../db/auth.schema';
 import { requireAdmin } from '../auth/guards';
 import { isValidSlug, namespaceTaken } from '../lib/namespaces';
 import { getTeam, teamNamespace, userNamespace, visibleTo } from '../lib/repos';
 import type { AppEnv } from '../variables';
 import { serializeRepo } from './repos-router';
+import { recentReviews } from '../review/reviewers';
 import { agentSchema, publicUserSchema, repoSchema } from './schemas';
 import {
   agentByUserId,
@@ -136,6 +137,18 @@ const namespaceRoute = createRoute({
           .extend({
             /** Repositories it is invited to that the viewer can see. */
             invitedTo: z.array(repoSchema),
+            /** Its latest reviews in repositories the viewer can see, newest first. */
+            recentReviews: z.array(
+              z.object({
+                repository: z.string(),
+                number: z.number(),
+                title: z.string(),
+                headSha: z.string(),
+                agentSha: z.string().nullable(),
+                status: z.enum(reviewerStatuses),
+                createdAt: z.string(),
+              })
+            ),
           })
           .nullable(),
       }),
@@ -205,6 +218,7 @@ namespacesRouter.openapi(namespaceRoute, async (c) => {
         invitedTo: (await invitedRepositories(db, agentRow.userId, viewer)).map(
           (r) => serializeRepo(r.repo, r.namespace)
         ),
+        recentReviews: await recentReviews(db, agentRow.userId, viewer),
       }
     : null;
   return c.json(

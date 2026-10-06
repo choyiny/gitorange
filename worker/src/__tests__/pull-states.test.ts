@@ -13,7 +13,7 @@ import { schema } from '../db/schema';
 import { checkVerdict } from '../review/checks';
 import { ensureResolution } from '../merge/auto';
 import { findRepoById, gitFor } from '../lib/repos';
-import type { ClassifierAnswer, PullRequest } from '../db/app.schema';
+import type { PullRequest } from '../db/app.schema';
 import {
   addMember,
   bootstrapAdmin,
@@ -22,6 +22,15 @@ import {
   settle,
 } from './helpers/app';
 import { commitPaths } from './helpers/seed';
+import {
+  AGENT_MD,
+  agentModels,
+  appRepo,
+  invitedAgent,
+  openPull,
+  runReviews,
+  startReview,
+} from './helpers/reviews';
 import { pullStates } from '../pulls/signals';
 import { recordStates, eventsFor, latestStates } from '../pulls/events';
 import {
@@ -30,9 +39,6 @@ import {
   settleStates,
 } from '../pulls/settle';
 import type { DrizzleDB } from '../db/middleware';
-import { executeClassification } from '../review/classify';
-import type { StepRunner } from '../merge/resolution';
-import type { ReviewModels } from '../review/models';
 
 const node = (over: Partial<TreeNode> = {}): TreeNode => ({
   number: 3,
@@ -65,7 +71,7 @@ describe('pull request state rules', () => {
   it('puts agent work before human review before waiting', () => {
     const reasons: Reason[] = [
       { kind: 'checks_running', check: null, started: true },
-      { kind: 'flags_pending', count: 2 },
+      { kind: 'needs_approval' },
       { kind: 'check_failed', run_number: 7, check: null },
     ];
     expect(decideState(reasons)).toEqual({
@@ -93,26 +99,9 @@ describe('pull request state rules', () => {
     };
     expect(reasonState(must)).toBe('agent_followup');
     expect(decideState([must]).state).toBe('agent_followup');
-    expect(decideState([must, { kind: 'review_running' }]).state).toBe(
-      'agent_followup'
-    );
-  });
-
-  it('asks the author to fix their own review.yml, and a person to fix the target’s', () => {
     expect(
-      reasonState({
-        kind: 'review_policy_invalid',
-        where: 'pull_request',
-        error: 'x',
-      })
+      decideState([must, { kind: 'agent_reviewing', agent: null }]).state
     ).toBe('agent_followup');
-    expect(
-      reasonState({
-        kind: 'review_policy_invalid',
-        where: 'target',
-        error: 'x',
-      })
-    ).toBe('human_review');
   });
 
   it('lists every reason kind', () => {
@@ -123,17 +112,34 @@ describe('pull request state rules', () => {
         'checks_running',
         'conflicts_unresolved',
         'cycle',
-        'flags_pending',
         'must_account_for',
         'rebase_onto',
         'resolution_running',
-        'review_failed',
-        'review_policy_invalid',
-        'review_running',
         'stack_checking',
         'stacked_on',
         'waits_on',
+        'agent_reviewing',
+        'agent_flagged',
+        'agent_changes_requested',
+        'agent_review_failed',
+        'needs_approval',
       ].sort()
+    );
+  });
+
+  it("puts agents' review reasons in whose move they make", () => {
+    expect(
+      reasonState({ kind: 'agent_changes_requested', agent: 'a', changes: [] })
+    ).toBe('agent_followup');
+    expect(reasonState({ kind: 'agent_flagged', agent: 'a', flags: [] })).toBe(
+      'human_review'
+    );
+    expect(
+      reasonState({ kind: 'agent_review_failed', agent: null, error: null })
+    ).toBe('human_review');
+    expect(reasonState({ kind: 'needs_approval' })).toBe('human_review');
+    expect(reasonState({ kind: 'agent_reviewing', agent: null })).toBe(
+      'waiting'
     );
   });
 
@@ -181,7 +187,7 @@ describe('check verdict', () => {
     workflowPath,
     event,
   });
-  it('without review.yml: a failed run fails, a running one waits, none is fine', () => {
+  it('by default: a failed run fails, a running one waits, none is fine', () => {
     expect(checkVerdict([], [], 'any')).toBeNull();
     expect(
       checkVerdict([run(3, 'in_progress', null)], [], 'any')
@@ -430,40 +436,8 @@ describe('non-text conflicts', () => {
   });
 });
 
-const step = {
-  do: async (_name: string, a: unknown, b?: unknown) =>
-    ((b ?? a) as () => Promise<unknown>)(),
-} as unknown as StepRunner;
-
-/** Review models that flag `data_model` when `flag` is set. */
-function reviewModels(flag = false): ReviewModels {
-  return {
-    summarize: async (f) => `Changes ${f.path}.`,
-    classify: async (): Promise<Record<string, ClassifierAnswer>> => ({
-      data_model: { type: 'noul', value: flag ? 0.9 : 0.05 },
-    }),
-    investigate: async () => ({
-      detail: 'x',
-      diagram: null,
-      snippets: [],
-      paths: [],
-    }),
-  };
-}
-
-const FLAGGING = `
-model: clef
-checks:
-  require: all
-human_review:
-  questions:
-    data_model:
-      ask: Does this change alter how data is stored?
-      above: 0.3
-`;
-
-/** A repository whose main has `policy` (or none), with helpers to open PRs and read their states. */
-async function statesRepo(policy: string | null) {
+/** A repository with helpers to open PRs, approve their heads, and read their states. */
+async function statesRepo() {
   const t = makeEnv({ actions: true });
   const admin = await bootstrapAdmin(t);
   await call(t, '/api/repos', {
@@ -471,10 +445,7 @@ async function statesRepo(policy: string | null) {
     json: { name: 'app', visibility: 'private' },
   });
   const repo = [...t.fake.repos.values()][0];
-  const files = {
-    'src/app.ts': 'export const a = 1;\n',
-    ...(policy ? { '.gitorange/review.yml': policy } : {}),
-  };
+  const files = { 'src/app.ts': 'export const a = 1;\n' };
   const main = await commitPaths(repo, 'main', files, 'base');
   const db = drizzle(t.env.DB, { schema });
   const repoId = (await t.env.DB.prepare('SELECT id FROM repositories').first<{
@@ -508,11 +479,13 @@ async function statesRepo(policy: string | null) {
       prs.map((p) => [p.number, map.get(p.id) ?? null])
     ) as Record<number, { state: string; reasons: { kind: string }[] } | null>;
   }
-  async function runReviews(models: ReviewModels) {
-    for (const r of t.actions.resolutions) {
-      const id = (r.params as { classificationId?: string }).classificationId;
-      if (id) await executeClassification({ env: t.env, db, step, models }, id);
-    }
+  /** A person approves pull request `n`'s current head (without agents, a PR needs it to be Ready). */
+  async function approve(n: number) {
+    const res = await call(t, `/api/repos/octocat/app/pulls/${n}/approval`, {
+      cookie: admin,
+      method: 'POST',
+    });
+    expect(res.status).toBe(200);
     await settle(t);
   }
   const head = (branch: string) => repo.refs.get(`refs/heads/${branch}`)!;
@@ -537,7 +510,7 @@ async function statesRepo(policy: string | null) {
     repoId,
     open,
     states,
-    runReviews,
+    approve,
     head,
     run,
     files,
@@ -545,9 +518,10 @@ async function statesRepo(policy: string | null) {
 }
 
 describe('pullStates', () => {
-  it('without review.yml: failed checks need the agent, running ones wait, none is ready', async () => {
-    const s = await statesRepo(null);
+  it('without agents: failed checks need the agent, running ones wait, none is ready', async () => {
+    const s = await statesRepo();
     await s.open('one', { 'a.txt': 'a\n' });
+    await s.approve(1);
     expect((await s.states())[1]).toEqual({ state: 'ready', reasons: [] });
     await s.run(1, 'one', 'in_progress', null);
     expect((await s.states())[1]).toEqual({
@@ -562,8 +536,9 @@ describe('pullStates', () => {
   });
 
   it('a successful re-run clears check_failed', async () => {
-    const s = await statesRepo(null);
+    const s = await statesRepo();
     await s.open('one', { 'a.txt': 'a\n' });
+    await s.approve(1);
     await s.run(1, 'one', 'completed', 'failure');
     expect((await s.states())[1]?.state).toBe('agent_followup');
     // Re-running a run inserts a new run for the same commit, workflow and event.
@@ -571,86 +546,10 @@ describe('pullStates', () => {
     expect((await s.states())[1]).toEqual({ state: 'ready', reasons: [] });
   });
 
-  it('ignores checks that review.yml doesn’t require', async () => {
-    const s = await statesRepo('checks:\n  require: none\n');
-    await s.open('one', { 'a.txt': 'a\n' });
-    // Otherwise the clean review would land it on its own.
-    await call(s.t, '/api/repos/octocat/app/pulls/1/auto-merge', {
-      cookie: s.admin,
-      method: 'PUT',
-      json: { enabled: false },
-    });
-    await s.runReviews(reviewModels());
-    await s.run(1, 'one', 'completed', 'failure');
-    expect((await s.states())[1]).toEqual({ state: 'ready', reasons: [] });
-  });
-
-  it('follows the review: running waits, flags need a person, changes requested need the agent', async () => {
-    const s = await statesRepo(FLAGGING);
-    await s.open('one', { 'migrations/0001.sql': 'x\n' });
-    expect((await s.states())[1]?.reasons).toContainEqual({
-      kind: 'review_running',
-    });
-    await s.runReviews(reviewModels(true));
-    await s.run(1, 'one', 'completed', 'success');
-    expect((await s.states())[1]).toEqual({
-      state: 'human_review',
-      reasons: [{ kind: 'flags_pending', count: 1 }],
-    });
-    const flag = (await s.t.env.DB.prepare(
-      'SELECT id FROM pr_review_flags'
-    ).first<{ id: string }>())!;
-    await call(
-      s.t,
-      `/api/repos/octocat/app/pulls/1/review/flags/${flag.id}/request-changes`,
-      {
-        cookie: s.admin,
-        json: { note: 'Add a down migration.' },
-      }
-    );
-    await settle(s.t);
-    expect((await s.states())[1]).toEqual({
-      state: 'agent_followup',
-      reasons: [{ kind: 'changes_requested', flags: 1 }],
-    });
-  });
-
-  it('a failed review needs a person; an invalid review.yml in the PR needs the agent', async () => {
-    const s = await statesRepo(FLAGGING);
-    await s.open('one', { 'a.txt': 'a\n' });
-    await s.runReviews({
-      ...reviewModels(),
-      classify: async () => {
-        throw new Error('down');
-      },
-    });
-    expect((await s.states())[1]?.state).toBe('human_review');
-    expect((await s.states())[1]?.reasons[0]).toMatchObject({
-      kind: 'review_failed',
-    });
-    await s.open('two', {
-      '.gitorange/review.yml': 'checks:\n  require: sometimes\n',
-    });
-    await s.runReviews(reviewModels());
-    expect((await s.states())[2]?.reasons[0]).toMatchObject({
-      kind: 'review_policy_invalid',
-      where: 'pull_request',
-    });
-    expect((await s.states())[2]?.state).toBe('agent_followup');
-  });
-
-  it('an invalid review.yml on the target needs a person', async () => {
-    const s = await statesRepo('checks:\n  require: sometimes\n');
-    await s.open('one', { 'a.txt': 'a\n' });
-    expect((await s.states())[1]).toMatchObject({
-      state: 'human_review',
-      reasons: [{ kind: 'review_policy_invalid', where: 'target' }],
-    });
-  });
-
   it('reads AI resolution at the current commits: running waits, failed needs the agent', async () => {
-    const s = await statesRepo(null);
+    const s = await statesRepo();
     await s.open('one', { 'a.txt': 'a\n' });
+    await s.approve(1);
     const pr = (await s.t.env.DB.prepare('SELECT id FROM pull_requests').first<{
       id: string;
     }>())!;
@@ -688,8 +587,9 @@ describe('pullStates', () => {
   });
 
   it('ignores resolutions for other commits and superseded ones', async () => {
-    const s = await statesRepo(null);
+    const s = await statesRepo();
     await s.open('one', { 'a.txt': 'a\n' });
+    await s.approve(1);
     const pr = (await s.t.env.DB.prepare('SELECT id FROM pull_requests').first<{
       id: string;
     }>())!;
@@ -710,10 +610,14 @@ describe('pullStates', () => {
   });
 
   it('must account for needs the agent', async () => {
-    // Checks are required and never run, so neither PR lands on its own.
-    const s = await statesRepo('checks:\n  require: all\n');
+    const s = await statesRepo();
     await s.open('one', { 'a.txt': 'a\n' });
     await s.open('two', { 'b.txt': 'b\n' });
+    await s.approve(1);
+    await s.approve(2);
+    // Checks are still running on both.
+    await s.run(1, 'one', 'in_progress', null);
+    await s.run(2, 'two', 'in_progress', null);
     const ids = (
       await s.t.env.DB.prepare(
         'SELECT id FROM pull_requests ORDER BY number'
@@ -725,7 +629,6 @@ describe('pullStates', () => {
     )
       .bind(s.repoId, ids[0].id, ids[1].id, s.head('one'), s.head('two'))
       .run();
-    await s.runReviews(reviewModels());
     const st = await s.states();
     // The agent has to account for #1 (and rebase onto it), whatever the checks are doing.
     expect(st[2]).toEqual({
@@ -744,23 +647,24 @@ describe('pullStates', () => {
           branch: 'one',
           why: 'Needs a check.',
         },
-        { kind: 'checks_running', check: null, started: false },
+        { kind: 'checks_running', check: null, started: true },
         { kind: 'stacked_on', pr: 1 },
       ],
     });
     expect(st[1]).toEqual({
       state: 'waiting',
-      reasons: [{ kind: 'checks_running', check: null, started: false }],
+      reasons: [{ kind: 'checks_running', check: null, started: true }],
     });
   });
 
   it("without AI review configured, doesn't wait on a review or stack check that never runs", async () => {
-    const s = await statesRepo('checks:\n  require: none\n');
+    const s = await statesRepo();
     await s.open('one', { 'a.txt': 'a\n' });
     await s.open('two', { 'b.txt': 'b\n' });
     const prs = (await s.db.query.pullRequests.findMany({
       orderBy: (p, { asc }) => [asc(p.number)],
     })) as PullRequest[];
+    await s.approve(1);
     // A pair whose stacking check hasn't run.
     await s.t.env.DB.prepare(
       `INSERT INTO pr_edges (id, repository_id, land_target, pr_a_id, pr_b_id, a_head, b_head, stage, created_at, updated_at)
@@ -771,10 +675,7 @@ describe('pullStates', () => {
     const found = await findRepoById(s.db, s.repoId);
     const git = gitFor(s.t.env, found!.repo);
     const on = (await pullStates(s.db, git, s.repoId, prs)).get(prs[0].id);
-    expect(on?.reasons.map((r) => r.kind)).toEqual([
-      'review_running',
-      'stack_checking',
-    ]);
+    expect(on?.reasons.map((r) => r.kind)).toEqual(['stack_checking']);
     const off = (
       await pullStates(s.db, git, s.repoId, prs, { reviewConfigured: false })
     ).get(prs[0].id);
@@ -782,7 +683,7 @@ describe('pullStates', () => {
   });
 
   it('has no state for a PR whose branch is gone, nor for closed PRs', async () => {
-    const s = await statesRepo(null);
+    const s = await statesRepo();
     await s.open('one', { 'a.txt': 'a\n' });
     s.repo.refs.delete('refs/heads/one');
     expect((await s.states())[1]).toBeNull();
@@ -791,7 +692,7 @@ describe('pullStates', () => {
 
 describe('recording state changes', () => {
   async function onePr() {
-    const s = await statesRepo(null);
+    const s = await statesRepo();
     await s.open('one', { 'a.txt': 'a\n' });
     const pr = (await s.db.query.pullRequests.findFirst())!;
     return { ...s, pr };
@@ -799,7 +700,7 @@ describe('recording state changes', () => {
   const ready = { state: 'ready' as const, reasons: [] };
   const waiting = {
     state: 'waiting' as const,
-    reasons: [{ kind: 'review_running' as const }],
+    reasons: [{ kind: 'agent_reviewing' as const, agent: null }],
   };
 
   it('records a change once, and nothing when unchanged', async () => {
@@ -932,7 +833,7 @@ describe('recording state changes', () => {
 
 describe('settling after a MERGE_RESOLUTION Workflow', () => {
   it('never throws when the payload lookup fails', async () => {
-    const s = await statesRepo(null);
+    const s = await statesRepo();
     const broken = new Proxy(s.db, {
       get: (target, key) =>
         key === 'select'
@@ -947,7 +848,7 @@ describe('settling after a MERGE_RESOLUTION Workflow', () => {
   });
 
   it("settles the payload PR's target branch only", async () => {
-    const s = await statesRepo(null);
+    const s = await statesRepo();
     await s.open('one', { 'a.txt': 'a\n' });
     // A second target branch with its own PR.
     s.repo.refs.set('refs/heads/release', s.head('main'));
@@ -958,6 +859,7 @@ describe('settling after a MERGE_RESOLUTION Workflow', () => {
     });
     expect(res.status).toBe(201);
     await settle(s.t);
+    await s.approve(2);
     const [one, fix] = await s.db.query.pullRequests.findMany({
       orderBy: (p, { asc }) => [asc(p.number)],
     });
@@ -994,7 +896,7 @@ describe('settling after a MERGE_RESOLUTION Workflow', () => {
 
 describe('state changes on the timeline', () => {
   it('records the opened PR’s state, and a change after an API mutation, once', async () => {
-    const s = await statesRepo(null);
+    const s = await statesRepo();
     await s.open('one', { 'a.txt': 'a\n' });
     const kinds = async () =>
       (
@@ -1002,20 +904,22 @@ describe('state changes on the timeline', () => {
           "SELECT state FROM pr_events WHERE kind = 'state_changed' ORDER BY computed_at"
         ).all<{ state: string }>()
       ).results.map((r) => r.state);
-    expect(await kinds()).toEqual(['ready']);
+    expect(await kinds()).toEqual(['human_review']);
+    await s.approve(1);
+    expect(await kinds()).toEqual(['human_review', 'ready']);
     await s.run(1, 'one', 'completed', 'failure');
     await call(s.t, '/api/repos/octocat/app/pulls/1/comments', {
       cookie: s.admin,
       json: { body: 'CI is red.' },
     });
     await settle(s.t);
-    expect(await kinds()).toEqual(['ready', 'agent_followup']);
+    expect(await kinds()).toEqual(['human_review', 'ready', 'agent_followup']);
     await call(s.t, '/api/repos/octocat/app/pulls/1/comments', {
       cookie: s.admin,
       json: { body: 'Still red.' },
     });
     await settle(s.t);
-    expect(await kinds()).toEqual(['ready', 'agent_followup']);
+    expect(await kinds()).toEqual(['human_review', 'ready', 'agent_followup']);
   });
 });
 
@@ -1036,9 +940,11 @@ async function independentPair(s: Awaited<ReturnType<typeof statesRepo>>) {
 
 describe('pull request states over the API', () => {
   it('shows each open PR’s state in the list, and its events on the PR', async () => {
-    const s = await statesRepo(null);
+    const s = await statesRepo();
     await s.open('one', { 'a.txt': 'a\n' });
     await s.open('two', { 'b.txt': 'b\n' });
+    await s.approve(1);
+    await s.approve(2);
     await independentPair(s);
     await s.run(1, 'one', 'completed', 'failure');
     const list = (await (
@@ -1057,8 +963,19 @@ describe('pull request states over the API', () => {
       events: { kind: string; state: string; data: unknown }[];
     };
     expect(detail.pullState).toEqual({ state: 'ready', reasons: [] });
-    // Recorded when it opened, before stacking had compared it with #1.
+    // Recorded when it opened and when it was approved, before stacking had compared it with #1.
     expect(detail.events).toMatchObject([
+      {
+        kind: 'state_changed',
+        state: 'human_review',
+        data: {
+          reasons: [
+            { kind: 'needs_approval' },
+            { kind: 'stack_checking', prs: [] },
+          ],
+        },
+      },
+      { kind: 'approved' },
       {
         kind: 'state_changed',
         state: 'waiting',
@@ -1068,9 +985,11 @@ describe('pull request states over the API', () => {
   });
 
   it('filters by pull state, open PRs only, and rejects unknown values', async () => {
-    const s = await statesRepo(null);
+    const s = await statesRepo();
     await s.open('one', { 'a.txt': 'a\n' });
     await s.open('two', { 'b.txt': 'b\n' });
+    await s.approve(1);
+    await s.approve(2);
     await independentPair(s);
     await s.run(1, 'one', 'completed', 'failure');
     const numbers = async (q: string) =>
@@ -1101,8 +1020,10 @@ describe('pull request states over the API', () => {
   });
 
   it('labels tree nodes with their state', async () => {
-    const s = await statesRepo('checks:\n  require: none\n');
+    const s = await statesRepo();
     await s.open('one', { 'a.txt': 'a\n' });
+    await s.approve(1);
+    await s.run(1, 'one', 'in_progress', null);
     const tree = (await (
       await call(s.t, '/api/repos/octocat/app/pulls/tree', { cookie: s.admin })
     ).json()) as {
@@ -1110,11 +1031,11 @@ describe('pull request states over the API', () => {
         nodes: { number: number; pullState: { state: string } | null }[];
       }[];
     };
-    expect(tree.targets[0].nodes[0].pullState?.state).toBe('waiting'); // review still running
+    expect(tree.targets[0].nodes[0].pullState?.state).toBe('waiting'); // checks still running
   });
 
   it('hides a private repository’s states', async () => {
-    const s = await statesRepo(null);
+    const s = await statesRepo();
     await s.open('one', { 'a.txt': 'a\n' });
     const bob = await addMember(s.t, s.admin, 'bob');
     expect(
@@ -1129,8 +1050,9 @@ describe('pull request states over the API', () => {
 
 describe('Approvals', () => {
   it('lists human_review PRs only to people who can merge', async () => {
-    const s = await statesRepo(null);
+    const s = await statesRepo();
     await s.open('one', { 'a.txt': 'a\n' });
+    await s.approve(1);
     const pr = (await s.db.query.pullRequests.findFirst())!;
     await recordStates(
       s.db,
@@ -1149,7 +1071,7 @@ describe('Approvals', () => {
       items: {
         pull: { number: number };
         pullState: { state: string; reasons: unknown[] } | null;
-        flags: unknown[];
+        agents: unknown[];
       }[];
       count: number;
     };
@@ -1157,7 +1079,7 @@ describe('Approvals', () => {
     expect(items).toMatchObject([
       {
         pull: { number: 1 },
-        flags: [],
+        agents: [],
         pullState: {
           state: 'human_review',
           reasons: [{ kind: 'cycle', prs: [2] }],
@@ -1171,8 +1093,9 @@ describe('Approvals', () => {
   });
 
   it("doesn't list conflicts AI can't resolve (the agent's job), only failed AI resolutions", async () => {
-    const s = await statesRepo(null);
+    const s = await statesRepo();
     await s.open('one', { 'a.txt': 'a\n' });
+    await s.approve(1);
     const pr = (await s.db.query.pullRequests.findFirst())!;
     const insert = (model: string, at: number) =>
       s.t.env.DB.prepare(
@@ -1222,5 +1145,179 @@ describe('must account for drives agent followup (milestone 2b)', () => {
     expect(stateOf(must())).toBe('agent_followup');
     expect(stateOf(must({ accounted: true }))).toBe('ready'); // still stacked on #1: informational
     expect(stateOf(must({ dismissed: true }))).toBe('ready');
+  });
+});
+
+describe('review reasons', () => {
+  it('waits on agents, then names their flags, change requests and failures', async () => {
+    const { t, admin, repo } = await appRepo();
+    await invitedAgent(t, admin, 'secagent', AGENT_MD());
+    await invitedAgent(t, admin, 'dataagent', AGENT_MD());
+    await openPull(t, admin, repo, { 'src/b.ts': 'b\n' });
+    const state = async () =>
+      (
+        (await (
+          await call(t, '/api/repos/octocat/app/pulls/1', { cookie: admin })
+        ).json()) as {
+          pullState: { state: string; reasons: Record<string, unknown>[] };
+        }
+      ).pullState;
+    expect(await state()).toMatchObject({
+      state: 'waiting',
+      reasons: [{ kind: 'agent_reviewing', agent: null }],
+    });
+    await startReview(t);
+    await runReviews(
+      t,
+      agentModels({
+        failReview: ['dataagent'],
+        review: () => ({
+          verdict: 'findings',
+          summary: '',
+          findings: [
+            {
+              kind: 'change_requested',
+              title: 'Name it',
+              detail: 'Rename b.',
+              changes: [],
+              diagram: null,
+              snippets: [],
+              paths: [],
+            },
+            {
+              kind: 'needs_person',
+              title: 'Export',
+              detail: 'Exports b.',
+              changes: [],
+              diagram: null,
+              snippets: [],
+              paths: [],
+            },
+          ],
+        }),
+      }).models
+    );
+    const s = await state();
+    expect(s.state).toBe('agent_followup');
+    expect(s.reasons).toEqual(
+      expect.arrayContaining([
+        {
+          kind: 'agent_changes_requested',
+          agent: 'secagent',
+          changes: [
+            { id: expect.any(String), title: 'Name it', detail: 'Rename b.' },
+          ],
+        },
+        {
+          kind: 'agent_flagged',
+          agent: 'secagent',
+          flags: [{ id: expect.any(String), title: 'Export' }],
+        },
+        {
+          kind: 'agent_review_failed',
+          agent: 'dataagent',
+          error: 'The review model failed: model down',
+        },
+      ])
+    );
+    const summary = async () =>
+      (
+        (await (
+          await call(t, '/api/repos/octocat/app/pulls', { cookie: admin })
+        ).json()) as {
+          pulls: { review: { state: string; flags: number } | null }[];
+        }
+      ).pulls[0].review;
+    expect(await summary()).toEqual({ state: 'failed', flags: 1 });
+    // A new head commit hasn't been reviewed: the summary follows it.
+    await commitPaths(
+      repo,
+      'feature',
+      { 'src/app.ts': 'export const a = 1;\n', 'src/b.ts': 'b2\n' },
+      'Again'
+    );
+    expect(await summary()).toEqual({ state: 'reviewing', flags: 0 });
+  });
+
+  it('needs a person when no agent is invited, and is ready once they approve', async () => {
+    const { t, admin, repo } = await appRepo();
+    await openPull(t, admin, repo, { 'src/b.ts': 'b\n' });
+    const state = async () =>
+      (
+        (await (
+          await call(t, '/api/repos/octocat/app/pulls/1', { cookie: admin })
+        ).json()) as {
+          pullState: { state: string; reasons: { kind: string }[] };
+        }
+      ).pullState;
+    expect(await state()).toEqual({
+      state: 'human_review',
+      reasons: [{ kind: 'needs_approval' }],
+    });
+    await call(t, '/api/repos/octocat/app/pulls/1/approval', {
+      cookie: admin,
+      method: 'POST',
+    });
+    expect(await state()).toEqual({ state: 'ready', reasons: [] });
+  });
+
+  it('lists the review summary per pull request', async () => {
+    const { t, admin, repo } = await appRepo();
+    await openPull(t, admin, repo, { 'src/b.ts': 'b\n' });
+    const list = (await (
+      await call(t, '/api/repos/octocat/app/pulls', { cookie: admin })
+    ).json()) as {
+      pulls: { review: { state: string; flags: number } | null }[];
+    };
+    expect(list.pulls[0].review).toEqual({ state: 'needs_approval', flags: 0 });
+  });
+
+  it('reads the gate itself for a PR missing from the given inputs', async () => {
+    const { t, admin, repo } = await appRepo();
+    await openPull(t, admin, repo, { 'src/b.ts': 'b\n' });
+    const db = drizzle(t.env.DB, { schema });
+    const prs = (await db.query.pullRequests.findMany()) as PullRequest[];
+    const found = await findRepoById(db, prs[0].repositoryId);
+    const states = await pullStates(
+      db,
+      gitFor(t.env, found!.repo),
+      prs[0].repositoryId,
+      prs,
+      { reviews: new Map() }
+    );
+    expect(states.get(prs[0].id)?.reasons).toContainEqual({
+      kind: 'needs_approval',
+    });
+  });
+
+  it('reads recorded states without retired reason kinds', async () => {
+    const { t, admin, repo } = await appRepo();
+    await openPull(t, admin, repo, { 'src/b.ts': 'b\n' });
+    const pr = (await t.env.DB.prepare(
+      'SELECT id, repository_id AS r FROM pull_requests'
+    ).first<{
+      id: string;
+      r: string;
+    }>())!;
+    await t.env.DB.prepare(
+      `INSERT INTO pr_events (id, repository_id, pull_request_id, kind, state, data, computed_at, created_at)
+       VALUES ('e-old', ?, ?, 'state_changed', 'human_review', ?, 99999999999999, 99999999999999)`
+    )
+      .bind(
+        pr.r,
+        pr.id,
+        JSON.stringify({
+          reasons: [
+            { kind: 'flags_pending', count: 1 },
+            { kind: 'needs_approval' },
+          ],
+        })
+      )
+      .run();
+    const db = drizzle(t.env.DB, { schema });
+    expect((await latestStates(db, [pr.id])).get(pr.id)).toEqual({
+      state: 'human_review',
+      reasons: [{ kind: 'needs_approval' }],
+    });
   });
 });

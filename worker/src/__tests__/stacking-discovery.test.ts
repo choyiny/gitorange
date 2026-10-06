@@ -3,7 +3,6 @@ import { describe, expect, it } from 'vitest';
 import { drizzle } from 'drizzle-orm/d1';
 import { schema } from '../db/schema';
 import type { StepRunner } from '../merge/resolution';
-import { executeClassification } from '../review/classify';
 import { autoResolveConflicts } from '../merge/auto';
 import type { Repository } from '../db/app.schema';
 import { executeStacking, type StackParams } from '../stack/discover';
@@ -12,14 +11,14 @@ import { recordEvent } from '../pulls/events';
 import type { Relation } from '../stack/models';
 import { addMember, call, settle } from './helpers/app';
 import { commitPaths } from './helpers/seed';
+import { runReviews } from './helpers/reviews';
 import {
-  POLICY,
   step,
-  reviewModels,
+  holdReviews,
   stackModels,
   ran,
   drain,
-  repoWithPolicy,
+  repoWithAgent,
   pushTo,
   events,
   edges,
@@ -30,7 +29,7 @@ import {
 
 describe('stacking discovery', () => {
   it('finds that #2 must account for #1 (the #28/#29 case)', async () => {
-    const { t, open } = await repoWithPolicy();
+    const { t, open } = await repoWithAgent();
     const { models, calls } = stackModels({
       related: () => true,
       relation: () => MUST,
@@ -57,7 +56,7 @@ describe('stacking discovery', () => {
   });
 
   it('treats a textual conflict as related even when Clef says unrelated', async () => {
-    const { t, open } = await repoWithPolicy();
+    const { t, open } = await repoWithAgent();
     const { models, calls } = stackModels();
     await open('one', { 'notes.txt': 'one\nTWO\nthree\n' }, 'One');
     await open('two', { 'notes.txt': 'one\n2\nthree\n' }, 'Two');
@@ -78,7 +77,7 @@ describe('stacking discovery', () => {
   };
 
   it('keeps Clef’s confident decision; the reasoning model only writes the reason', async () => {
-    const sure = await repoWithPolicy();
+    const sure = await repoWithAgent();
     const confident = stackModels({
       related: () => true,
       relation: () => BUILDS,
@@ -97,7 +96,7 @@ describe('stacking discovery', () => {
   });
 
   it('lets the reasoning model decide only when Clef is unsure', async () => {
-    const unsure = await repoWithPolicy();
+    const unsure = await repoWithAgent();
     const hesitant = stackModels({
       related: () => true,
       relation: () => BUILDS,
@@ -114,7 +113,7 @@ describe('stacking discovery', () => {
   });
 
   it('records unrelated pairs as independent without a deep dive', async () => {
-    const { t, open } = await repoWithPolicy();
+    const { t, open } = await repoWithAgent();
     const { models, calls } = stackModels();
     await open('one', { 'a.txt': 'a\n' }, 'One');
     await open('two', { 'b.txt': 'b\n' }, 'Two');
@@ -126,7 +125,7 @@ describe('stacking discovery', () => {
   });
 
   it('re-checks a pair only when a head moves', async () => {
-    const { t, open, repo, files } = await repoWithPolicy();
+    const { t, open, repo, files } = await repoWithAgent();
     const { models, calls } = stackModels();
     await open('one', { 'a.txt': 'a\n' }, 'One');
     await open('two', { 'b.txt': 'b\n' }, 'Two');
@@ -153,7 +152,7 @@ describe('stacking discovery', () => {
   });
 
   it('never lets a stale run overwrite a pair a newer run re-claimed', async () => {
-    const { t, open } = await repoWithPolicy();
+    const { t, open } = await repoWithAgent();
     const db = drizzle(t.env.DB, { schema });
     const newer = 'f'.repeat(40);
     const { models } = stackModels({
@@ -173,15 +172,7 @@ describe('stacking discovery', () => {
     await open('one', { 'a.txt': 'a\n' }, 'One');
     await open('two', { 'b.txt': 'b\n' }, 'Two');
     // Run the reviews, then only #1's stack run (the stale one).
-    await settle(t);
-    for (const r of [...t.actions.resolutions]) {
-      const id = (r.params as { classificationId?: string }).classificationId;
-      if (id)
-        await executeClassification(
-          { env: t.env, db, step, models: reviewModels },
-          id
-        );
-    }
+    await runReviews(t, holdReviews);
     const run = t.actions.resolutions.find(
       (r) => (r.params as { stack?: StackParams }).stack
     )!;
@@ -201,7 +192,7 @@ describe('stacking discovery', () => {
   });
 
   it('marks a pair failed when a model fails, and never blocks others', async () => {
-    const { t, open } = await repoWithPolicy();
+    const { t, open } = await repoWithAgent();
     const { models } = stackModels({ failTriage: true });
     await open('one', { 'a.txt': 'a\n' }, 'One');
     await open('two', { 'b.txt': 'b\n' }, 'Two');
@@ -210,7 +201,7 @@ describe('stacking discovery', () => {
   });
 
   it('finds a dependency on a PR that already landed', async () => {
-    const { t, admin, open } = await repoWithPolicy();
+    const { t, admin, open } = await repoWithAgent();
     const { models, calls } = stackModels({
       related: () => true,
       relation: (i) =>
@@ -222,7 +213,7 @@ describe('stacking discovery', () => {
     await drain(t, models);
     const merged = await call(t, '/api/repos/octocat/app/pulls/1/merge', {
       cookie: admin,
-      json: {},
+      json: { approve: true },
     });
     expect(merged.status).toBe(200);
     await drain(t, models);
@@ -235,7 +226,7 @@ describe('stacking discovery', () => {
   });
 
   it('never lets a run that loaded before a landing undo the landed orientation', async () => {
-    const { t, open } = await repoWithPolicy();
+    const { t, open } = await repoWithAgent();
     const db = drizzle(t.env.DB, { schema });
     const { models } = stackModels();
     await open('one', { 'a.txt': 'a\n' }, 'One');
@@ -270,7 +261,7 @@ describe('stacking discovery', () => {
   });
 
   it('keeps one row per pair when the higher-numbered PR lands first', async () => {
-    const { t, admin, open } = await repoWithPolicy();
+    const { t, admin, open } = await repoWithAgent();
     const { models } = stackModels({
       related: () => true,
       relation: (i) => (i.a.landed ? BUILDS : { ...BUILDS, prerequisite: 'b' }),
@@ -281,7 +272,7 @@ describe('stacking discovery', () => {
     expect(await edges(t)).toMatchObject([{ a: 1, b: 2 }]);
     const merged = await call(t, '/api/repos/octocat/app/pulls/2/merge', {
       cookie: admin,
-      json: {},
+      json: { approve: true },
     });
     expect(merged.status).toBe(200);
     await drain(t, models);
@@ -292,7 +283,7 @@ describe('stacking discovery', () => {
   });
 
   it('keeps each side small enough for a Workflow step result', async () => {
-    const { t, open } = await repoWithPolicy();
+    const { t, open } = await repoWithAgent();
     const { models, calls } = stackModels();
     const many: Record<string, string> = {};
     for (let i = 0; i < 2000; i++)
@@ -332,19 +323,8 @@ describe('stacking discovery', () => {
     ]);
   });
 
-  it('falls back to paths when the review has no summaries', async () => {
-    const { t, open } = await repoWithPolicy(
-      POLICY('limits:\n  max_files: 1\n')
-    );
-    const { models, calls } = stackModels();
-    await open('one', { 'a.txt': 'a\n', 'a2.txt': 'a\n' }, 'One');
-    await open('two', { 'b.txt': 'b\n', 'b2.txt': 'b\n' }, 'Two');
-    await drain(t, models);
-    expect(calls.triaged.at(-1)!.a.summaries).toBe('- a.txt\n- a2.txt');
-  });
-
   it('skips closed PRs and missing branches', async () => {
-    const { t, admin, open, repo } = await repoWithPolicy();
+    const { t, admin, open, repo } = await repoWithAgent();
     const { models, calls } = stackModels();
     await open('one', { 'a.txt': 'a\n' }, 'One');
     await open('two', { 'b.txt': 'b\n' }, 'Two');
@@ -361,14 +341,12 @@ describe('stacking discovery', () => {
   });
 
   it('caps triage at max_open, newest first, but still checks pairs that share a file', async () => {
-    const { t, open } = await repoWithPolicy(
-      POLICY('stacking:\n  max_open: 2\n')
-    );
+    const { t, open } = await repoWithAgent();
     const { models, calls } = stackModels();
     await open('p1', { 'shared.txt': 'one\n' }, 'P1');
     await open('p2', { 'b.txt': 'b\n' }, 'P2');
     await open('p3', { 'shared.txt': 'three\n' }, 'P3');
-    await drain(t, models);
+    await drain(t, models, step, holdReviews, { max_open: 2 });
     const pairs = (await edges(t)).map((e) => `${e.a}-${e.b}`);
     // #3's run sees #2 (within the cap) and #1 (shares shared.txt), so both pairs exist.
     // #1's and #2's runs each see only #3 within the cap; neither shares a file with the other, so 1-2 is never checked.
@@ -378,8 +356,8 @@ describe('stacking discovery', () => {
     );
   });
 
-  it('runs in a repository without review.yml, on paths, from the PR opens', async () => {
-    const { t, open } = await repoWithPolicy(null);
+  it('runs without an agent, on paths, from the PR opens', async () => {
+    const { t, open } = await repoWithAgent(false);
     const { models, calls } = stackModels({
       related: () => true,
       relation: () => MUST,
@@ -387,10 +365,10 @@ describe('stacking discovery', () => {
     await open('setup', SETUP_CHECKS, 'Setup checks');
     await open('usage', USAGE, 'Usage and cost');
     await drain(t, models);
-    // No review ran (there is no review.yml), so discovery started from the opens alone.
+    // No review ran (no agent is invited), so discovery started from the opens alone.
     expect(
       t.actions.resolutions.filter(
-        (s) => (s.params as { classificationId?: string }).classificationId
+        (s) => (s.params as { headReview?: unknown }).headReview
       )
     ).toEqual([]);
     expect(await edges(t)).toMatchObject([
@@ -402,37 +380,11 @@ describe('stacking discovery', () => {
     );
     expect(triage.b.summaries).toContain('- src/usage.ts');
   });
-
-  it('runs with a review.yml that has no stacking section', async () => {
-    const { t, open } = await repoWithPolicy(
-      'model: clef\nchecks:\n  require: all\n'
-    );
-    const { models } = stackModels();
-    await open('one', { 'a.txt': 'a\n' }, 'One');
-    await open('two', { 'b.txt': 'b\n' }, 'Two');
-    await drain(t, models);
-    expect(await edges(t)).toMatchObject([
-      { a: 1, b: 2, stage: 'done', kind: 'independent' },
-    ]);
-  });
-
-  it('ignores a leftover stacking.enabled: false', async () => {
-    const { t, open } = await repoWithPolicy(
-      POLICY('stacking:\n  enabled: false\n')
-    );
-    const { models } = stackModels();
-    await open('one', { 'a.txt': 'a\n' }, 'One');
-    await open('two', { 'b.txt': 'b\n' }, 'Two');
-    await drain(t, models);
-    expect(await edges(t)).toMatchObject([
-      { a: 1, b: 2, stage: 'done', kind: 'independent' },
-    ]);
-  });
 });
 
 describe('stack API', () => {
   it('serves the tree and each PR’s place in it', async () => {
-    const { t, admin, open } = await repoWithPolicy();
+    const { t, admin, open } = await repoWithAgent();
     const { models } = stackModels({
       related: () => true,
       relation: () => MUST,
@@ -465,7 +417,7 @@ describe('stack API', () => {
   });
 
   it('does not count a closed, unmerged PR as landed', async () => {
-    const { t, admin, open } = await repoWithPolicy();
+    const { t, admin, open } = await repoWithAgent();
     const { models } = stackModels({
       related: () => true,
       relation: () => MUST,
@@ -497,8 +449,8 @@ describe('stack API', () => {
     expect(two.mustAccountFor).toEqual([]);
   });
 
-  it('serves the tree for a repository without review.yml', async () => {
-    const { t, admin, open } = await repoWithPolicy(null);
+  it('serves the tree for a repository without an agent', async () => {
+    const { t, admin, open } = await repoWithAgent(false);
     await open('one', { 'a.txt': 'a\n' }, 'One');
     const res = await call(t, '/api/repos/octocat/app/pulls/tree', {
       cookie: admin,
@@ -513,7 +465,7 @@ describe('stack API', () => {
   });
 
   it('serves a PR with more pairs than D1 binds in one statement', async () => {
-    const { t, admin, open } = await repoWithPolicy();
+    const { t, admin, open } = await repoWithAgent();
     await open('one', { 'a.txt': 'a\n' }, 'One');
     const pr = (await t.env.DB.prepare(
       'SELECT id, repository_id AS repo, author_id AS author FROM pull_requests WHERE number = 1'
@@ -595,7 +547,7 @@ describe('stack API', () => {
   });
 
   it('is empty when no pull request is open', async () => {
-    const { t, admin } = await repoWithPolicy(null);
+    const { t, admin } = await repoWithAgent(false);
     const res = await call(t, '/api/repos/octocat/app/pulls/tree', {
       cookie: admin,
     });
@@ -603,7 +555,7 @@ describe('stack API', () => {
   });
 
   it('reports pairs still being checked instead of calling a PR independent', async () => {
-    const { t, admin, open } = await repoWithPolicy();
+    const { t, admin, open } = await repoWithAgent();
     await open('one', { 'a.txt': 'a\n' }, 'One');
     await open('two', { 'b.txt': 'b\n' }, 'Two');
     type Node = { number: number; checking: boolean; pending: number[] };
@@ -628,7 +580,7 @@ describe('stack API', () => {
   });
 
   it('hides a private repository’s tree from non-collaborators', async () => {
-    const { t, admin } = await repoWithPolicy();
+    const { t, admin } = await repoWithAgent();
     const bob = await addMember(t, admin, 'bob');
     const res = await call(t, '/api/repos/octocat/app/pulls/tree', {
       cookie: bob,
@@ -637,7 +589,7 @@ describe('stack API', () => {
   });
 
   it('refuses to retry when AI is not configured, and deletes nothing', async () => {
-    const { t, admin, open } = await repoWithPolicy();
+    const { t, admin, open } = await repoWithAgent();
     await open('one', { 'a.txt': 'a\n' }, 'One');
     await open('two', { 'b.txt': 'b\n' }, 'Two');
     await drain(t, stackModels({ failTriage: true }).models);
@@ -654,7 +606,7 @@ describe('stack API', () => {
   });
 
   it('re-arms a pair whose run died mid-check, once it is stale', async () => {
-    const { t, open } = await repoWithPolicy();
+    const { t, open } = await repoWithAgent();
     await open('one', { 'a.txt': 'a\n' }, 'One');
     await open('two', { 'b.txt': 'b\n' }, 'Two');
     await drain(t, stackModels().models);
@@ -686,7 +638,7 @@ describe('stack API', () => {
   });
 
   it('Retry resets a pair stuck mid-check', async () => {
-    const { t, admin, open } = await repoWithPolicy();
+    const { t, admin, open } = await repoWithAgent();
     await open('one', { 'a.txt': 'a\n' }, 'One');
     await open('two', { 'b.txt': 'b\n' }, 'Two');
     await drain(t, stackModels().models);
@@ -702,7 +654,7 @@ describe('stack API', () => {
   });
 
   it('retries failed pairs', async () => {
-    const { t, admin, open } = await repoWithPolicy();
+    const { t, admin, open } = await repoWithAgent();
     await open('one', { 'a.txt': 'a\n' }, 'One');
     await open('two', { 'b.txt': 'b\n' }, 'Two');
     await drain(t, stackModels({ failTriage: true }).models);
@@ -718,7 +670,7 @@ describe('stack API', () => {
     ]);
   });
   it('leaves order rows alone and never reads them as pair verdicts', async () => {
-    const { t, admin, open } = await repoWithPolicy();
+    const { t, admin, open } = await repoWithAgent();
     await open('one', { 'a.txt': 'a\n' }, 'One');
     await open('two', { 'b.txt': 'b\n' }, 'Two');
     await drain(t, stackModels({ failTriage: true }).models);
@@ -812,7 +764,7 @@ describe('must account for', () => {
   };
 
   it('tells the dependent what to change, then re-checks only its new head', async () => {
-    const { t, open, repo, files } = await repoWithPolicy();
+    const { t, open, repo, files } = await repoWithAgent();
     const { models, calls } = stackModels({
       related: () => true,
       relation: () => MUST,
@@ -856,7 +808,7 @@ describe('must account for', () => {
   });
 
   it('re-checks a landed prerequisite after the dependent rebases onto it, then lets it merge', async () => {
-    const { t, admin, open, repo, files } = await repoWithPolicy();
+    const { t, admin, open, repo, files } = await repoWithAgent();
     const { models, calls } = stackModels({
       related: () => true,
       relation: () => MUST,
@@ -872,7 +824,7 @@ describe('must account for', () => {
     const merge = (n: number) =>
       call(t, `/api/repos/octocat/app/pulls/${n}/merge`, {
         cookie: admin,
-        json: {},
+        json: { approve: true },
       });
     expect((await merge(1)).status).toBe(200);
     await drain(t, models);
@@ -888,7 +840,7 @@ describe('must account for', () => {
   });
 
   it('keeps blocking with new instructions when not accounted for', async () => {
-    const { t, open, repo, files } = await repoWithPolicy();
+    const { t, open, repo, files } = await repoWithAgent();
     const { models } = stackModels({
       related: () => true,
       relation: () => MUST,
@@ -906,7 +858,7 @@ describe('must account for', () => {
   });
 
   it('keeps blocking when the re-check fails, and Retry runs it again', async () => {
-    const { t, admin, open, repo, files } = await repoWithPolicy();
+    const { t, admin, open, repo, files } = await repoWithAgent();
     let fail = true;
     const { models, calls } = stackModels({
       related: () => true,
@@ -960,7 +912,7 @@ describe('must account for', () => {
   });
 
   it('never re-checks or announces a dismissed edge', async () => {
-    const { t, open, repo, files } = await repoWithPolicy();
+    const { t, open, repo, files } = await repoWithAgent();
     const { models, calls } = stackModels({
       related: () => true,
       relation: () => MUST,
@@ -973,7 +925,7 @@ describe('must account for', () => {
     ).run();
     // A dismissed edge no longer stacks: the next reconcile sends #2 back to main (once).
     const repoId = (await t.env.DB.prepare(
-      'SELECT id FROM repositories'
+      "SELECT id FROM repositories WHERE name = 'app'"
     ).first<{ id: string }>())!.id;
     await executeReconcile(
       { env: t.env, db: drizzle(t.env.DB, { schema }), step, models },
@@ -1004,7 +956,7 @@ describe('must account for', () => {
   });
 
   it('records nothing from a run whose claim a newer run superseded', async () => {
-    const { t, open, repo, files } = await repoWithPolicy();
+    const { t, open, repo, files } = await repoWithAgent();
     const { models } = stackModels({
       related: () => true,
       relation: () => MUST,
@@ -1031,7 +983,7 @@ describe('must account for', () => {
   });
 
   it('records an event once however often its step runs', async () => {
-    const { t, open } = await repoWithPolicy();
+    const { t, open } = await repoWithAgent();
     await open('setup', SETUP_CHECKS, 'Setup checks');
     const pr = (await t.env.DB.prepare(
       'SELECT id, repository_id AS repo FROM pull_requests WHERE number = 1'
@@ -1051,7 +1003,7 @@ describe('must account for', () => {
   });
 
   it('records only the re-check when an accounted-for pair is re-decided', async () => {
-    const { t, open, repo, files } = await repoWithPolicy();
+    const { t, open, repo, files } = await repoWithAgent();
     const { models, calls } = stackModels({
       related: () => true,
       relation: () => MUST,
@@ -1080,7 +1032,7 @@ describe('must account for', () => {
   });
 
   it('Retry re-arms a re-check whose run died mid-way', async () => {
-    const { t, admin, open, repo, files } = await repoWithPolicy();
+    const { t, admin, open, repo, files } = await repoWithAgent();
     const { models, calls } = stackModels({
       related: () => true,
       relation: () => MUST,

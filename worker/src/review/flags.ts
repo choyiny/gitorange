@@ -20,7 +20,8 @@ export type FlagDecisionResult =
 /**
  * Approves a review flag, or requests changes on it, as `userId`. Approving clears a request
  * for changes; requesting changes only applies to a flag nobody approved (the latest request
- * wins). The caller checks the user can merge in the repository, the same check for both.
+ * wins). Approving an agent's `change_requested` flag dismisses it; nobody can request changes
+ * on one (it is already the agent's change request). The caller checks the user can merge in the repository, the same check for both.
  * Either way the pull request may now auto-merge (or no longer), so `after` gets that work.
  */
 export async function decideFlag(
@@ -49,7 +50,7 @@ export async function decideFlag(
       error: `The note can be at most ${CHANGES_NOTE_MAX} characters`,
     };
   const flag = await db
-    .select({ id: prReviewFlags.id })
+    .select({ id: prReviewFlags.id, kind: prReviewFlags.kind })
     .from(prReviewFlags)
     .innerJoin(
       prClassifications,
@@ -63,6 +64,14 @@ export async function decideFlag(
     )
     .get();
   if (!flag) return { ok: false, status: 404, error: 'Not Found' };
+  // An agent's change request goes to the PR's agent; a person may only dismiss it (approve does that).
+  if (decision.kind === 'request_changes' && flag.kind === 'change_requested')
+    return {
+      ok: false,
+      status: 400,
+      error:
+        "This is the agent's own change request: push the change, or dismiss it",
+    };
 
   const unapproved = and(
     eq(prReviewFlags.id, flagId),

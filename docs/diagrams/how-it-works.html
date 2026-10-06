@@ -87,10 +87,11 @@
           Flowchart of a GitOrange pull request: an agent opens it, Clef picks
           which test modules the change can affect, those modules run as
           parallel check jobs on Cloudflare Containers, every changed file gets
-          a one-line summary, Clef answers the review questions and compares the
-          pull request with other pull requests to build a stack tree, and the
-          pull request's state then sends it back to the agent, to a person on
-          the Approvals page, keeps it waiting, or lets it land on its own.
+          a one-line summary, Clef asks which invited reviewer agents the change
+          concerns, those agents review it, and Clef compares the pull request
+          with other pull requests to build a stack tree, and the pull request's
+          state then sends it back to the agent, to a person on the Approvals
+          page, keeps it waiting, or lets it land on its own.
         </desc>
         <defs>
           <marker
@@ -289,7 +290,7 @@
           text-anchor="start"
           letter-spacing="0.06em"
         >
-          ANSWERS + FLAGS
+          AGENT FINDINGS
         </text>
         <rect
           class="lbl-mask"
@@ -313,9 +314,9 @@
         </text>
         <rect
           class="lbl-mask"
-          x="326"
+          x="314"
           y="595"
-          width="44"
+          width="56"
           height="12"
           rx="2"
           fill="#f5f5f5"
@@ -329,7 +330,7 @@
           text-anchor="end"
           letter-spacing="0.06em"
         >
-          FLAGS
+          FINDINGS
         </text>
         <rect
           class="lbl-mask"
@@ -574,7 +575,7 @@
             font-family="'Geist', sans-serif"
             text-anchor="middle"
           >
-            Clef answers your review questions
+            Clef picks the reviewer agents
           </text>
           <text
             x="512"
@@ -584,7 +585,7 @@
             font-family="'Geist Mono', monospace"
             text-anchor="middle"
           >
-            .gitorange/review.yml
+            each invited agent's trigger question
           </text>
           <text
             x="512"
@@ -594,7 +595,7 @@
             font-family="'Geist Mono', monospace"
             text-anchor="middle"
           >
-            flagged → GLM-5.3 investigates:
+            each requested agent reviews (GLM-5.3):
           </text>
           <text
             x="512"
@@ -604,7 +605,7 @@
             font-family="'Geist Mono', monospace"
             text-anchor="middle"
           >
-            sentence · table · diagram · excerpts
+            approve, change, or finding
           </text>
         </g>
         <g class="node" data-node="stack">
@@ -810,7 +811,7 @@
               font-size="9"
               font-family="'Geist Mono', monospace"
             >
-              review flags to approve
+              findings, or an approval
             </text>
             <text
               x="312"
@@ -840,7 +841,7 @@
               font-size="9"
               font-family="'Geist Mono', monospace"
             >
-              checks, review, stack check
+              checks, agents, stack check
             </text>
             <text
               x="520"

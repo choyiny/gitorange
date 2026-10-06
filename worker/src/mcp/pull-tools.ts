@@ -12,8 +12,9 @@ import { usersById } from '../lib/users';
 import { addComment, openPull, pullShas } from '../lib/pulls';
 import { landPull } from '../merge/land';
 import { latestResolution } from '../merge/resolution';
-import { reviewConfigured } from '../review/classify';
-import { reviewView } from '../review/view';
+import { reviewConfigured } from '../review/head';
+import { reviewersView } from '../review/reviewers-view';
+import { approvalsAt } from '../review/approvals';
 import { PULL_STATES, type PullState } from '../pulls/state';
 import { pullStateFor, pullStates } from '../pulls/signals';
 import {
@@ -288,8 +289,10 @@ const getPullRequest: ToolModule = {
     description:
       'Get one pull request: its description, branches and commits, whether it merges cleanly (or has ' +
       'conflicts, and what AI conflict resolution is doing about them), the Actions checks on its latest ' +
-      'commit, the auto-merge review (each flag with its id, what the review model found, and whether a ' +
-      'person approved it or requested changes), whether it will merge on its own and what it waits on, and recent comments. Call it again to ' +
+      'commit, "reviewers" (each invited agent\'s status and its findings by kind: needs_person for a person to ' +
+      'approve in the web UI, change_requested for this pull request\'s agent), "follow_ups" (open change requests ' +
+      'for the pull request\'s agent: push a fix, which is reviewed afresh), "approved_by" (people who approved the ' +
+      'head commit), whether it will merge on its own and what it waits on (auto_merge, null when off), and recent comments. Call it again to ' +
       'follow progress after pushing. For why a check failed, pass its run_number to gitorange_get_run_logs.' +
       ' "stack" says which pull request this one builds on, waits on, or must change for (with instructions).' +
       ' "pending" lists pull requests it is still being checked against, and "checking" is true until its first check starts;' +
@@ -351,7 +354,7 @@ const getPullRequest: ToolModule = {
           .all()
       : [];
 
-    const review = await reviewView(ctx.db, git, pr, shas);
+    const review = await reviewersView(ctx.env, ctx.db, git, pr, shas);
     const comments = await ctx.db
       .select()
       .from(pullRequestComments)
@@ -381,6 +384,15 @@ const getPullRequest: ToolModule = {
       tree: found?.view,
     });
 
+    const approvals = shas ? await approvalsAt(ctx.db, pr.id, shas.head) : [];
+    const approvers = await usersById(
+      ctx.db,
+      approvals.map((a) => a.userId)
+    );
+    const approvedBy = approvals.map(
+      (a) => approvers.get(a.userId)?.username ?? null
+    );
+
     return {
       content: [
         json({
@@ -408,37 +420,52 @@ const getPullRequest: ToolModule = {
             error: r.errorMessage,
             url: `${ctx.baseURL}/${fullName}/actions/runs/${r.runNumber}`,
           })),
-          auto_merge: review
-            ? {
-                state: review.autoMerge.state,
-                waiting_on: review.autoMerge.reasons,
-                review: review.classification
-                  ? {
-                      status: review.classification.status,
-                      verdict: review.classification.verdict,
-                      error: review.classification.errorMessage,
-                    }
-                  : null,
-                flags: review.flags.map((f) => ({
-                  id: f.id,
+          auto_merge:
+            review && review.autoMerge.state !== 'off'
+              ? {
+                  state: review.autoMerge.state,
+                  waiting_on: review.autoMerge.reasons,
+                }
+              : null,
+          reviewers: (review?.reviewers ?? []).map((r) => ({
+            agent: r.agent.username,
+            status: r.status,
+            requested: r.requested,
+            probability: r.probability,
+            agent_sha: r.agentSha,
+            summary: r.summary,
+            error: r.error,
+            still_invited: r.invited,
+            findings: r.flags.map((f) => ({
+              id: f.id,
+              kind: f.kind,
+              title: f.title,
+              files: f.paths,
+              finding: f.detail,
+              state: f.approvedAt
+                ? f.kind === 'change_requested'
+                  ? 'dismissed'
+                  : 'approved'
+                : f.changesRequestedAt
+                  ? 'changes_requested'
+                  : 'open',
+              changes_requested_note: f.changesRequestedNote,
+            })),
+          })),
+          approved_by: approvedBy,
+          // What the pull request's agent should change: open change requests of agents still invited.
+          follow_ups: (review?.reviewers ?? [])
+            .filter((r) => r.invited && r.status === 'changes_requested')
+            .flatMap((r) =>
+              r.flags
+                .filter((f) => f.kind === 'change_requested' && !f.approvedAt)
+                .map((f) => ({
+                  agent: r.agent.username,
+                  finding_id: f.id,
                   title: f.title,
-                  files: f.paths,
-                  finding: f.detail,
-                  state: f.approvedAt
-                    ? 'approved'
-                    : f.changesRequestedAt
-                      ? 'changes_requested'
-                      : 'pending',
-                  approved_by: f.approvedAt
-                    ? (f.approvedBy?.username ?? null)
-                    : null,
-                  changes_requested_by: f.changesRequestedAt
-                    ? (f.changesRequestedBy?.username ?? null)
-                    : null,
-                  changes_requested_note: f.changesRequestedNote,
-                })),
-              }
-            : null,
+                  instructions: f.detail,
+                }))
+            ),
           stack: stack ? stackJson(stack, branchOf) : null,
           merged:
             pr.state === 'merged'
@@ -469,8 +496,8 @@ const createPullRequest: ToolModule = {
     title: 'Create pull request',
     description:
       'Open a pull request from a branch you already pushed (head) into another branch (base, the default ' +
-      'branch if omitted). Opening it starts its checks and, if the repository has a .gitorange/review.yml, ' +
-      'an auto-merge review; follow both with gitorange_get_pull_request. Needs push access.',
+      'branch if omitted). Opening it starts its checks and, where reviewer agents are invited, ' +
+      'their review; follow both with gitorange_get_pull_request. Needs push access.',
     annotations: {
       readOnlyHint: false,
       destructiveHint: false,
@@ -567,8 +594,8 @@ const mergePullRequest: ToolModule = {
     title: 'Merge pull request',
     description:
       'Rebase and merge a pull request: its changes become one commit on top of the target branch, keeping ' +
-      'history linear (AI-resolved conflicts are included). Refused while any auto-merge review flag is ' +
-      'unapproved: those need a person to approve them first. Needs push access.' +
+      'history linear (AI-resolved conflicts are included). Refused while checks fail or run, or ' +
+      "review is not satisfied (an agent's change request, findings for a person, or no approval yet). Needs push access." +
       ' Also refused while it must account for another pull request, is stacked on an open one, or waits on one; the refusal names it. Only a person can dismiss such a dependency, in the web UI.',
     annotations: {
       readOnlyHint: false,
@@ -602,15 +629,6 @@ const mergePullRequest: ToolModule = {
     const pr = await pullFor(ctx, repo.id, fullName, prNumber(args));
     if (pr.state !== 'open')
       throw new McpToolError(`#${pr.number} is already ${pr.state}.`);
-    // The human gate holds for agents too: unapproved flags block merging here.
-    const review = await reviewView(ctx.db, git, pr, await pullShas(git, pr));
-    const pending = review?.flags.filter((f) => !f.approvedAt) ?? [];
-    if (pending.length)
-      throw new McpToolError(
-        `#${pr.number} has ${pending.length} review flag${pending.length === 1 ? '' : 's'} waiting for a person's approval ` +
-          `(${pending.map((f) => f.title).join('; ')}). Ask the user to review them at ${pullUrl(ctx, fullName, pr.number)}, ` +
-          'or their Approvals page; it then merges on its own.'
-      );
     const result = await landPull({
       env: ctx.env,
       db: ctx.db,
@@ -624,7 +642,12 @@ const mergePullRequest: ToolModule = {
       message: str(args, 'message'),
       after: ctx.after,
     });
-    if (!result.ok) throw new McpToolError(result.error);
+    if (!result.ok)
+      throw new McpToolError(
+        result.reason === 'review'
+          ? `${result.error} People approve in GitOrange's web UI (agents can't): ask the user to review it at ${pullUrl(ctx, fullName, pr.number)} or on their Approvals page.`
+          : result.error
+      );
     return {
       content: [
         text(
@@ -797,17 +820,17 @@ const getRunLogs: ToolModule = {
 const flagIdProp = {
   type: 'string',
   description:
-    "The flag's id, from gitorange_get_pull_request's auto_merge.flags.",
+    "The finding's id, from gitorange_get_pull_request's reviewers[].findings.",
 };
 
-/** Approves a review flag or requests changes on it, as the signed-in user. */
+/** Requests changes on a review flag as the signed-in user (people approve and dismiss only in the web UI). */
 async function decideFlagTool(
   args: Record<string, unknown>,
   ctx: ToolContext,
   decision: FlagDecision
 ) {
   const { repo, fullName, perms } = await repoFor(ctx, args);
-  // The same check as the web UI: approving clears a pull request for auto-merge.
+  // The same check as the web UI.
   if (!perms.write)
     throw new McpToolError(
       `You don't have permission to review flags in ${fullName}.`
@@ -833,44 +856,14 @@ async function decideFlagTool(
   return pullUrl(ctx, fullName, pr.number);
 }
 
-const approveReviewFlag: ToolModule = {
-  definition: {
-    name: 'gitorange_approve_review_flag',
-    title: 'Approve review flag',
-    description:
-      "Approve one of a pull request's auto-merge review flags, as the signed-in user, clearing any request " +
-      'for changes on it. Once every flag is approved the pull request can merge on its own. Only use this ' +
-      'when the user explicitly asks you to approve that flag; never to unblock your own pull request. ' +
-      'Needs push access.',
-    annotations: {
-      readOnlyHint: false,
-      destructiveHint: false,
-      title: 'Approve review flag',
-    },
-    inputSchema: {
-      type: 'object',
-      properties: {
-        repository: repositoryProp,
-        number: numberProp,
-        flag_id: flagIdProp,
-      },
-      required: ['repository', 'number', 'flag_id'],
-    },
-  },
-  handler: async (args, ctx) => {
-    const url = await decideFlagTool(args, ctx, { kind: 'approve' });
-    return { content: [text(`Approved the flag on ${url}`)] };
-  },
-};
-
 const requestChangesOnReviewFlag: ToolModule = {
   definition: {
     name: 'gitorange_request_changes_on_review_flag',
     title: 'Request changes on review flag',
     description:
-      "Request changes on one of a pull request's unapproved auto-merge review flags, as the signed-in user, " +
-      'with an optional short note. It blocks auto-merge until someone approves the flag. Only use this when ' +
-      'the user explicitly asks you to. Needs push access.',
+      "Request changes on one of a pull request's findings that need a person (kind needs_person), as the " +
+      'signed-in user, with an optional short note. It blocks merging until a person approves the finding in ' +
+      'the web UI. Only use this when the user explicitly asks you to. Needs push access.',
     annotations: {
       readOnlyHint: false,
       destructiveHint: false,
@@ -907,7 +900,6 @@ export const PULL_TOOLS: ToolModule[] = [
   createPullRequest,
   commentPullRequest,
   mergePullRequest,
-  approveReviewFlag,
   requestChangesOnReviewFlag,
   getRunLogs,
 ];

@@ -5,6 +5,7 @@ import {
   CheckIcon,
   DotFillIcon,
   GitBranchIcon,
+  ShieldCheckIcon,
   XIcon,
 } from '@primer/octicons-react';
 import type { PullEvent, PullReason } from '@/lib/uiApi';
@@ -130,6 +131,29 @@ export function PullEventItem({
       <Row icon={<XIcon />}>
         {e.actor ? <strong>{e.actor.username}</strong> : 'A maintainer'}{' '}
         dismissed the dependency on {pr(num(d.pr))}
+        {when}
+      </Row>
+    );
+  }
+  if (e.kind === 'approved') {
+    const over = Array.isArray(d.over)
+      ? (d.over as PullReason[]).filter((r) => r && typeof r.kind === 'string')
+      : [];
+    return (
+      <Row icon={<ShieldCheckIcon className="color-fg-success" />}>
+        {e.actor ? <strong>{e.actor.username}</strong> : 'A former user'}{' '}
+        approved <code>{(str(d.head_sha) ?? '').slice(0, 7)}</code>
+        {over.length > 0 && <> over {over.map(reasonText).join('; ')}</>}
+        {when}
+      </Row>
+    );
+  }
+  if (e.kind === 'withdrawn') {
+    return (
+      <Row icon={<XIcon />}>
+        {e.actor ? <strong>{e.actor.username}</strong> : 'A former user'}{' '}
+        withdrew their approval of{' '}
+        <code>{(str(d.head_sha) ?? '').slice(0, 7)}</code>
         {when}
       </Row>
     );

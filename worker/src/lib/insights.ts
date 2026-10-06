@@ -1,15 +1,9 @@
-import { desc, eq, sql } from 'drizzle-orm';
+import { and, eq, sql } from 'drizzle-orm';
 import type { DrizzleDB } from '../db/middleware';
-import {
-  prClassifications,
-  pullRequests,
-  type Repository,
-} from '../db/app.schema';
-import { decoder } from '../git/bytes';
+import { pullRequests, type Repository } from '../db/app.schema';
 import { NO_MODEL } from '../merge/resolution';
-import type { GitService } from '../git/service';
-import { parsePolicy, type ReviewPolicy } from '../review/policy';
-import { flagTitle } from '../review/view';
+import { flagTitleOf } from '../review/gate';
+import { branchTips } from '../review/inbox';
 
 export const INSIGHT_PERIODS = [7, 30, 90, 365] as const;
 
@@ -48,7 +42,7 @@ export type RepoInsights = {
     person: number | null;
   };
   reviews: {
-    /** Auto-merge reviews (classifications) started. */
+    /** Reviews of pull request commits started. */
     runs: number;
     completed: number;
     failed: number;
@@ -65,11 +59,12 @@ export type RepoInsights = {
     approved: number;
     /** Median seconds from a flag being raised to a person approving it. */
     medianTimeToApproval: number | null;
-    /** Unapproved flags on the latest review of open pull requests, right now. */
+    /** Findings for a person still waiting on one (the Approvals rule), right now. */
     pendingNow: number;
     pendingPullsNow: number;
+    /** By agent, or by retired review.yml question or limit. */
     byKind: {
-      source: 'question' | 'limit';
+      source: 'question' | 'limit' | 'agent';
       key: string;
       title: string;
       raised: number;
@@ -105,8 +100,8 @@ const ratio = (a: number, b: number) => (b > 0 ? a / b : null);
 type Row = Record<string, number | null>;
 
 export async function repoInsights(
+  env: CloudflareBindings,
   db: DrizzleDB,
-  git: GitService,
   repo: Repository,
   days: number,
   now = new Date()
@@ -114,6 +109,24 @@ export async function repoInsights(
   const until = Math.floor(now.getTime() / 1000);
   const since = until - days * 86400;
   const repoId = repo.id;
+  // Open pull requests' head reviews: the review of each one's branch tip (refs read once), as on Approvals.
+  const open = await db
+    .select()
+    .from(pullRequests)
+    .where(
+      and(eq(pullRequests.repositoryId, repoId), eq(pullRequests.state, 'open'))
+    )
+    .all();
+  const { heads, unreadable } = await branchTips(
+    env,
+    new Map([[repoId, repo]]),
+    open
+  );
+  const headReviews = JSON.stringify(
+    open.filter((p) => heads.has(p.id)).map((p) => `${p.id}-${heads.get(p.id)}`)
+  );
+  // Refs unreadable: each open pull request's newest head review stands in, as on Approvals.
+  const newestFallback = unreadable.size ? 1 : 0;
 
   const [
     pullsRows,
@@ -146,36 +159,47 @@ export async function repoInsights(
           COUNT(*) AS runs,
           SUM(c.status = 'done') AS completed,
           SUM(c.status = 'failed') AS failed,
-          SUM(c.verdict = 'auto') AS auto_verdicts,
-          SUM(c.verdict = 'human') AS human_verdicts,
+          SUM(c.status = 'done' AND NOT EXISTS (SELECT 1 FROM pr_review_flags f WHERE f.classification_id = c.id)) AS auto_verdicts,
+          SUM(c.status = 'done' AND EXISTS (SELECT 1 FROM pr_review_flags f WHERE f.classification_id = c.id)) AS human_verdicts,
           COUNT(DISTINCT c.pull_request_id) AS pulls_reviewed,
-          COUNT(DISTINCT CASE WHEN c.verdict = 'human' THEN c.pull_request_id END) AS pulls_needing_human
+          COUNT(DISTINCT CASE WHEN EXISTS (SELECT 1 FROM pr_review_flags f WHERE f.classification_id = c.id) THEN c.pull_request_id END) AS pulls_needing_human
         FROM pr_classifications c
         JOIN pull_requests p ON p.id = c.pull_request_id
         WHERE p.repository_id = ${repoId} AND c.created_at >= ${since}`),
     db.all<{
-      source: 'question' | 'limit';
+      source: 'question' | 'limit' | 'agent';
       key: string;
       raised: number;
       approved: number;
     }>(sql`
-        SELECT f.source AS source, f.key AS key, COUNT(*) AS raised,
+        SELECT f.source AS source, COALESCE(u.username, f.key) AS key, COUNT(*) AS raised,
           SUM(f.approved_at IS NOT NULL) AS approved
         FROM pr_review_flags f
         JOIN pr_classifications c ON c.id = f.classification_id
         JOIN pull_requests p ON p.id = c.pull_request_id
+        LEFT JOIN users u ON f.source = 'agent' AND u.id = f.agent_id
         WHERE p.repository_id = ${repoId} AND f.created_at >= ${since}
-        GROUP BY f.source, f.key
-        ORDER BY raised DESC, f.source, f.key`),
-    // Same rule as the Approvals inbox: only the latest review of an open pull request counts.
+        GROUP BY f.source, COALESCE(u.username, f.key)
+        ORDER BY raised DESC, f.source, key`),
+    // Same rule as the Approvals inbox: findings for a person on the review of an open pull request's branch tip,
+    // from an agent that is still invited and has them outstanding (flagged or changes requested).
     db.all<Row>(sql`
         SELECT COUNT(*) AS flags, COUNT(DISTINCT p.id) AS pulls
         FROM pr_review_flags f
         JOIN pr_classifications c ON c.id = f.classification_id
         JOIN pull_requests p ON p.id = c.pull_request_id
+        JOIN pr_reviewers rv ON rv.pull_request_id = p.id AND rv.head_sha = c.head_sha
+          AND rv.agent_id = f.agent_id AND rv.requested = 1
+          AND rv.status IN ('flagged', 'changes_requested')
         WHERE p.repository_id = ${repoId} AND p.state = 'open' AND f.approved_at IS NULL
-          AND c.id = (SELECT c2.id FROM pr_classifications c2 WHERE c2.pull_request_id = p.id
-                      ORDER BY c2.created_at DESC LIMIT 1)`),
+          AND f.source = 'agent' AND f.kind = 'needs_person'
+          AND EXISTS (SELECT 1 FROM repository_agents ra
+                      WHERE ra.repository_id = p.repository_id AND ra.agent_id = f.agent_id)
+          AND (c.id IN (SELECT value FROM json_each(${headReviews}))
+               OR (${newestFallback} = 1
+                   AND c.id = (SELECT c2.id FROM pr_classifications c2
+                               WHERE c2.pull_request_id = p.id AND c2.id = p.id || '-' || c2.head_sha
+                               ORDER BY c2.created_at DESC LIMIT 1)))`),
     db.all<Row>(sql`
         SELECT
           COUNT(*) AS attempts,
@@ -248,7 +272,6 @@ export async function repoInsights(
   const autoMerged = n(p.auto_merged);
   const ciOk = n(ci.succeeded);
   const ciFailed = n(ci.failed);
-  const policy = flagRows.length ? await latestPolicy(db, git, repoId) : null;
   return {
     days,
     since: new Date(since * 1000).toISOString(),
@@ -287,7 +310,10 @@ export async function repoInsights(
       byKind: flagRows.map((f) => ({
         source: f.source,
         key: f.key,
-        title: flagTitle(policy, f),
+        title:
+          f.source === 'agent'
+            ? `@${f.key}`
+            : flagTitleOf({ source: f.source, key: f.key, value: null }),
         raised: n(f.raised),
         approved: n(f.approved),
       })),
@@ -310,31 +336,4 @@ export async function repoInsights(
       medianTimeToGreen: med('green'),
     },
   };
-}
-
-/** The review policy of the repository's most recent review, for flag titles. */
-async function latestPolicy(
-  db: DrizzleDB,
-  git: GitService,
-  repositoryId: string
-): Promise<ReviewPolicy | null> {
-  const row = await db
-    .select({ policySha: prClassifications.policySha })
-    .from(prClassifications)
-    .innerJoin(
-      pullRequests,
-      eq(pullRequests.id, prClassifications.pullRequestId)
-    )
-    .where(eq(pullRequests.repositoryId, repositoryId))
-    .orderBy(desc(prClassifications.createdAt))
-    .limit(1)
-    .get();
-  if (!row) return null;
-  try {
-    const bytes = await git.blob(row.policySha);
-    return bytes ? parsePolicy(decoder.decode(bytes)) : null;
-  } catch {
-    // Missing or invalid: titles fall back to question ids.
-    return null;
-  }
 }

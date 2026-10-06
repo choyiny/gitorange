@@ -1,22 +1,14 @@
-import { and, eq, inArray, isNull, sql } from 'drizzle-orm';
+import { and, eq, inArray, sql } from 'drizzle-orm';
 import type { DrizzleDB } from '../db/middleware';
 import {
   mergeResolutions,
-  prClassifications,
-  prReviewFlags,
-  workflowJobs,
   workflowRuns,
   type PullRequest,
 } from '../db/app.schema';
 import type { GitService } from '../git/service';
 import { SUPERSEDED } from '../merge/resolution';
-import { checkVerdict, type CheckJob, type CheckRun } from '../review/checks';
-import {
-  parsePolicy,
-  POLICY_PATH,
-  readPolicy,
-  type ReviewPolicy,
-} from '../review/policy';
+import { checkVerdict, type CheckRun } from '../review/checks';
+import { reviewInputs, reviewVerdict, type GateInput } from '../review/gate';
 import { chunks, stackTreeView, type StackTreeView } from '../stack/view';
 import {
   decideState,
@@ -27,40 +19,23 @@ import {
 import { contains } from '../stack/contains';
 import { landTargetOf } from '../lib/land-target';
 
-type TargetPolicy = {
-  sha: string;
-  policy: ReviewPolicy | null;
-  error: string | null;
-} | null;
-
-const message = (e: unknown) => (e instanceof Error ? e.message : String(e));
-
-/** review.yml at a commit: null when absent, `error` when it doesn't parse. */
-async function policyAt(git: GitService, sha: string): Promise<TargetPolicy> {
-  const file = await readPolicy(git, sha).catch(() => null);
-  if (!file) return null;
-  try {
-    return { sha: file.sha, policy: parsePolicy(file.text), error: null };
-  } catch (e) {
-    return { sha: file.sha, policy: null, error: message(e) };
-  }
-}
-
 export type PullStateOptions = {
   /** Branch tips (`refs/heads/...`), when the caller already has them. */
   refs?: Map<string, string>;
   /** The stack tree covering the PRs' targets; by default read for their one target, or the whole repository. */
   tree?: StackTreeView;
   /**
-   * Whether AI review and stacking can run here (`reviewConfigured(env)`; default true). When they can't, a
-   * review.yml on the target never produces a review or a stack check, so neither is waited on.
+   * Whether AI review and stacking can run here (`reviewConfigured(env)`; default true). When they can't, no
+   * agent review or stack check ever runs, so neither is waited on.
    */
   reviewConfigured?: boolean;
+  /** The review gate's inputs at the PRs' heads, when the caller already read them (`reviewInputs`). */
+  reviews?: Map<string, GateInput>;
 };
 
 /**
  * The computed state of each open PR among `prs` (keyed by id), in a fixed number of queries: one ref listing,
- * one review.yml read per target tip, the stack view, and chunked D1 reads. PRs missing a branch are left out.
+ * the review gate's inputs, the stack view, and chunked D1 reads. PRs missing a branch are left out.
  */
 export async function pullStates(
   db: DrizzleDB,
@@ -81,89 +56,23 @@ export async function pullStates(
   });
   if (!tips.length) return out;
 
-  const policies = new Map<string, TargetPolicy>();
-  for (const base of new Set(tips.map((t) => t.base)))
-    policies.set(base, await policyAt(git, base));
+  // The caller's gate inputs, and read here for any PR they don't cover (never silently no review reasons).
+  const reviews = new Map(opts.reviews);
+  const unread = tips.filter((t) => !reviews.has(t.pr.id));
+  if (unread.length)
+    for (const [id, gate] of await reviewInputs(
+      db,
+      repositoryId,
+      unread.map((t) => ({ pullRequestId: t.pr.id, head: t.head })),
+      aiReview
+    ))
+      reviews.set(id, gate);
   const ids = tips.map((t) => t.pr.id);
   const heads = [...new Set(tips.map((t) => t.head))];
 
-  // Reviews at the current heads (no file lists: whether one changes review.yml is answered in SQL).
-  const reviews = (
-    await Promise.all(
-      chunks(tips, 45).map((part) =>
-        db
-          .select({
-            id: prClassifications.id,
-            pullRequestId: prClassifications.pullRequestId,
-            headSha: prClassifications.headSha,
-            policySha: prClassifications.policySha,
-            status: prClassifications.status,
-            verdict: prClassifications.verdict,
-            errorMessage: prClassifications.errorMessage,
-            changesPolicy: sql<number>`EXISTS (SELECT 1 FROM json_each(COALESCE(${prClassifications.files}, '[]')) WHERE json_extract(value, '$.path') = ${POLICY_PATH} AND json_extract(value, '$.status') <> 'removed')`,
-          })
-          .from(prClassifications)
-          .where(
-            and(
-              inArray(
-                prClassifications.pullRequestId,
-                part.map((t) => t.pr.id)
-              ),
-              inArray(prClassifications.headSha, [
-                ...new Set(part.map((t) => t.head)),
-              ])
-            )
-          )
-          .all()
-      )
-    )
-  ).flat();
-  const reviewAt = new Map(
-    reviews.map((r) => [`${r.pullRequestId} ${r.headSha} ${r.policySha}`, r])
-  );
-  const current = tips.flatMap(({ pr, base, head }) => {
-    const pol = policies.get(base);
-    const r = pol ? reviewAt.get(`${pr.id} ${head} ${pol.sha}`) : undefined;
-    return r ? [r] : [];
-  });
-
-  // Unapproved flags of the current reviews: how many, and how many with changes requested.
-  const flags = new Map<string, { open: number; changes: number }>();
-  const human = current
-    .filter((r) => r.status === 'done' && r.verdict === 'human')
-    .map((r) => r.id);
-  for (const part of chunks(human, 90))
-    for (const f of await db
-      .select({
-        classificationId: prReviewFlags.classificationId,
-        open: sql<number>`COUNT(*)`,
-        changes: sql<number>`SUM(CASE WHEN ${prReviewFlags.changesRequestedAt} IS NOT NULL THEN 1 ELSE 0 END)`,
-      })
-      .from(prReviewFlags)
-      .where(
-        and(
-          inArray(prReviewFlags.classificationId, part),
-          isNull(prReviewFlags.approvedAt)
-        )
-      )
-      .groupBy(prReviewFlags.classificationId)
-      .all())
-      flags.set(f.classificationId, {
-        open: Number(f.open),
-        changes: Number(f.changes ?? 0),
-      });
-
-  // Actions runs (and, when review.yml names checks, their jobs) at the heads.
+  // Actions runs at the heads.
   const runs: (CheckRun & { headSha: string })[] = [];
-  const jobs: (CheckJob & { headSha: string })[] = [];
-  const wantJobs = [...policies.values()].some((p) =>
-    Array.isArray(p?.policy?.checks.require)
-  );
-  for (const part of chunks(heads, 90)) {
-    const at = and(
-      eq(workflowRuns.repositoryId, repositoryId),
-      inArray(workflowRuns.headSha, part)
-    );
+  for (const part of chunks(heads, 90))
     runs.push(
       ...(await db
         .select({
@@ -175,26 +84,14 @@ export async function pullStates(
           headSha: workflowRuns.headSha,
         })
         .from(workflowRuns)
-        .where(at)
+        .where(
+          and(
+            eq(workflowRuns.repositoryId, repositoryId),
+            inArray(workflowRuns.headSha, part)
+          )
+        )
         .all())
     );
-    if (wantJobs)
-      jobs.push(
-        ...(await db
-          .select({
-            key: workflowJobs.jobKey,
-            name: workflowJobs.name,
-            status: workflowJobs.status,
-            conclusion: workflowJobs.conclusion,
-            runNumber: workflowRuns.runNumber,
-            headSha: workflowRuns.headSha,
-          })
-          .from(workflowJobs)
-          .innerJoin(workflowRuns, eq(workflowRuns.id, workflowJobs.runId))
-          .where(at)
-          .all())
-      );
-  }
 
   // The latest AI resolution of each PR (only that row is read).
   const resolutions = new Map<
@@ -275,12 +172,11 @@ export async function pullStates(
 
   for (const { pr, base, head } of tips) {
     const reasons: Reason[] = [];
-    const pol = policies.get(base) ?? null;
 
     const v = checkVerdict(
       runs.filter((r) => r.headSha === head),
-      jobs.filter((j) => j.headSha === head),
-      pol?.policy ? pol.policy.checks.require : 'any'
+      [],
+      'any'
     );
     if (v?.kind === 'failed')
       reasons.push({
@@ -295,36 +191,8 @@ export async function pullStates(
         started: v.started,
       });
 
-    if (pol?.error)
-      reasons.push({
-        kind: 'review_policy_invalid',
-        where: 'target',
-        error: pol.error,
-      });
-    else if (pol) {
-      const review = reviewAt.get(`${pr.id} ${head} ${pol.sha}`);
-      if (!review || (review.status !== 'done' && review.status !== 'failed')) {
-        if (aiReview) reasons.push({ kind: 'review_running' });
-      } else if (review.status === 'failed')
-        reasons.push({ kind: 'review_failed', error: review.errorMessage });
-      else if (review.verdict === 'human') {
-        const f = flags.get(review.id);
-        if (f?.changes)
-          reasons.push({ kind: 'changes_requested', flags: f.changes });
-        if (f && f.open - f.changes > 0)
-          reasons.push({ kind: 'flags_pending', count: f.open - f.changes });
-      }
-      // The PR's own review.yml takes effect once it lands: an invalid one is the author's to fix.
-      if (review && Number(review.changesPolicy)) {
-        const own = await policyAt(git, head);
-        if (own?.error)
-          reasons.push({
-            kind: 'review_policy_invalid',
-            where: 'pull_request',
-            error: own.error,
-          });
-      }
-    }
+    const gate = reviews.get(pr.id);
+    if (gate) reasons.push(...reviewVerdict(gate).reasons);
 
     const r = resolutions.get(pr.id);
     if (r && r.baseSha === base && r.headSha === head) {

@@ -291,7 +291,7 @@ const BINDINGS: BindingSpec[] = [
     name: 'MERGE_RESOLUTION',
     required: false,
     without:
-      'No AI conflict resolution and no auto-merge review: conflicts must be resolved locally and nothing merges on its own.',
+      'No AI conflict resolution and no agent reviews: conflicts must be resolved locally and a person approves every pull request.',
     snippet: `"workflows": [
   { "name": "gitorange-merge-resolution", "binding": "MERGE_RESOLUTION", "class_name": "MergeResolutionWorkflow" },
   …
@@ -307,7 +307,7 @@ const BINDINGS: BindingSpec[] = [
     name: 'AI',
     required: false,
     without:
-      'Workers AI is unavailable: AI conflict resolution and the auto-merge review fail.',
+      'Workers AI is unavailable: AI conflict resolution and agent reviews fail.',
     snippet: `"ai": { "binding": "AI" }`,
   },
   {

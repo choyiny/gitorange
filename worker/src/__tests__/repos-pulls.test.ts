@@ -191,7 +191,7 @@ describe('pull requests', () => {
     const headSha = repo.refs.get('refs/heads/feature')!;
     const merge = await call(t, '/api/repos/octocat/app/pulls/1/merge', {
       cookie: admin,
-      json: {},
+      json: { approve: true },
     });
     expect(merge.status).toBe(200);
     const { sha } = (await merge.json()) as { sha: string };
@@ -232,7 +232,7 @@ describe('pull requests', () => {
     const base = repo.refs.get('refs/heads/main')!;
     const res = await call(t, '/api/repos/octocat/app/pulls/1/merge', {
       cookie: admin,
-      json: { method: 'squash' },
+      json: { method: 'squash', approve: true },
     });
     const { sha } = (await res.json()) as { sha: string };
     const commit = repo.parseCommit(sha)!;
@@ -262,7 +262,7 @@ describe('pull requests', () => {
     expect(detail.conflicts).toEqual(['README.md']);
     const res = await call(t, '/api/repos/octocat/app/pulls/1/merge', {
       cookie: admin,
-      json: { method: 'rebase' },
+      json: { method: 'rebase', approve: true },
     });
     expect(res.status).toBe(409);
   });
@@ -278,7 +278,7 @@ describe('pull requests', () => {
       (
         await call(t, '/api/repos/octocat/app/pulls/1/merge', {
           cookie: bob,
-          json: {},
+          json: { approve: true },
         })
       ).status
     ).toBe(403);

@@ -12,6 +12,7 @@ import { useCurrentUser } from '@/lib/auth';
 import { timeAgo } from '@/lib/format';
 import { Header } from '@/components/Header';
 import { Avatar } from '@/components/Avatar';
+import { REVIEWER_STATUS } from '@/components/ReviewersBox';
 import { Spinner } from '@/components/Spinner';
 import { VisibilityLabel } from '@/components/VisibilityLabel';
 import { NotFound } from './NotFound';
@@ -185,6 +186,27 @@ function AgentAbout({ agent }: { agent: NonNullable<Namespace['agent']> }) {
             {agent.invitedTo.map((r) => (
               <li key={r.id}>
                 <Link to={`/${r.fullName}`}>{r.fullName}</Link>
+              </li>
+            ))}
+          </ul>
+        </>
+      )}
+      {agent.recentReviews.length > 0 && (
+        <>
+          <div className="f6 text-bold mt-3 mb-1">Recent reviews</div>
+          <ul className="list-style-none f6">
+            {agent.recentReviews.map((r) => (
+              <li
+                key={`${r.repository}#${r.number}@${r.headSha}`}
+                className="mb-1"
+              >
+                <Link to={`/${r.repository}/pull/${r.number}`}>
+                  {r.repository}#{r.number}
+                </Link>{' '}
+                <span className={REVIEWER_STATUS[r.status].className}>
+                  {REVIEWER_STATUS[r.status].label}
+                </span>{' '}
+                <span className="color-fg-muted">· {timeAgo(r.createdAt)}</span>
               </li>
             ))}
           </ul>

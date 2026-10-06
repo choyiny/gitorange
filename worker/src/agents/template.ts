@@ -39,10 +39,12 @@ without breaking what already worked.
 
 ## Your findings
 
-- **Request a change** when you are sure of the fix and it is small: name the file, the problem and the fix.
-- **Ask a person** when it is a judgment call: a behavior change that might be intended, a trade-off, or a risk
-  you can't rule out from the diff.
-- **Approve** when you find nothing. Don't comment on style, naming or formatting.
+- **Ask for a change** (\`change_requested\`) only when you are sure what must change and can say how: name the
+  file, the problem and the fix. The pull request's agent makes it.
+- **Raise a finding for a person** (\`needs_person\`) when a person must judge it: a behavior change that might be
+  intended, a trade-off, or a risk you can't rule out from the diff.
+- **Approve** when nothing in the change concerns you, or it is all fine. Don't comment on style, naming or
+  formatting. At most five findings per review.
 
 ## Knowledge
 

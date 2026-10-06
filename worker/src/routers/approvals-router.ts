@@ -19,6 +19,8 @@ const itemSchema = z.object({
     title: z.string(),
     author: publicUserSchema.nullable(),
     updatedAt: z.string(),
+    /** The head commit its review (and what you'd approve) is of; null before any review. */
+    headSha: z.string().nullable(),
   }),
   /** The latest review failed; a person can retry it or merge by hand. */
   reviewFailed: z.string().nullable(),
@@ -30,22 +32,32 @@ const itemSchema = z.object({
   stackStale: z.array(z.object({ pr: z.number(), since: z.string() })),
   /** Other pull requests it couldn't be checked against. */
   stackUnchecked: z.array(z.number()),
-  /** Flags of the latest review that nobody approved yet (some may have changes requested). */
-  flags: z.array(
+  /** No agent was requested: a person approves the head commit. */
+  needsApproval: z.boolean(),
+  /** Agents waiting on a person: their failed reviews, and findings for a person. */
+  agents: z.array(
     z.object({
-      id: z.string(),
-      source: z.enum(['question', 'limit']),
-      key: z.string(),
-      title: z.string(),
-      value: z.unknown(),
-      paths: z.array(z.string()),
-      detail: z.string().nullable(),
-      detailModel: z.string().nullable(),
-      approvedBy: z.null(),
-      approvedAt: z.null(),
-      changesRequestedBy: publicUserSchema.nullable(),
-      changesRequestedAt: z.string().nullable(),
-      changesRequestedNote: z.string().nullable(),
+      reviewerId: z.string(),
+      agent: publicUserSchema,
+      status: z.enum(['flagged', 'changes_requested', 'failed']),
+      error: z.string().nullable(),
+      flags: z.array(
+        z.object({
+          id: z.string(),
+          source: z.enum(['question', 'limit', 'agent']),
+          kind: z.enum(['needs_person', 'change_requested']),
+          title: z.string(),
+          paths: z.array(z.string()),
+          detail: z.string().nullable(),
+          detailModel: z.string().nullable(),
+          agentSha: z.string().nullable(),
+          approvedBy: publicUserSchema.nullable(),
+          approvedAt: z.string().nullable(),
+          changesRequestedBy: publicUserSchema.nullable(),
+          changesRequestedAt: z.string().nullable(),
+          changesRequestedNote: z.string().nullable(),
+        })
+      ),
     })
   ),
 });

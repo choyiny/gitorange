@@ -14,7 +14,8 @@ import { GitPushError, ZERO_SHA } from '../git/remote';
 import { MergeConflictError, type GitService } from '../git/service';
 import { onRefsUpdated } from '../actions/trigger';
 import { autoResolveConflicts } from './auto';
-import { latestResolution } from './resolution';
+import { latestResolution, resolutionConfigured } from './resolution';
+import { checksAt, reviewGateFor, reviewReasonText } from '../review/gate';
 import { landTargetIs, landTargetOf } from '../lib/land-target';
 import { stackGate } from '../stack/gate';
 import { onPullClosed } from '../stack/retarget';
@@ -62,7 +63,13 @@ export function squashCredits(
 
 export type LandResult =
   | { ok: true; sha: string; headSha: string }
-  | { ok: false; status: 400 | 409; error: string };
+  | {
+      ok: false;
+      status: 400 | 409;
+      error: string;
+      /** Which gate refused it (absent for other failures). */
+      reason?: 'stack' | 'checks' | 'review';
+    };
 
 /**
  * Squashes a pull request onto the target tip and pushes with compare-and-swap, including any
@@ -81,6 +88,8 @@ export async function landPull(opts: {
   title?: string;
   message?: string;
   resolutionId?: string;
+  /** The head commit the person saw: refused (409) when the branch has moved since. */
+  expectedHead?: string;
   /** Runs follow-up work (Actions, conflict sweeps) after the merge. */
   after: (work: Promise<unknown>) => void;
   /**
@@ -100,11 +109,19 @@ export async function landPull(opts: {
       status: 400,
       error: 'The head branch no longer exists',
     };
+  if (opts.expectedHead && opts.expectedHead !== headSha)
+    return {
+      ok: false,
+      status: 409,
+      error:
+        'The pull request has new commits since you looked. Review them, then merge again.',
+    };
   const gate = await stackGate(db, git, pr);
   if (gate.error)
     return {
       ok: false,
       status: 409,
+      reason: 'stack',
       error:
         'Couldn’t check how it relates to other open pull requests (the stack tree). Try again.',
     };
@@ -112,7 +129,33 @@ export async function landPull(opts: {
     return {
       ok: false,
       status: 409,
+      reason: 'stack',
       error: `${gate.blocks.map((b) => b.message.replace(/[.\s]+$/, '')).join('. ')}. A maintainer can dismiss a dependency on the pull request page.`,
+    };
+  // Checks, then review, for the commit that lands; a person's approval of it satisfies review.
+  const checks = await checksAt(db, pr.repositoryId, headSha);
+  if (checks)
+    return {
+      ok: false,
+      status: 409,
+      reason: 'checks',
+      error:
+        checks.kind === 'failed'
+          ? `${checks.reason} (run #${checks.runNumber}). Fix them, then merge.`
+          : `${checks.reason}. Merge once they pass.`,
+    };
+  const review = await reviewGateFor(
+    db,
+    resolutionConfigured(env),
+    pr,
+    headSha
+  );
+  if (!review.satisfied)
+    return {
+      ok: false,
+      status: 409,
+      reason: 'review',
+      error: `Review isn't satisfied: ${review.reasons.map(reviewReasonText).join('; ')}. Approve the pull request or its flags (an agent's change request needs a new commit or a Dismiss first).`,
     };
   const title = opts.title?.trim() || `${pr.title} (#${pr.number})`;
   const message = opts.message ?? '';
@@ -203,7 +246,8 @@ export async function landPull(opts: {
     } else {
       ({ sha } = await git.merge({
         base: target,
-        head: pr.headRef,
+        // The commit the gates checked, never whatever the branch points at by now.
+        head: headSha,
         method: 'squash',
         message: fullMessage,
         author,

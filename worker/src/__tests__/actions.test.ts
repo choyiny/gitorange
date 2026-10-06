@@ -156,9 +156,13 @@ jobs:
       json: { title: 'Add b', base: 'main', head: 'feature' },
     });
     await settle(s.t);
+    // The pull request's run passed: the merge button refuses while checks run.
+    await s.t.env.DB.prepare(
+      "UPDATE workflow_runs SET status = 'completed', conclusion = 'success'"
+    ).run();
     const merged = await call(s.t, '/api/repos/octocat/app/pulls/1/merge', {
       cookie: s.admin,
-      json: { method: 'rebase' },
+      json: { method: 'rebase', approve: true },
     });
     expect(merged.status).toBe(200);
     const { sha } = (await merged.json()) as { sha: string };

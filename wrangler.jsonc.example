@@ -66,8 +66,8 @@
   ],
   // Daily housekeeping: deletes Actions runs past their retention (Site admin → Actions).
   "triggers": { "crons": ["17 4 * * *", "30 2 * * *"] },
-  // Workers AI: AI conflict resolution (RESOLVER_MODEL) and auto-merge review (SUMMARY_MODEL,
-  // REVIEW_MODEL, and the Clef model named in each repository's .gitorange/review.yml).
+  // Workers AI: AI conflict resolution (RESOLVER_MODEL) and reviewer agents' reviews (SUMMARY_MODEL
+  // one-liners, Clef for which agents review, REVIEW_MODEL for each review).
   "ai": { "binding": "AI" },
   "assets": {
     "binding": "ASSETS",

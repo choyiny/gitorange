@@ -250,7 +250,7 @@ describe('AI conflict resolution', () => {
     expect(d).toMatchObject({ mergeable: true, resolvedByAi: true });
     const merge = await call(t, '/api/repos/octocat/app/pulls/1/merge', {
       cookie: admin,
-      json: {},
+      json: { approve: true },
     });
     expect(merge.status).toBe(200);
     const { sha } = (await merge.json()) as { sha: string };
@@ -337,7 +337,7 @@ describe('AI conflict resolution', () => {
     expect((await detail(t, admin)).resolution?.stale).toBe(true);
     const merge = await call(t, '/api/repos/octocat/app/pulls/1/merge', {
       cookie: admin,
-      json: { resolutionId: id },
+      json: { resolutionId: id, approve: true },
     });
     expect(merge.status).toBe(409);
   });
@@ -698,7 +698,7 @@ describe('many open PRs while main moves', () => {
 
     const merge = await call(t, '/api/repos/octocat/app/pulls/1/merge', {
       cookie: admin,
-      json: {},
+      json: { approve: true },
     });
     expect(merge.status).toBe(200);
   });

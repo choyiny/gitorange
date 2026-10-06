@@ -280,7 +280,7 @@ const getRepositoryInsights: ToolModule = {
     description:
       "KPIs for one repository's pull requests over the last N days (default 30): opened, merged, how many " +
       'GitOrange auto-merged versus a person merged, how many merged with no person involved, how often the ' +
-      'auto-merge review needed a person (flags raised by kind, approved, still pending, median time to ' +
+      'review needed a person (findings by agent, approved, still pending, median time to ' +
       'approval), AI conflict resolution attempts and outcomes, the CI pass rate on pull requests, and median ' +
       'times to merge and to the first green run (in seconds). Use it to see how well agents land changes.',
     annotations: { readOnlyHint: true, title: 'Get repository insights' },
@@ -319,8 +319,8 @@ const getRepositoryInsights: ToolModule = {
     if (!perms.read) throw notFound;
     const canonical = `${found.namespace.username}/${found.repo.name}`;
     const insights = await repoInsights(
+      ctx.env,
       ctx.db,
-      gitFor(ctx.env, found.repo),
       found.repo,
       days as number
     );

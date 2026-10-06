@@ -3,16 +3,18 @@ import { expect } from 'vitest';
 import { drizzle } from 'drizzle-orm/d1';
 import { schema } from '../../db/schema';
 import type { StepRunner } from '../../merge/resolution';
-import { executeClassification } from '../../review/classify';
 import {
   autoResolveConflicts,
   executeSweep,
   type SweepParams,
 } from '../../merge/auto';
 import type { ClassifierAnswer, Repository } from '../../db/app.schema';
-import type { ReviewModels } from '../../review/models';
+import { executeHeadReview, executeReviewerRetry } from '../../review/head';
+import type { AgentReviewModels } from '../../review/models';
+import { STACKING_DEFAULTS } from '../../stack/defaults';
 import { executeStacking, type StackParams } from '../../stack/discover';
 import { executeReconcile, type ReconcileParams } from '../../stack/reconcile';
+import { AGENT_MD, agentModels, invitedAgent } from './reviews';
 import type {
   DecideInput,
   ExplainInput,
@@ -24,13 +26,6 @@ import type {
 } from '../../stack/models';
 import { bootstrapAdmin, call, makeEnv, settle, type TestEnv } from './app';
 import { commitPaths } from './seed';
-
-// Checks are required (and none ever run), so auto-merge waits and the PRs stay open.
-export const POLICY = (extra = '') => `
-model: clef
-checks:
-  require: all
-${extra}`;
 
 /** The #28/#29 shape: a config file and docs on main. */
 export const MAIN = {
@@ -46,16 +41,50 @@ export const step = {
   sleep: async () => {},
 } as unknown as StepRunner;
 
-export const reviewModels: ReviewModels = {
-  summarize: async (f) => `Changes ${f.path}.`,
-  classify: async () => ({}),
-  investigate: async () => ({
-    detail: '',
-    diagram: null,
-    snippets: [],
-    paths: [],
+/** Agent reviews that raise one finding for a person, so nothing in these tests lands on its own. */
+export const holdReviews: AgentReviewModels = agentModels({
+  review: () => ({
+    verdict: 'findings',
+    summary: 'Hold for a person.',
+    findings: [
+      {
+        kind: 'needs_person',
+        title: 'Hold',
+        detail: 'A person decides when this lands.',
+        changes: [],
+        diagram: null,
+        snippets: [],
+        paths: [],
+      },
+    ],
   }),
-};
+}).models;
+
+/** Runs only pull request #number's head review, with an agent that approves; other reviews stay unrun. */
+export async function approveReviewOf(t: TestEnv, number: number) {
+  await settle(t);
+  const pr = (await t.env.DB.prepare(
+    `SELECT p.id FROM pull_requests p JOIN repositories r ON r.id = p.repository_id
+      WHERE r.name = 'app' AND p.number = ?`
+  )
+    .bind(number)
+    .first<{ id: string }>())!;
+  const run = t.actions.resolutions.find((r) =>
+    (r.params as { headReview?: { id: string } }).headReview?.id.startsWith(
+      `${pr.id}-`
+    )
+  )!;
+  await executeHeadReview(
+    {
+      env: t.env,
+      db: drizzle(t.env.DB, { schema }),
+      step,
+      models: agentModels().models,
+    },
+    (run.params as { headReview: { id: string } }).headReview.id
+  );
+  await settle(t);
+}
 
 /** `triaged`: what Clef was asked; `related`: what the reasoning model was asked. */
 export type StackCalls = {
@@ -156,7 +185,9 @@ export const ran = new WeakMap<TestEnv, Set<string>>();
 export async function drain(
   t: TestEnv,
   models: StackModels,
-  stackStep: StepRunner = step
+  stackStep: StepRunner = step,
+  reviews: AgentReviewModels = holdReviews,
+  tuning?: Partial<typeof STACKING_DEFAULTS>
 ) {
   const db = drizzle(t.env.DB, { schema });
   const done = ran.get(t) ?? new Set<string>();
@@ -167,20 +198,26 @@ export async function drain(
     if (!next) return;
     done.add(next.id);
     const p = next.params as {
-      classificationId?: string;
+      headReview?: { id: string };
+      reviewer?: { id: string };
       sweep?: SweepParams;
       stack?: StackParams;
       reconcile?: ReconcileParams;
     };
-    if (p.classificationId)
-      await executeClassification(
-        { env: t.env, db, step, models: reviewModels },
-        p.classificationId
+    if (p.headReview)
+      await executeHeadReview(
+        { env: t.env, db, step, models: reviews },
+        p.headReview.id
+      );
+    else if (p.reviewer)
+      await executeReviewerRetry(
+        { env: t.env, db, step, models: reviews },
+        p.reviewer.id
       );
     else if (p.sweep) await executeSweep({ env: t.env, db, step }, p.sweep);
     else if (p.stack)
       await executeStacking(
-        { env: t.env, db, step: stackStep, models },
+        { env: t.env, db, step: stackStep, models, tuning },
         p.stack
       );
     else if (p.reconcile)
@@ -188,9 +225,9 @@ export async function drain(
   }
 }
 
-/** A repository with `review.yml` on main (none when `policy` is null), and helpers to open PRs from branches off main. */
-export async function repoWithPolicy(
-  policy: string | null = POLICY(),
+/** octocat/app with MAIN on main, @secagent invited unless `withAgent` is false, and a helper to open PRs. */
+export async function repoWithAgent(
+  withAgent = true,
   visibility: 'private' | 'internal' = 'private'
 ) {
   const t = makeEnv({ actions: true });
@@ -200,10 +237,9 @@ export async function repoWithPolicy(
     json: { name: 'app', visibility },
   });
   const repo = [...t.fake.repos.values()][0];
-  const files: Record<string, string> =
-    policy === null
-      ? { ...MAIN }
-      : { ...MAIN, '.gitorange/review.yml': policy };
+  // Auto-merge is on where agents review. Its review never runs in these tests unless a test runs it.
+  if (withAgent) await invitedAgent(t, admin, 'secagent', AGENT_MD());
+  const files: Record<string, string> = { ...MAIN };
   const main = await commitPaths(repo, 'main', files, 'base');
   async function open(
     branch: string,

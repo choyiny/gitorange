@@ -23,6 +23,7 @@ import {
 } from '@/lib/uiApi';
 import { useCurrentUser } from '@/lib/auth';
 import { ApiError, errorMessage } from '@/lib/api';
+import { blocking, reasonText } from '@/lib/pullState';
 import { fullDate, timeAgo } from '@/lib/format';
 import { Avatar } from '@/components/Avatar';
 import { CommitList } from '@/components/CommitList';
@@ -31,7 +32,8 @@ import { MarkdownEditor } from '@/components/CommentForm';
 import { Markdown } from '@/components/Markdown';
 import { ChecksBox } from '@/components/Checks';
 import { AiResolution } from '@/components/AiResolution';
-import { AutoMergeStatus, ReviewComment } from '@/components/AutoMergeReview';
+import { AutoMergeStatus } from '@/components/AutoMergeReview';
+import { ReviewersBox } from '@/components/ReviewersBox';
 import { PullStateLabel, PullStateReasons } from '@/components/PullStateLabel';
 import { PullEventItem } from '@/components/PullEvents';
 import { Spinner } from '@/components/Spinner';
@@ -131,10 +133,16 @@ function MergeBox({
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const open = () => {
+    setError(null);
     setTitle(`${pr.title} (#${pr.number})`);
     setMessage('');
     setConfirming(true);
   };
+  // Review isn't satisfied yet: merging records this person's approval of the commit shown here.
+  const needsApproval = !!d.review?.verdict && !d.review.verdict.satisfied;
+  const changesRequested = !!d.review?.verdict?.reasons.some(
+    (r) => r.kind === 'agent_changes_requested'
+  );
   const merge = async () => {
     setBusy(true);
     setError(null);
@@ -142,11 +150,20 @@ function MergeBox({
       await api.mergePull(repo.owner.username, repo.name, pr.number, {
         title,
         message,
+        // The commit this page shows: a push since loading is refused (409), never merged or approved unseen.
+        ...(d.headSha ? { headSha: d.headSha } : {}),
+        ...(needsApproval ? { approve: true } : {}),
       });
       setConfirming(false);
       onDone();
     } catch (e) {
       setError(errorMessage(e));
+      if (e instanceof ApiError && e.status === 409) {
+        // The branch moved: reload so the page shows the new commits, and close the confirm so the next
+        // click can't approve or merge a commit nobody looked at. The error stays visible below.
+        setConfirming(false);
+        void Promise.resolve(onDone()).catch(() => {});
+      }
     } finally {
       setBusy(false);
     }
@@ -163,6 +180,16 @@ function MergeBox({
   const confirmBox = (
     <div className="Box-row">
       {error && <div className="flash flash-error mb-2">{error}</div>}
+      {needsApproval && (
+        <p className="f6 mb-2">
+          Review isn&apos;t satisfied (
+          {d.pullState?.reasons.filter(blocking).map(reasonText).join('; ') ||
+            'not approved'}
+          ). Merging records your approval of this commit.
+          {changesRequested &&
+            ' Approval does not override an agent’s change request: dismiss it first, or the merge is refused.'}
+        </p>
+      )}
       <p className="f6 color-fg-muted mb-2">
         {d.resolvedByAi
           ? 'The commits from this branch, with their conflicts resolved, will be squashed into one commit and added to '
@@ -184,7 +211,11 @@ function MergeBox({
       />
       <div className="d-flex" style={{ gap: 8 }}>
         <button className="btn btn-primary" disabled={busy} onClick={merge}>
-          {busy ? 'Merging…' : 'Confirm rebase and merge'}
+          {busy
+            ? 'Merging…'
+            : needsApproval
+              ? 'Confirm approve and merge'
+              : 'Confirm rebase and merge'}
         </button>
         <button className="btn" onClick={() => setConfirming(false)}>
           Cancel
@@ -258,15 +289,18 @@ function MergeBox({
           </div>
         </div>
         {showAi && <AiResolution repo={repo} d={d} onChange={onDone} />}
-        {d.review && <AutoMergeStatus repo={repo} d={d} onChange={onDone} />}
+        {d.review && d.review.autoMerge.state !== 'off' && (
+          <AutoMergeStatus repo={repo} d={d} onChange={onDone} />
+        )}
         {d.canMerge &&
           d.mergeable &&
           (confirming ? (
             confirmBox
           ) : (
             <div className="Box-row">
+              {error && <div className="flash flash-error mb-2">{error}</div>}
               <button className="btn btn-primary" onClick={open}>
-                Rebase and merge
+                {needsApproval ? 'Approve and merge' : 'Rebase and merge'}
               </button>
             </div>
           ))}
@@ -300,10 +334,10 @@ function Conversation({
   // Index of the first comment after the review (comments.length: after them all).
   const reviewAt = !d.review
     ? -1
-    : d.review.classification
+    : d.review.createdAt
       ? (() => {
           const at = d.comments.findIndex(
-            (c) => c.createdAt > d.review!.classification!.createdAt
+            (c) => c.createdAt > d.review!.createdAt!
           );
           return at < 0 ? d.comments.length : at;
         })()
@@ -355,7 +389,7 @@ function Conversation({
               <PullEventItem key={e.id} e={e} repoPath={`/${repo.fullName}`} />
             ))}
             {reviewAt === i && (
-              <ReviewComment repo={repo} d={d} onChange={refresh} />
+              <ReviewersBox repo={repo} d={d} onChange={refresh} />
             )}
             <TimelineComment
               c={c}
@@ -368,7 +402,7 @@ function Conversation({
           <PullEventItem key={e.id} e={e} repoPath={`/${repo.fullName}`} />
         ))}
         {reviewAt === d.comments.length && (
-          <ReviewComment repo={repo} d={d} onChange={refresh} />
+          <ReviewersBox repo={repo} d={d} onChange={refresh} />
         )}
         {pr.state === 'merged' && (
           <>
@@ -538,9 +572,13 @@ export default function PullView() {
       const review = d.review;
       if (
         review &&
-        (!review.classification ||
-          (review.classification.status !== 'done' &&
-            review.classification.status !== 'failed'))
+        ((review.status !== null &&
+          review.status !== 'done' &&
+          review.status !== 'failed') ||
+          (review.status === null &&
+            review.agentsInvited &&
+            d.pull.state === 'open') ||
+          review.reviewers.some((r) => r.status === 'reviewing'))
       )
         return 3000;
       if (
@@ -578,6 +616,9 @@ export default function PullView() {
   const refresh = () => {
     void qc.invalidateQueries({ queryKey: qk.repo(o, repo.name) });
     void qc.invalidateQueries({ queryKey: ['repo', o, repo.name, 'pulls'] });
+    // Approving or merging changes the Approvals list and an agent's profile (its recent reviews).
+    void qc.invalidateQueries({ queryKey: qk.approvals });
+    void qc.invalidateQueries({ queryKey: ['namespace'] });
     return qc.invalidateQueries({ queryKey: qk.pull(o, repo.name, num) });
   };
   const base = `/${repo.fullName}/pull/${num}`;

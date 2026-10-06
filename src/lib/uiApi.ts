@@ -124,9 +124,16 @@ export type Pull = {
   headSha?: string | null;
   /** Pull request lists only (open): the current AI conflict resolution. */
   aiResolution?: 'queued' | 'running' | 'proposed' | 'failed' | null;
-  /** Pull request lists only (open, under a review.yml): the head commit's review. */
+  /** Pull request lists only (open): the head commit's review in a word (agents, or a person's approval). */
   review?: {
-    state: 'reviewing' | 'failed' | 'review_required' | 'approved';
+    state:
+      | 'reviewing'
+      | 'failed'
+      | 'changes_requested'
+      | 'review_required'
+      | 'needs_approval'
+      | 'approved';
+    /** Agents' findings waiting for a person. */
     flags: number;
   } | null;
   /** Pull request lists only (open): whose move it is. */
@@ -219,37 +226,56 @@ export type PullDetail = {
   resolvedByAi: boolean;
   aiResolution: boolean;
   resolution: MergeResolution | null;
-  /** Auto-merge review; null when the target branch has no .gitorange/review.yml. */
+  /** The head commit's review by agents and people. */
   review: PullReview | null;
   canMerge: boolean;
+  /** People who approved the head commit, oldest first. */
+  approvals: { user: User; createdAt: string }[];
   /** How this pull request stacks with other open ones; null once it isn't open. */
   stack: StackNode | null;
   pullState: PullState | null;
   events: PullEvent[];
 };
-export type ClassifierAnswer =
-  | { type: 'noul'; value: number }
-  | {
-      type: 'choice' | 'score';
-      value: string | number;
-      confidence: number;
-      probabilities: Record<string, number>;
-    };
 export type ReviewFlag = {
   id: string;
-  source: 'question' | 'limit';
-  key: string;
+  /** agent: a reviewer agent's finding; question/limit: a retired review.yml flag (history). */
+  source: 'question' | 'limit' | 'agent';
+  /** needs_person: a person approves it; change_requested: the PR's agent changes it (a person may dismiss it). */
+  kind: 'needs_person' | 'change_requested';
   title: string;
-  value: unknown;
   paths: string[];
   detail: string | null;
   detailModel: string | null;
+  agentSha: string | null;
   approvedBy: User | null;
   approvedAt: string | null;
   /** Someone asked for changes instead of approving; cleared when it's approved. */
   changesRequestedBy: User | null;
   changesRequestedAt: string | null;
   changesRequestedNote: string | null;
+};
+export type ReviewerStatus =
+  | 'not_needed'
+  | 'reviewing'
+  | 'approved'
+  | 'flagged'
+  | 'changes_requested'
+  | 'failed';
+export type Reviewer = {
+  id: string;
+  agent: User;
+  /** `<handle>/<handle>`, for the agent_sha link. */
+  agentRepository: string | null;
+  invited: boolean;
+  status: ReviewerStatus;
+  requested: boolean;
+  probability: number | null;
+  agentSha: string | null;
+  summary: string | null;
+  error: string | null;
+  createdAt: string;
+  finishedAt: string | null;
+  flags: ReviewFlag[];
 };
 /** One instance setting in Site admin (GET /api/admin/settings). */
 export type InstanceSetting = {
@@ -283,10 +309,21 @@ export type ApprovalItem = {
     title: string;
     author: User | null;
     updatedAt: string;
+    /** The head commit the page shows; what Approve approves. Null when its branch is gone. */
+    headSha: string | null;
   };
   reviewFailed: string | null;
   resolutionFailed: string | null;
-  flags: ReviewFlag[];
+  /** No agent was requested: a person approves the commit. */
+  needsApproval: boolean;
+  /** Agents waiting on a person: failed reviews, and findings for a person. */
+  agents: {
+    reviewerId: string;
+    agent: User;
+    status: 'flagged' | 'changes_requested' | 'failed';
+    error: string | null;
+    flags: ReviewFlag[];
+  }[];
   pullState: PullState | null;
   /** Must account for #pr, with nothing new since `since` (24 hours or more). */
   stackStale: { pr: number; since: string }[];
@@ -300,33 +337,31 @@ export type ApprovalsPage = {
   nextCursor: string | null;
 };
 export type PullReview = {
-  classification: {
-    id: string;
-    status: 'summarizing' | 'classifying' | 'investigating' | 'done' | 'failed';
-    verdict: 'auto' | 'human' | null;
-    headSha: string;
-    summaryModel: string;
-    classifierModel: string;
-    files: {
-      path: string;
-      status: 'added' | 'removed' | 'modified';
-      additions: number;
-      deletions: number;
-      summary: string;
-    }[];
-    errorMessage: string | null;
-    durationMs: number | null;
-    createdAt: string;
-  } | null;
-  questions: {
-    id: string;
-    ask: string;
-    type: 'noul' | 'choice' | 'score';
-    threshold: string;
-    answer: ClassifierAnswer | null;
-    flagged: boolean;
+  headSha: string;
+  agentsInvited: boolean;
+  status:
+    | 'summarizing'
+    | 'triggering'
+    | 'reviewing'
+    | 'done'
+    | 'failed'
+    | 'classifying'
+    | 'investigating'
+    | null;
+  errorMessage: string | null;
+  summaryModel: string | null;
+  files: {
+    path: string;
+    status: 'added' | 'removed' | 'modified';
+    additions: number;
+    deletions: number;
+    summary: string;
   }[];
-  flags: ReviewFlag[];
+  createdAt: string | null;
+  durationMs: number | null;
+  reviewers: Reviewer[];
+  legacy: { createdAt: string; flags: ReviewFlag[] } | null;
+  verdict: { satisfied: boolean; reasons: PullReason[] } | null;
   autoMerge: {
     state: 'off' | 'disabled' | 'waiting' | 'blocked' | 'ready';
     reasons: string[];
@@ -368,7 +403,20 @@ export type Namespace = {
   owner: User & { createdAt: string; email: string | null };
   repositories: Repo[];
   /** Set when the user is a reviewer agent. */
-  agent: (Agent & { invitedTo: Repo[] }) | null;
+  agent:
+    | (Agent & {
+        invitedTo: Repo[];
+        recentReviews: {
+          repository: string;
+          number: number;
+          title: string;
+          headSha: string;
+          agentSha: string | null;
+          status: ReviewerStatus;
+          createdAt: string;
+        }[];
+      })
+    | null;
 };
 export type AlternateEmail = {
   id: string;
@@ -536,7 +584,7 @@ export type RepoInsights = {
     pendingNow: number;
     pendingPullsNow: number;
     byKind: {
-      source: 'question' | 'limit';
+      source: 'question' | 'limit' | 'agent';
       key: string;
       title: string;
       raised: number;
@@ -823,7 +871,14 @@ export const api = {
     o: string,
     n: string,
     num: number,
-    body: { title?: string; message?: string; resolutionId?: string }
+    body: {
+      title?: string;
+      message?: string;
+      resolutionId?: string;
+      approve?: boolean;
+      /** The head commit the page shows; the server answers 409 if the branch has moved. */
+      headSha?: string;
+    }
   ) =>
     apiFetch<{ sha: string }>(`${r(o, n)}/pulls/${num}/merge`, {
       method: 'POST',
@@ -929,6 +984,17 @@ export const api = {
     apiFetch(`${r(o, n)}/pulls/${num}/review/flags/${id}/request-changes`, {
       method: 'POST',
       json: { note: note.trim() || null },
+    }),
+  approvePull: (o: string, n: string, num: number, headSha: string) =>
+    apiFetch(`${r(o, n)}/pulls/${num}/approval`, {
+      method: 'POST',
+      json: { headSha },
+    }),
+  withdrawApproval: (o: string, n: string, num: number) =>
+    apiFetch(`${r(o, n)}/pulls/${num}/approval`, { method: 'DELETE' }),
+  retryReviewer: (o: string, n: string, num: number, id: string) =>
+    apiFetch(`${r(o, n)}/pulls/${num}/reviewers/${id}/retry`, {
+      method: 'POST',
     }),
   retryReview: (o: string, n: string, num: number) =>
     apiFetch(`${r(o, n)}/pulls/${num}/review/retry`, { method: 'POST' }),

@@ -7,6 +7,8 @@ export type AiFeature =
   | 'review-classify'
   | 'review-select'
   | 'review-investigate'
+  | 'review-trigger'
+  | 'review-agent'
   | 'merge-resolution'
   | 'stack-decide'
   | 'stack-explain'

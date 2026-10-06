@@ -316,10 +316,6 @@ export const mergeResolutions = sqliteTable(
   (t) => [index('merge_resolutions_pr_idx').on(t.pullRequestId, t.createdAt)]
 );
 
-// ── Auto-merge review ────────────────────────────────────────────────────────
-// One classification per PR head commit and review.yml version; approving every flag clears
-// it for auto-merge.
-
 // ── Instance settings ────────────────────────────────────────────────────────
 // Instance-wide settings a site admin changes without a deploy (worker/src/lib/settings.ts is
 // the registry of keys). A missing row means the default: the wrangler var, or a built-in value.
@@ -332,6 +328,11 @@ export const instanceSettings = sqliteTable('instance_settings', {
   }),
   updatedAt: integer('updated_at', { mode: 'timestamp' }).notNull(),
 });
+
+// ── Reviews ──────────────────────────────────────────────────────────────────
+// One review per PR head commit (id `<pull request id>-<head sha>`): its one-liners and status; its agents are
+// pr_reviewers rows, their findings pr_review_flags. Rows with other ids are review.yml reviews from before reviewer
+// agents (history).
 
 export type FileSummary = {
   path: string;
@@ -364,18 +365,30 @@ export const prClassifications = sqliteTable(
       .notNull()
       .references(() => pullRequests.id, { onDelete: 'cascade' }),
     headSha: text('head_sha').notNull(),
-    // Blob sha of the `.gitorange/review.yml` the target branch had when this started.
+    // Unused since reviewer agents (review.yml is gone): new rows write ''. Historical rows hold the blob sha of the
+    // review.yml they ran under. Kept until a follow-up migration drops it; never read it.
     policySha: text('policy_sha').notNull(),
+    // summarizing → triggering (Clef) → reviewing (agents) → done | failed. classifying/investigating: review.yml
+    // reviews before reviewer agents (historical rows only).
     status: text('status', {
-      enum: ['summarizing', 'classifying', 'investigating', 'done', 'failed'],
+      enum: [
+        'summarizing',
+        'triggering',
+        'reviewing',
+        'done',
+        'failed',
+        'classifying',
+        'investigating',
+      ],
     }).notNull(),
     summaryModel: text('summary_model').notNull(),
     classifierModel: text('classifier_model').notNull(),
     files: text('files', { mode: 'json' }).$type<FileSummary[]>(),
+    // Unused since reviewer agents (null on new rows; review.yml answers and verdict on historical ones). Kept until
+    // a follow-up migration drops them; never read them.
     answers: text('answers', { mode: 'json' }).$type<
       Record<string, ClassifierAnswer>
     >(),
-    // auto: nothing flagged; human: flags need approval. Null until done (or when it failed).
     verdict: text('verdict', { enum: ['auto', 'human'] }),
     errorMessage: text('error_message'),
     durationMs: integer('duration_ms'),
@@ -383,6 +396,8 @@ export const prClassifications = sqliteTable(
     finishedAt: integer('finished_at', { mode: 'timestamp' }),
   },
   (t) => [
+    // policy_sha is '' on every new row, so this is unique per (pull request, head) — matching the head review's id
+    // `<pull request id>-<head sha>`.
     uniqueIndex('pr_classifications_pr_head_policy_uq').on(
       t.pullRequestId,
       t.headSha,
@@ -398,9 +413,8 @@ export const prReviewFlags = sqliteTable(
     classificationId: text('classification_id')
       .notNull()
       .references(() => prClassifications.id, { onDelete: 'cascade' }),
-    // question: a review.yml question crossed its threshold; limit: the pull request is too
-    // large, or a file couldn't be summarized.
-    source: text('source', { enum: ['question', 'limit'] }).notNull(),
+    // agent: a reviewer agent's finding. question/limit: review.yml flags (historical).
+    source: text('source', { enum: ['question', 'limit', 'agent'] }).notNull(),
     // The question id, or the limit's name.
     key: text('key').notNull(),
     value: text('value', { mode: 'json' }).$type<unknown>(),
@@ -420,6 +434,18 @@ export const prReviewFlags = sqliteTable(
     ),
     changesRequestedAt: integer('changes_requested_at', { mode: 'timestamp' }),
     changesRequestedNote: text('changes_requested_note'),
+    // The agent that raised it (agent findings only); its kind; the agent repository commit it reviewed at.
+    // The database's foreign key is NO ACTION, not SET NULL: drizzle's ALTER TABLE ADD (migration 0018) can't carry
+    // an ON DELETE clause. Never rely on SET NULL: delete or null these rows before an agents row goes.
+    agentId: text('agent_id').references(() => agents.userId, {
+      onDelete: 'set null',
+    }),
+    // needs_person: a person approves it. change_requested: the PR's agent changes it (a person may dismiss it,
+    // which sets approved_*). Historical review.yml flags are needs_person.
+    kind: text('kind', { enum: ['needs_person', 'change_requested'] })
+      .notNull()
+      .default('needs_person'),
+    agentSha: text('agent_sha'),
     createdAt: integer('created_at', { mode: 'timestamp' }).notNull(),
   },
   (t) => [
@@ -430,6 +456,70 @@ export const prReviewFlags = sqliteTable(
     ),
   ]
 );
+
+export const reviewerStatuses = [
+  'not_needed',
+  'reviewing',
+  'approved',
+  'flagged',
+  'changes_requested',
+  'failed',
+] as const;
+export type ReviewerStatus = (typeof reviewerStatuses)[number];
+
+// One invited agent on one head commit of a pull request: whether Clef asked it to review, and how its review
+// ended. A new head gets new rows; older ones are history.
+export const prReviewers = sqliteTable(
+  'pr_reviewers',
+  {
+    id: text('id').primaryKey(),
+    pullRequestId: text('pull_request_id')
+      .notNull()
+      .references(() => pullRequests.id, { onDelete: 'cascade' }),
+    headSha: text('head_sha').notNull(),
+    agentId: text('agent_id')
+      .notNull()
+      .references(() => agents.userId, { onDelete: 'cascade' }),
+    // Clef's probability that the agent's trigger applies; null when Clef wasn't asked or didn't answer.
+    probability: real('probability'),
+    requested: integer('requested', { mode: 'boolean' }).notNull(),
+    // The agent repository commit the review reads AGENT.md and knowledge/ at.
+    agentSha: text('agent_sha'),
+    status: text('status', { enum: reviewerStatuses }).notNull(),
+    // The agent's one-sentence summary, or a note ("Removed from the repository.").
+    summary: text('summary'),
+    error: text('error'),
+    createdAt: integer('created_at', { mode: 'timestamp' }).notNull(),
+    finishedAt: integer('finished_at', { mode: 'timestamp' }),
+  },
+  (t) => [
+    uniqueIndex('pr_reviewers_pr_head_agent_uq').on(
+      t.pullRequestId,
+      t.headSha,
+      t.agentId
+    ),
+    // An agent's recent reviews (its profile), and cancelling its reviews.
+    index('pr_reviewers_agent_created_idx').on(t.agentId, t.createdAt),
+  ]
+);
+export type PrReviewer = typeof prReviewers.$inferSelect;
+
+// A person's approval of one head commit of a pull request. A new commit needs a new approval.
+export const prApprovals = sqliteTable(
+  'pr_approvals',
+  {
+    pullRequestId: text('pull_request_id')
+      .notNull()
+      .references(() => pullRequests.id, { onDelete: 'cascade' }),
+    headSha: text('head_sha').notNull(),
+    userId: text('user_id')
+      .notNull()
+      .references(() => users.id, { onDelete: 'cascade' }),
+    createdAt: integer('created_at', { mode: 'timestamp' }).notNull(),
+  },
+  (t) => [primaryKey({ columns: [t.pullRequestId, t.headSha, t.userId] })]
+);
+export type PrApproval = typeof prApprovals.$inferSelect;
 
 // ── Stacking ─────────────────────────────────────────────────────────────────
 
@@ -520,7 +610,10 @@ export type PrEventKind =
   | 'ordered'
   | 'must_account_for'
   | 'accounted_for'
-  | 'dismissed';
+  | 'dismissed'
+  // A person approved a head commit (Decision 22), or withdrew that approval.
+  | 'approved'
+  | 'withdrawn';
 
 export const prEvents = sqliteTable(
   'pr_events',
@@ -541,6 +634,8 @@ export const prEvents = sqliteTable(
         'must_account_for',
         'accounted_for',
         'dismissed',
+        'approved',
+        'withdrawn',
       ],
     }).notNull(),
     // state_changed: the state it changed to.

@@ -3,7 +3,6 @@ import { describe, expect, it } from 'vitest';
 import { drizzle } from 'drizzle-orm/d1';
 import { schema } from '../db/schema';
 import type { StepRunner } from '../merge/resolution';
-import { executeClassification } from '../review/classify';
 import { executeStacking, type StackParams } from '../stack/discover';
 import { executeReconcile } from '../stack/reconcile';
 import { contains } from '../stack/contains';
@@ -11,14 +10,15 @@ import { pullStates } from '../pulls/signals';
 import { findRepoById, gitFor } from '../lib/repos';
 import type { Relation } from '../stack/models';
 import { addMember, call, settle, type TestEnv } from './helpers/app';
+import { agentModels } from './helpers/reviews';
 import {
-  POLICY,
   step,
-  reviewModels,
+  holdReviews,
+  approveReviewOf,
   CONFLICT,
   stackModels,
   drain,
-  repoWithPolicy,
+  repoWithAgent,
   pushTo,
   events,
   SETUP_CHECKS,
@@ -26,23 +26,17 @@ import {
   MUST,
 } from './helpers/stacking';
 
+/** An agent Clef says isn't needed: reviews raise no findings, so Approvals counts only stack entries. */
+const notNeeded = agentModels({ probabilities: { secagent: 0 } }).models;
+
 describe('stack gate', () => {
   it('holds auto-merge until discovery has checked the PR', async () => {
-    const { t, open } = await repoWithPolicy(
-      'model: clef\nchecks:\n  require: none\nstacking:\n  enabled: true\n'
-    );
+    const { t, open } = await repoWithAgent(true);
     const db = drizzle(t.env.DB, { schema });
     const { models } = stackModels();
     await open('one', { 'a.txt': 'a\n' }, 'One');
     await open('two', { 'b.txt': 'b\n' }, 'Two');
-    await settle(t);
-    const review = t.actions.resolutions.find(
-      (r) => (r.params as { classificationId?: string }).classificationId
-    )!;
-    await executeClassification(
-      { env: t.env, db, step, models: reviewModels },
-      (review.params as { classificationId: string }).classificationId
-    );
+    await approveReviewOf(t, 1);
     const state = () =>
       t.env.DB.prepare(
         'SELECT state FROM pull_requests WHERE number = 1'
@@ -59,7 +53,7 @@ describe('stack gate', () => {
   });
 
   it('refuses to land a PR that must account for another, naming it', async () => {
-    const { t, admin, open } = await repoWithPolicy();
+    const { t, admin, open } = await repoWithAgent();
     const { models } = stackModels({
       related: () => true,
       relation: () => MUST,
@@ -69,7 +63,7 @@ describe('stack gate', () => {
     await drain(t, models);
     const res = await call(t, '/api/repos/octocat/app/pulls/2/merge', {
       cookie: admin,
-      json: {},
+      json: { approve: true },
     });
     expect(res.status).toBe(409);
     expect(((await res.json()) as { error: string }).error).toMatch(
@@ -87,7 +81,7 @@ describe('stack gate', () => {
   });
 
   it('blocks on a landed prerequisite without retargeting', async () => {
-    const { t, admin, open } = await repoWithPolicy();
+    const { t, admin, open } = await repoWithAgent();
     const { models } = stackModels({
       related: () => true,
       relation: (i) =>
@@ -101,7 +95,7 @@ describe('stack gate', () => {
       (
         await call(t, '/api/repos/octocat/app/pulls/1/merge', {
           cookie: admin,
-          json: {},
+          json: { approve: true },
         })
       ).status
     ).toBe(200);
@@ -115,14 +109,14 @@ describe('stack gate', () => {
     ).toEqual({ baseRef: 'main' });
     const res = await call(t, '/api/repos/octocat/app/pulls/2/merge', {
       cookie: admin,
-      json: {},
+      json: { approve: true },
     });
     expect(res.status).toBe(409);
     expect(((await res.json()) as { error: string }).error).toMatch(/#1/);
   });
 
   it('when the tree can’t be read: the PR page waits, merging refuses', async () => {
-    const { t, admin, open } = await repoWithPolicy();
+    const { t, admin, open } = await repoWithAgent();
     const { models } = stackModels();
     await open('one', { 'a.txt': 'a\n' }, 'One');
     await open('two', { 'b.txt': 'b\n' }, 'Two');
@@ -143,22 +137,29 @@ describe('stack gate', () => {
     );
     const merge = await call(t, '/api/repos/octocat/app/pulls/2/merge', {
       cookie: admin,
-      json: {},
+      json: { approve: true },
     });
     expect(merge.status).toBe(409);
     expect(((await merge.json()) as { error: string }).error).toMatch(/stack/i);
   });
 
   it('never calls a PR Ready when its tree can’t be read, even without AI review', async () => {
-    const { t, open } = await repoWithPolicy(null);
+    const { t, admin, open } = await repoWithAgent(false);
     const { models } = stackModels();
     await open('one', { 'a.txt': 'a\n' }, 'One');
     await open('two', { 'b.txt': 'b\n' }, 'Two');
     await drain(t, models);
     await t.env.DB.prepare("UPDATE pr_edges SET files = '{broken'").run();
+    // Approved, so the unreadable tree is all that holds them.
+    for (const n of [1, 2])
+      await call(t, `/api/repos/octocat/app/pulls/${n}/approval`, {
+        cookie: admin,
+        method: 'POST',
+      });
+    await settle(t);
     const db = drizzle(t.env.DB, { schema });
     const repoId = (await t.env.DB.prepare(
-      'SELECT id FROM repositories'
+      "SELECT id FROM repositories WHERE name = 'app'"
     ).first<{ id: string }>())!.id;
     const found = await findRepoById(db, repoId);
     const prs = await db.query.pullRequests.findMany();
@@ -177,21 +178,12 @@ describe('stack gate', () => {
   });
 
   it('auto-merges the other side of a pair once a run checks it', async () => {
-    const { t, open } = await repoWithPolicy(
-      'model: clef\nchecks:\n  require: none\nstacking:\n  enabled: true\n'
-    );
+    const { t, open } = await repoWithAgent(true);
     const db = drizzle(t.env.DB, { schema });
     const { models } = stackModels();
     await open('one', { 'a.txt': 'a\n' }, 'One');
     await open('two', { 'b.txt': 'b\n' }, 'Two');
-    await settle(t);
-    const review = t.actions.resolutions.find(
-      (r) => (r.params as { classificationId?: string }).classificationId
-    )!;
-    await executeClassification(
-      { env: t.env, db, step, models: reviewModels },
-      (review.params as { classificationId: string }).classificationId
-    );
+    await approveReviewOf(t, 1);
     const state = (n: number) =>
       t.env.DB.prepare('SELECT state FROM pull_requests WHERE number = ?')
         .bind(n)
@@ -210,7 +202,7 @@ describe('stack gate', () => {
   });
 
   it('lands once a must-account-for edge is dismissed', async () => {
-    const { t, admin, open } = await repoWithPolicy();
+    const { t, admin, open } = await repoWithAgent();
     const { models } = stackModels({
       related: () => true,
       relation: () => MUST,
@@ -220,7 +212,7 @@ describe('stack gate', () => {
     await drain(t, models);
     const refused = await call(t, '/api/repos/octocat/app/pulls/2/merge', {
       cookie: admin,
-      json: {},
+      json: { approve: true },
     });
     expect(refused.status).toBe(409);
     expect(((await refused.json()) as { error: string }).error).toMatch(
@@ -233,13 +225,13 @@ describe('stack gate', () => {
       .run();
     const res = await call(t, '/api/repos/octocat/app/pulls/2/merge', {
       cookie: admin,
-      json: {},
+      json: { approve: true },
     });
     expect(res.status).toBe(200);
   });
 
   it('lands once a landed prerequisite is accounted for', async () => {
-    const { t, admin, open } = await repoWithPolicy();
+    const { t, admin, open } = await repoWithAgent();
     const { models } = stackModels({
       related: () => true,
       relation: (i) =>
@@ -253,7 +245,7 @@ describe('stack gate', () => {
       (
         await call(t, '/api/repos/octocat/app/pulls/1/merge', {
           cookie: admin,
-          json: {},
+          json: { approve: true },
         })
       ).status
     ).toBe(200);
@@ -261,7 +253,7 @@ describe('stack gate', () => {
     await drain(t, models);
     const refused = await call(t, '/api/repos/octocat/app/pulls/2/merge', {
       cookie: admin,
-      json: {},
+      json: { approve: true },
     });
     expect(refused.status).toBe(409);
     expect(((await refused.json()) as { error: string }).error).not.toMatch(
@@ -274,7 +266,7 @@ describe('stack gate', () => {
       .run();
     const res = await call(t, '/api/repos/octocat/app/pulls/2/merge', {
       cookie: admin,
-      json: {},
+      json: { approve: true },
     });
     expect(res.status).toBe(200);
   });
@@ -318,7 +310,7 @@ describe('retargeting', () => {
   }
 
   it('linearizes #3’s prerequisites and stacks each on its parent', async () => {
-    const { t, open } = await repoWithPolicy();
+    const { t, open } = await repoWithAgent();
     const { models, calls } = three();
     await openThree(t, open);
     await drain(t, models);
@@ -347,14 +339,14 @@ describe('retargeting', () => {
   });
 
   it('asks the later prerequisite to rebase first, then the dependent', async () => {
-    const { t, open, repo, files } = await repoWithPolicy();
+    const { t, open, repo, files } = await repoWithAgent();
     const { models } = three();
     await openThree(t, open);
     await drain(t, models);
     const db = drizzle(t.env.DB, { schema });
     const states = async () => {
       const repoId = (await t.env.DB.prepare(
-        'SELECT id FROM repositories'
+        "SELECT id FROM repositories WHERE name = 'app'"
       ).first<{ id: string }>())!.id;
       const found = await findRepoById(db, repoId);
       const prs = await db.query.pullRequests.findMany();
@@ -382,7 +374,7 @@ describe('retargeting', () => {
   });
 
   it('reports rebase_onto in the PR detail for a stacked PR that lacks its parent', async () => {
-    const { t, admin, open } = await repoWithPolicy();
+    const { t, admin, open } = await repoWithAgent();
     const { models } = three();
     await openThree(t, open);
     await drain(t, models);
@@ -398,7 +390,7 @@ describe('retargeting', () => {
   });
 
   it('PR detail asks only the PR whose parent chain is in order, like the list', async () => {
-    const { t, admin, open } = await repoWithPolicy();
+    const { t, admin, open } = await repoWithAgent();
     const { models } = three();
     await openThree(t, open);
     await drain(t, models);
@@ -427,7 +419,7 @@ describe('retargeting', () => {
 
   // Two tests: each needs its own instance (the admin is bootstrapped once per test database).
   it('falls back when Clef is unsure: closer to Ready first', async () => {
-    const { t, open, repo } = await repoWithPolicy();
+    const { t, open, repo } = await repoWithAgent();
     const { models } = three({
       order: () => ({
         first: {
@@ -442,7 +434,7 @@ describe('retargeting', () => {
     // #1 has a failed check (agent followup); #2 only waits: #2 is closer to Ready and goes first.
     await t.env.DB.prepare(
       `INSERT INTO workflow_runs (id, repository_id, run_number, workflow_path, name, event, ref, head_sha, display_title, status, conclusion, created_at)
-       SELECT 'r1', id, 1, 'ci.yml', 'CI', 'pull_request', 'x', ?, 'x', 'completed', 'failure', 0 FROM repositories`
+       SELECT 'r1', id, 1, 'ci.yml', 'CI', 'pull_request', 'x', ?, 'x', 'completed', 'failure', 0 FROM repositories WHERE name = 'app'`
     )
       .bind(repo.refs.get('refs/heads/one'))
       .run();
@@ -455,7 +447,7 @@ describe('retargeting', () => {
   });
 
   it('falls back when Clef fails: equally close to Ready, the lower number first', async () => {
-    const { t, open } = await repoWithPolicy();
+    const { t, open } = await repoWithAgent();
     const { models } = three({
       order: () => {
         throw new Error('Clef down');
@@ -471,7 +463,7 @@ describe('retargeting', () => {
   });
 
   it('keeps an ordering until one of its three PRs moves', async () => {
-    const { t, open, repo, files } = await repoWithPolicy();
+    const { t, open, repo, files } = await repoWithAgent();
     const { models, calls } = three();
     await openThree(t, open);
     await drain(t, models);
@@ -483,7 +475,7 @@ describe('retargeting', () => {
   });
 
   it('sends children back to the land target when their parent closes, then restacks them', async () => {
-    const { t, admin, open } = await repoWithPolicy();
+    const { t, admin, open } = await repoWithAgent();
     const { models } = three();
     await openThree(t, open);
     await drain(t, models);
@@ -519,7 +511,7 @@ describe('retargeting', () => {
   });
 
   it('restacks a reopened pull request', async () => {
-    const { t, admin, open } = await repoWithPolicy();
+    const { t, admin, open } = await repoWithAgent();
     const { models } = three();
     await openThree(t, open);
     await drain(t, models);
@@ -545,7 +537,7 @@ describe('retargeting', () => {
   });
 
   it('never stacks onto a branch that no longer exists', async () => {
-    const { t, open, repo } = await repoWithPolicy();
+    const { t, open, repo } = await repoWithAgent();
     const { models } = stackModels({
       related: () => true,
       relation: () => BUILDS_A,
@@ -560,7 +552,7 @@ describe('retargeting', () => {
     repo.refs.delete('refs/heads/one');
     const db = drizzle(t.env.DB, { schema });
     const repoId = (await t.env.DB.prepare(
-      'SELECT id FROM repositories'
+      "SELECT id FROM repositories WHERE name = 'app'"
     ).first<{ id: string }>())!.id;
     await executeReconcile(
       { env: t.env, db, step, models },
@@ -570,7 +562,7 @@ describe('retargeting', () => {
   });
 
   it('retargets once when reconciles repeat or race', async () => {
-    const { t, open } = await repoWithPolicy();
+    const { t, open } = await repoWithAgent();
     const { models } = stackModels({
       related: () => true,
       relation: () => BUILDS_A,
@@ -580,7 +572,7 @@ describe('retargeting', () => {
     await drain(t, models);
     const db = drizzle(t.env.DB, { schema });
     const repoId = (await t.env.DB.prepare(
-      'SELECT id FROM repositories'
+      "SELECT id FROM repositories WHERE name = 'app'"
     ).first<{ id: string }>())!.id;
     const params = { repositoryId: repoId, landTarget: 'main' };
     // Repeated: nothing left to change.
@@ -604,7 +596,7 @@ describe('retargeting', () => {
   });
 
   it('drops an ordering edge once a side is no longer a stackable prerequisite', async () => {
-    const { t, open } = await repoWithPolicy();
+    const { t, open } = await repoWithAgent();
     const { models } = three();
     await openThree(t, open);
     await drain(t, models);
@@ -615,7 +607,7 @@ describe('retargeting', () => {
     ).run();
     const db = drizzle(t.env.DB, { schema });
     const repoId = (await t.env.DB.prepare(
-      'SELECT id FROM repositories'
+      "SELECT id FROM repositories WHERE name = 'app'"
     ).first<{ id: string }>())!.id;
     await executeReconcile(
       { env: t.env, db, step, models },
@@ -634,7 +626,7 @@ describe('retargeting', () => {
   });
 
   it('keeps PR text out of the load step’s result', async () => {
-    const { t, open } = await repoWithPolicy();
+    const { t, open } = await repoWithAgent();
     const { models } = three();
     await openThree(t, open);
     await drain(t, models);
@@ -647,7 +639,7 @@ describe('retargeting', () => {
       },
     } as unknown as StepRunner;
     const repoId = (await t.env.DB.prepare(
-      'SELECT id FROM repositories'
+      "SELECT id FROM repositories WHERE name = 'app'"
     ).first<{ id: string }>())!.id;
     await executeReconcile(
       {
@@ -674,7 +666,7 @@ describe('retargeting', () => {
   });
 
   it('orders by a conflict without asking Clef, and stacks #3 on a line that holds both', async () => {
-    const { t, open } = await repoWithPolicy();
+    const { t, open } = await repoWithAgent();
     // #3 builds on #1 and #2; #2 conflicts with #1 and lands after it.
     const { models, calls } = stackModels({
       related: () => true,
@@ -697,7 +689,7 @@ describe('retargeting', () => {
   });
 
   it('keeps an ordering parent unstacked after Unstack, also when heads move', async () => {
-    const { t, admin, open, repo, files } = await repoWithPolicy();
+    const { t, admin, open, repo, files } = await repoWithAgent();
     const { models, calls } = three();
     await openThree(t, open);
     await drain(t, models);
@@ -733,15 +725,19 @@ describe('retargeting', () => {
   });
 
   it('auto-merging a parent sends its stacked child to main, then deletes the parent’s branch', async () => {
-    const { t, open, repo } = await repoWithPolicy(
-      'model: clef\nchecks:\n  require: none\n'
-    );
+    const { t, admin, open, repo } = await repoWithAgent(true);
     const { models } = stackModels({
       related: () => true,
       relation: () => BUILDS_A,
     });
     await open('one', { 'a.txt': 'a\n' }, 'One');
     await open('two', { 'b.txt': 'b\n' }, 'Two');
+    await drain(t, models);
+    // A person approves #1: review is satisfied, so auto-merge lands it.
+    await call(t, '/api/repos/octocat/app/pulls/1/approval', {
+      cookie: admin,
+      method: 'POST',
+    });
     await drain(t, models);
     expect(
       await t.env.DB.prepare(
@@ -757,7 +753,7 @@ describe('retargeting', () => {
   });
 
   it('skips the inline reconcile when a stack run claims nothing', async () => {
-    const { t, open } = await repoWithPolicy();
+    const { t, open } = await repoWithAgent();
     const { models } = three();
     await openThree(t, open);
     await drain(t, models);
@@ -785,12 +781,12 @@ describe('retargeting', () => {
   });
 
   it('reconciles a target with more open pull requests than D1 binds in one statement', async () => {
-    const { t, open, repo } = await repoWithPolicy();
+    const { t, open, repo } = await repoWithAgent();
     const { models } = three();
     await openThree(t, open);
     await drain(t, models);
     const repoId = (await t.env.DB.prepare(
-      'SELECT id FROM repositories'
+      "SELECT id FROM repositories WHERE name = 'app'"
     ).first<{ id: string }>())!.id;
     // 60 more open PRs (no pairs yet) and a pair row between two landed ones.
     const main = repo.refs.get('refs/heads/main')!;
@@ -821,7 +817,7 @@ describe('retargeting', () => {
   });
 
   it('runs a stack run’s auto-merge step even when its reconcile fails', async () => {
-    const { t, open } = await repoWithPolicy();
+    const { t, open } = await repoWithAgent();
     const { models } = three();
     await openThree(t, open);
     await drain(t, models);
@@ -857,7 +853,7 @@ describe('retargeting', () => {
 
 describe('maintainer controls', () => {
   it('unstacks and dismisses with merge permission only', async () => {
-    const { t, admin, open } = await repoWithPolicy(POLICY(), 'internal');
+    const { t, admin, open } = await repoWithAgent(true, 'internal');
     const { models } = stackModels({
       related: () => true,
       relation: () => MUST,
@@ -908,14 +904,14 @@ describe('maintainer controls', () => {
       (
         await call(t, '/api/repos/octocat/app/pulls/2/merge', {
           cookie: admin,
-          json: {},
+          json: { approve: true },
         })
       ).status
     ).toBe(200);
   });
 
   it('dismisses a waits-on edge', async () => {
-    const { t, admin, open } = await repoWithPolicy();
+    const { t, admin, open } = await repoWithAgent();
     const { models } = stackModels();
     await open('one', { 'notes.txt': 'one\nTWO\nthree\n' }, 'One');
     await open('two', { 'notes.txt': 'one\n2\nthree\n' }, 'Two');
@@ -951,7 +947,7 @@ describe('maintainer controls', () => {
   });
 
   it('unstack finishes a retarget a crashed attempt left behind', async () => {
-    const { t, admin, open } = await repoWithPolicy();
+    const { t, admin, open } = await repoWithAgent();
     const { models } = stackModels({
       related: () => true,
       relation: () => MUST,
@@ -979,7 +975,7 @@ describe('maintainer controls', () => {
   });
 
   it('refuses to unstack an unstacked PR, and hides a private repo', async () => {
-    const { t, admin, open } = await repoWithPolicy();
+    const { t, admin, open } = await repoWithAgent();
     const { models } = stackModels();
     await open('one', { 'notes.txt': 'one\nTWO\nthree\n' }, 'One');
     await drain(t, models);
@@ -1003,7 +999,7 @@ describe('maintainer controls', () => {
   });
 
   it('ends a dismissal when a side lands', async () => {
-    const { t, admin, open } = await repoWithPolicy();
+    const { t, admin, open } = await repoWithAgent();
     const { models, calls } = stackModels({
       related: () => true,
       relation: () => MUST,
@@ -1028,7 +1024,7 @@ describe('maintainer controls', () => {
     const merge = (n: number) =>
       call(t, `/api/repos/octocat/app/pulls/${n}/merge`, {
         cookie: admin,
-        json: {},
+        json: { approve: true },
       });
     expect((await merge(1)).status).toBe(200);
     await drain(t, models);
@@ -1044,7 +1040,7 @@ describe('maintainer controls', () => {
   });
 
   it('keeps a dismissal when a head moves', async () => {
-    const { t, admin, open, repo, files } = await repoWithPolicy();
+    const { t, admin, open, repo, files } = await repoWithAgent();
     const { models } = stackModels();
     await open('one', { 'notes.txt': 'one\nTWO\nthree\n' }, 'One');
     await open('two', { 'notes.txt': 'one\n2\nthree\n' }, 'Two');
@@ -1065,14 +1061,14 @@ describe('maintainer controls', () => {
 
 describe('stack surfaces', () => {
   it('lists stale must-account-for blocks and failed pairs on Approvals', async () => {
-    const { t, admin, open } = await repoWithPolicy();
+    const { t, admin, open } = await repoWithAgent();
     const { models } = stackModels({
       related: () => true,
       relation: () => MUST,
     });
     await open('setup', SETUP_CHECKS, 'Setup checks');
     await open('usage', USAGE, 'Usage and cost');
-    await drain(t, models);
+    await drain(t, models, step, notNeeded);
     await t.env.DB.prepare('UPDATE pr_edges SET updated_at = 0').run();
     const items = (
       (await (await call(t, '/api/approvals', { cookie: admin })).json()) as {
@@ -1090,14 +1086,14 @@ describe('stack surfaces', () => {
   });
 
   it('drops a stale block on Approvals once its prerequisite is closed without landing', async () => {
-    const { t, admin, open } = await repoWithPolicy();
+    const { t, admin, open } = await repoWithAgent();
     const { models } = stackModels({
       related: () => true,
       relation: () => MUST,
     });
     await open('setup', SETUP_CHECKS, 'Setup checks');
     await open('usage', USAGE, 'Usage and cost');
-    await drain(t, models);
+    await drain(t, models, step, notNeeded);
     await t.env.DB.prepare(
       "UPDATE pull_requests SET state = 'closed' WHERE number = 1"
     ).run();
@@ -1113,7 +1109,7 @@ describe('stack surfaces', () => {
   });
 
   it('shows stack events on the PR', async () => {
-    const { t, admin, open } = await repoWithPolicy();
+    const { t, admin, open } = await repoWithAgent();
     const { models } = stackModels({
       related: () => true,
       relation: () => MUST,
@@ -1150,10 +1146,10 @@ describe('stack surfaces on Approvals', () => {
     };
 
   it('lists a failed pair on both sides, and counts each entry once', async () => {
-    const { t, admin, open } = await repoWithPolicy();
+    const { t, admin, open } = await repoWithAgent();
     await open('one', { 'a.txt': 'a\n' }, 'One');
     await open('two', { 'b.txt': 'b\n' }, 'Two');
-    await drain(t, stackModels({ failTriage: true }).models);
+    await drain(t, stackModels({ failTriage: true }).models, step, notNeeded);
     const { items, count } = await approvals(t, admin);
     expect(items.find((i) => i.pull.number === 1)).toMatchObject({
       stackUnchecked: [2],
@@ -1168,13 +1164,13 @@ describe('stack surfaces on Approvals', () => {
   });
 
   it('counts a stale block and an unchecked pair separately, without a second human_review entry', async () => {
-    const { t, admin, open } = await repoWithPolicy();
+    const { t, admin, open } = await repoWithAgent();
     const must = stackModels({ related: () => true, relation: () => MUST });
     await open('setup', SETUP_CHECKS, 'Setup checks');
     await open('usage', USAGE, 'Usage and cost');
-    await drain(t, must.models);
+    await drain(t, must.models, step, notNeeded);
     await open('third', { 'c.txt': 'c\n' }, 'Third');
-    await drain(t, stackModels({ failTriage: true }).models);
+    await drain(t, stackModels({ failTriage: true }).models, step, notNeeded);
     await t.env.DB.prepare(
       "UPDATE pr_edges SET updated_at = 0 WHERE stage = 'done'"
     ).run();
@@ -1190,11 +1186,11 @@ describe('stack surfaces on Approvals', () => {
   });
 
   it('finds stack entries past the first 90 open pull requests', async () => {
-    const { t, admin, open } = await repoWithPolicy();
+    const { t, admin, open } = await repoWithAgent();
     const must = stackModels({ related: () => true, relation: () => MUST });
     await open('setup', SETUP_CHECKS, 'Setup checks');
     await open('usage', USAGE, 'Usage and cost');
-    await drain(t, must.models);
+    await drain(t, must.models, step, notNeeded);
     await t.env.DB.prepare('UPDATE pr_edges SET updated_at = 0').run();
     const row = (await t.env.DB.prepare(
       'SELECT * FROM pull_requests WHERE number = 1'

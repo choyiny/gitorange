@@ -49,6 +49,8 @@ const REVIEW_LABEL: Record<ReviewState, string> = {
   review_required: 'Review required',
   approved: 'Approved',
   failed: 'Review failed',
+  changes_requested: 'Changes requested',
+  needs_approval: 'Needs approval',
 };
 
 const REVIEW_CLASS: Record<ReviewState, string> = {
@@ -56,9 +58,11 @@ const REVIEW_CLASS: Record<ReviewState, string> = {
   review_required: 'color-fg-muted',
   approved: 'color-fg-success',
   failed: 'color-fg-danger',
+  changes_requested: 'color-fg-danger',
+  needs_approval: 'color-fg-attention',
 };
 
-/** The auto-merge review in a listed PR's meta line, as GitHub shows "Review required". */
+/** The head commit's review in a listed PR's meta line, as GitHub shows "Review required". */
 export function ReviewLabel({
   review,
   to,

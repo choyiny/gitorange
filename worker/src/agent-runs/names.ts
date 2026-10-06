@@ -18,6 +18,9 @@ const FIXED: Record<string, string> = {
   states: 'Record pull request states',
   'current:before-resolve': 'Check the commits are current',
   'current:before-commit': 'Check the commits are still current',
+  agents: 'Read invited agents',
+  trigger: 'Ask which agents this concerns',
+  reviewers: 'Request reviewers',
 };
 
 /** Steps named `<kind>:<pull request id>`, about another pull request. */
@@ -54,6 +57,12 @@ const INDEXED: Record<string, string> = {
   investigate: 'Investigate flag',
 };
 
+/** Steps named `<kind>:<agent handle>`. */
+const ABOUT_AGENT: Record<string, string> = {
+  review: 'Review by',
+  'review-failed': 'Record failed review by',
+};
+
 /** The pull request id a step name refers to, if any. */
 export function stepPullId(name: string): string | null {
   const i = name.indexOf(':');
@@ -80,6 +89,7 @@ export function stepDisplayName(
   const [kind, rest] = [name.slice(0, i), name.slice(i + 1)];
   if (INDEXED[kind] && /^\d+$/.test(rest))
     return `${INDEXED[kind]} ${Number(rest) + 1}`;
+  if (ABOUT_AGENT[kind]) return `${ABOUT_AGENT[kind]} @${rest}`;
   if (ABOUT_PULL[kind]) {
     const n = numbers.get(rest);
     return `${ABOUT_PULL[kind]} ${n ? `#${n}` : 'another pull request'}`;

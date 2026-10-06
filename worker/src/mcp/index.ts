@@ -119,10 +119,11 @@ mcpRouter.post('/', async (c) => {
           instructions:
             `${name} is a self-hosted, GitHub-style git server. Use these tools to find and create ` +
             'repositories and to work with pull requests: push a branch with git, open a pull request, then ' +
-            'follow its checks and auto-merge review with gitorange_get_pull_request. Merging is always rebase ' +
-            'and merge. Review flags need a person to approve them or request changes; the tools that do so act ' +
-            'as the signed-in user, so only use them when the user explicitly asks, and never to work around ' +
-            'a flag. Never ask the user to paste a personal access token into the conversation; have them run ' +
+            'follow its checks and agent reviews with gitorange_get_pull_request. Merging is always rebase ' +
+            'and merge. Only a person can approve a review finding; fix the change requests agents raise ' +
+            '(follow_ups) by pushing. Requesting changes on a finding and similar tools act as the signed-in ' +
+            'user, so only use them when the user explicitly asks, and never to work around a finding. ' +
+            'Never ask the user to paste a personal access token into the conversation; have them run ' +
             'git commands that need one themselves.',
         })
       );

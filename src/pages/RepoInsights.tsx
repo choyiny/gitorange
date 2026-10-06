@@ -317,8 +317,12 @@ function flag(rows: Insights['flags']['byKind']) {
       style={{ gap: 12 }}
     >
       <span className="flex-1 min-width-0" style={{ overflowWrap: 'anywhere' }}>
-        {f.title}
-        {f.title !== f.key && (
+        {f.source === 'agent' ? (
+          <Link to={`/${f.key}`}>{f.title}</Link>
+        ) : (
+          f.title
+        )}
+        {f.source !== 'agent' && f.title !== f.key && (
           <div className="f6 color-fg-muted text-mono">{f.key}</div>
         )}
       </span>

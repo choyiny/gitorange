@@ -15,11 +15,13 @@ import {
   agentSteps,
   mergeResolutions,
   prClassifications,
+  prReviewers,
   pullRequests,
   type AgentRunKind,
   type AgentRunStatus,
   type ClassifierAnswer,
 } from '../db/app.schema';
+import { users } from '../db/auth.schema';
 import type { DrizzleDB } from '../db/middleware';
 import { publishChange } from '../live/publish';
 import type { StepRunner } from '../merge/resolution';
@@ -53,6 +55,48 @@ export async function describeRun(
   db: DrizzleDB,
   payload: MergeResolutionParams
 ): Promise<AgentRunInfo | null> {
+  if (payload.headReview || payload.reviewer) {
+    const row = payload.headReview
+      ? await db
+          .select({
+            headSha: prClassifications.headSha,
+            pullRequestId: pullRequests.id,
+            repositoryId: pullRequests.repositoryId,
+            handle: sql<string | null>`NULL`,
+          })
+          .from(prClassifications)
+          .innerJoin(
+            pullRequests,
+            eq(pullRequests.id, prClassifications.pullRequestId)
+          )
+          .where(eq(prClassifications.id, payload.headReview.id))
+          .get()
+      : await db
+          .select({
+            headSha: prReviewers.headSha,
+            pullRequestId: pullRequests.id,
+            repositoryId: pullRequests.repositoryId,
+            handle: users.username,
+          })
+          .from(prReviewers)
+          .innerJoin(
+            pullRequests,
+            eq(pullRequests.id, prReviewers.pullRequestId)
+          )
+          .innerJoin(users, eq(users.id, prReviewers.agentId))
+          .where(eq(prReviewers.id, payload.reviewer!.id))
+          .get();
+    return row
+      ? {
+          kind: 'review',
+          repositoryId: row.repositoryId,
+          pullRequestId: row.pullRequestId,
+          title: row.handle
+            ? `Review by @${row.handle} of ${row.headSha.slice(0, 7)}`
+            : `Review of ${row.headSha.slice(0, 7)}`,
+        }
+      : null;
+  }
   if (payload.classificationId) {
     const row = await db
       .select({
@@ -204,6 +248,30 @@ export function decisionFor(name: string, result: unknown): string | null {
         : null;
     case 'pr':
       return r === true ? 'Started an AI conflict resolution' : null;
+    case 'review': {
+      if (!r?.verdict) return null;
+      const pi = r.engine === 'pi' ? ' (engine: pi ran as a single pass)' : '';
+      if (r.verdict === 'approve') return `Approved${pi}`;
+      if (r.verdict === 'findings')
+        return `${plural(r.needsPerson + r.changeRequested, 'finding')}: ${[
+          r.needsPerson
+            ? `${r.needsPerson} need${r.needsPerson === 1 ? 's' : ''} a person`
+            : '',
+          r.changeRequested
+            ? `${plural(r.changeRequested, 'change')} requested`
+            : '',
+        ]
+          .filter(Boolean)
+          .join(', ')}${pi}`;
+      if (r.verdict === 'failed') return r.error ?? 'Failed';
+      return 'Nothing to review: removed from the repository, or already reviewed';
+    }
+    case 'trigger':
+      return r && typeof r === 'object'
+        ? Object.entries(r as Record<string, number>)
+            .map(([h, p]) => `@${h} ${Number(p).toFixed(2)}`)
+            .join(', ') || 'Clef gave no answers'
+        : null;
     default:
       return null;
   }
@@ -215,6 +283,41 @@ async function outcomeError(
   runId: string,
   payload: MergeResolutionParams
 ): Promise<string | null> {
+  if (payload.headReview || payload.reviewer) {
+    const review = payload.headReview
+      ? await db
+          .select({
+            status: prClassifications.status,
+            error: prClassifications.errorMessage,
+            pullRequestId: prClassifications.pullRequestId,
+            headSha: prClassifications.headSha,
+          })
+          .from(prClassifications)
+          .where(eq(prClassifications.id, payload.headReview.id))
+          .get()
+      : null;
+    if (review?.status === 'failed')
+      return review.error ?? 'The review failed.';
+    const failed = await db
+      .select({ handle: users.username, error: prReviewers.error })
+      .from(prReviewers)
+      .innerJoin(users, eq(users.id, prReviewers.agentId))
+      .where(
+        and(
+          payload.reviewer
+            ? eq(prReviewers.id, payload.reviewer.id)
+            : and(
+                eq(prReviewers.pullRequestId, review?.pullRequestId ?? ''),
+                eq(prReviewers.headSha, review?.headSha ?? '')
+              ),
+          eq(prReviewers.status, 'failed')
+        )
+      )
+      .get();
+    return failed
+      ? `@${failed.handle}'s review failed: ${failed.error ?? 'unknown error'}`
+      : null;
+  }
   if (payload.classificationId) {
     const row = await db
       .select({

@@ -18,7 +18,7 @@ Tell the user this before touching anything, so they can back out cheaply:
 - **~15 minutes**, longer if their sending domain still needs DNS verification.
 - **One decision**: which hostname the instance runs on (custom domain or `*.workers.dev`), and which email domain sends invitations.
 - **Cost**: the Cloudflare **Workers Paid** plan (about 5 USD/month) is required, because Artifacts is not on Workers Free. It includes 10,000 Artifacts operations and 1 GB of storage per month; beyond that, 0.15 USD per 1,000 operations and 0.50 USD per GB-month.
-- **Usage-based extras**, billed only when used: Actions jobs run as Cloudflare Containers (about 0.0024 USD per minute on the default runner, after the plan's included minutes); AI conflict resolution and the auto-merge review use Workers AI (per token); LFS files and the Actions cache are R2 storage. Every AI call goes through an AI Gateway named `default`, created automatically, so its logs show exactly what AI costs.
+- **Usage-based extras**, billed only when used: Actions jobs run as Cloudflare Containers (about 0.0024 USD per minute on the default runner, after the plan's included minutes); AI conflict resolution and reviewer agents' reviews use Workers AI (per token); LFS files and the Actions cache are R2 storage. Every AI call goes through an AI Gateway named `default`, created automatically, so its logs show exactly what AI costs.
 
 <!-- Never write a dollar sign followed by a digit in this file: Claude Code replaces those with the skill arguments. Write amounts as "5 USD". -->
 
@@ -126,7 +126,7 @@ Fill in the top level (production):
 
 Also replace the `FROM_EMAIL` and `R2_ACCOUNT_ID` placeholders in `env.dev.vars` so local development works later.
 
-Do not rename bindings — the code looks them up by name: `DB`, `ARTIFACTS`, `EMAIL`, `LFS`, `ACTIONS_LOGS`, `ACTIONS_CACHE`, `ACTIONS_RUN`, `JOB_RUNNER`, `ACTIONS_QUEUE`, `MERGE_RESOLVER`, `MERGE_RESOLUTION`, `LIVE`, `AI`, `ASSETS`. Keep the `containers`, `durable_objects`, `exports`, `workflows`, and `ai` entries as shipped: they run Actions, AI conflict resolution, the auto-merge review, and live page updates. Keep `assets.run_worker_first` as shipped; the git endpoint depends on it. `wrangler.jsonc` is gitignored; never commit it.
+Do not rename bindings — the code looks them up by name: `DB`, `ARTIFACTS`, `EMAIL`, `LFS`, `ACTIONS_LOGS`, `ACTIONS_CACHE`, `ACTIONS_RUN`, `JOB_RUNNER`, `ACTIONS_QUEUE`, `MERGE_RESOLVER`, `MERGE_RESOLUTION`, `LIVE`, `AI`, `ASSETS`. Keep the `containers`, `durable_objects`, `exports`, `workflows`, and `ai` entries as shipped: they run Actions, AI conflict resolution, reviewer agents' reviews, and live page updates. Keep `assets.run_worker_first` as shipped; the git endpoint depends on it. `wrangler.jsonc` is gitignored; never commit it.
 
 ### Step 4: Migrate and deploy
 
@@ -182,7 +182,7 @@ Optional, once the basics work (point them to the docs rather than doing it for 
 6. **Commit attribution:** under **avatar → Settings → Emails**, add any other address they commit with and click the verification link, so their commits link to their profile.
 7. **AI tools (MCP):** **avatar → MCP server** shows the command for their client, e.g. `claude mcp add --transport http gitorange <BASE_URL>/mcp`.
 8. **Actions:** a workflow file in `.github/workflows/` (GitHub Actions syntax) runs on pushes and pull requests; the run shows under the repository's **Actions** tab.
-9. **Auto-merge:** a `.gitorange/review.yml` on the default branch turns on the AI review and auto-merge for that repository, and `.orangeignore` keeps generated files out of it. See `docs/auto-merge.md`; GitOrange's own `.gitorange/review.yml` is a working example.
+9. **Reviews and auto-merge:** create reviewer agents in **Site admin → Agents** and invite them in a repository's **Settings → Agents**; each new commit is reviewed by the agents it concerns, and auto-merge is on wherever an agent is invited. `.orangeignore` keeps generated files out of reviews. See `docs/auto-merge.md`.
 
 ## Completion summary
 
@@ -194,7 +194,7 @@ Report, with real values substituted:
 - Invitations sent from `<FROM_EMAIL>` (binding `EMAIL`)
 - R2 bucket `gitorange-lfs` (binding `LFS`) for Git LFS — R2 secrets `<set | not set yet>`
 - GitOrange Actions: Workflow `gitorange-actions-run`, `JobRunner` containers, logs in R2 bucket `gitorange-actions-logs`, cache in `gitorange-actions-cache`
-- AI: conflict resolution and auto-merge review on Workers AI (Workflow `gitorange-merge-resolution`, `MergeResolver` Durable Object), logged in AI Gateway `<AI_GATEWAY>`
+- AI: conflict resolution and reviewer agents' reviews on Workers AI (Workflow `gitorange-merge-resolution`, `MergeResolver` Durable Object), logged in AI Gateway `<AI_GATEWAY>`
 - Live updates: `LiveHub` Durable Object (binding `LIVE`)
 - Daily Cron Trigger (`triggers.crons`, kept as shipped): deletes Actions runs past their retention (Site admin → Settings, 90 days by default)
 - Instance name, invitation sender, and AI models can later be changed in Site admin → Settings without a deploy; the wrangler vars are only defaults
@@ -216,4 +216,4 @@ Site admin → Setup shows what's misconfigured on the deployed worker, with the
 - **`wrangler deploy` says it "could not finish applying its Durable Object-managed Container application settings"** — the Worker itself deployed; run `yarn deploy` again to finish.
 - **Actions jobs never start** — Docker wasn't running when the runner image was built (Checkpoint 1.5), or the `containers` entry was removed.
 - **Usage & cost says "not configured" or "unavailable"** — `CF_ANALYTICS_TOKEN` is missing or lacks Account Analytics: Read, or a resource var (`D1_DATABASE_ID`, the `*_NAMESPACE_ID`s) is empty or wrong. Each line on the page gives the reason.
-- **No AI resolution or auto-merge review** — the `ai` binding or the `MERGE_RESOLUTION` Workflow is missing, or (for review) the repository has no `.gitorange/review.yml` on its default branch.
+- **No AI resolution or agent reviews** — the `ai` binding or the `MERGE_RESOLUTION` Workflow is missing, or (for reviews) the repository has no invited agents.

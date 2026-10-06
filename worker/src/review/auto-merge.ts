@@ -1,10 +1,7 @@
-import { and, eq, isNull } from 'drizzle-orm';
+import { and, eq } from 'drizzle-orm';
 import type { DrizzleDB } from '../db/middleware';
 import {
-  prReviewFlags,
   pullRequests,
-  workflowJobs,
-  workflowRuns,
   type PrClassification,
   type PullRequest,
 } from '../db/app.schema';
@@ -12,18 +9,17 @@ import { users } from '../db/auth.schema';
 import type { GitService } from '../git/service';
 import { findRepoById, gitFor } from '../lib/repos';
 import { landPull } from '../merge/land';
-import { latestResolution } from '../merge/resolution';
-import { classificationFor } from './classify';
-import { checkVerdict } from './checks';
-import { parsePolicy, readPolicy, type ReviewPolicy } from './policy';
+import { latestResolution, resolutionConfigured } from '../merge/resolution';
 import { landTargetOf } from '../lib/land-target';
 import { stackGate } from '../stack/gate';
+import { checksAt, reviewGateFor, reviewReasonText } from './gate';
+import { hasInvitedAgents } from './keys';
 
 /**
- * - off: the target branch has no `.gitorange/review.yml`.
+ * - off: no agent is invited to the repository (a person approves and merges), or the PR isn't open.
  * - disabled: turned off for this pull request.
- * - waiting: review, approvals, checks, or conflict resolution in progress.
- * - blocked: failed checks or review, or conflicts.
+ * - waiting: review, approvals, checks, conflict resolution or stack discovery in progress.
+ * - blocked: failed checks or a failed review, or conflicts.
  * - ready: merges now.
  */
 export type AutoMergeStatus =
@@ -31,141 +27,34 @@ export type AutoMergeStatus =
   | { state: 'disabled'; at: Date }
   | { state: 'waiting' | 'blocked' | 'ready'; reasons: string[] };
 
-const plural = (n: number, word: string) => `${n} ${word}${n === 1 ? '' : 's'}`;
-
-/** Whether the required Actions checks for a commit passed: null when they have. */
-async function checkProblem(
-  db: DrizzleDB,
-  repositoryId: string,
-  sha: string,
-  require: ReviewPolicy['checks']['require']
-): Promise<{ kind: 'waiting' | 'blocked'; reason: string } | null> {
-  if (require === 'none') return null;
-  const at = and(
-    eq(workflowRuns.repositoryId, repositoryId),
-    eq(workflowRuns.headSha, sha)
-  );
-  const runs = await db.select().from(workflowRuns).where(at).all();
-  const jobs =
-    Array.isArray(require) && runs.length
-      ? await db
-          .select({
-            key: workflowJobs.jobKey,
-            name: workflowJobs.name,
-            status: workflowJobs.status,
-            conclusion: workflowJobs.conclusion,
-            runNumber: workflowRuns.runNumber,
-          })
-          .from(workflowJobs)
-          .innerJoin(workflowRuns, eq(workflowRuns.id, workflowJobs.runId))
-          .where(at)
-          .all()
-      : [];
-  const v = checkVerdict(runs, jobs, require);
-  if (!v) return null;
-  return {
-    kind: v.kind === 'failed' ? 'blocked' : 'waiting',
-    reason: v.reason,
-  };
-}
-
-/**
- * Where the head commit's review stands; `review_required` counts unapproved flags.
- * A future "changes requested" state belongs here too.
- */
-export type ReviewProgress =
-  | { state: 'reviewing' }
-  | { state: 'failed'; error: string | null }
-  | { state: 'review_required'; flags: number }
-  | { state: 'approved' };
-
-export function reviewProgress(
-  review:
-    Pick<PrClassification, 'status' | 'verdict' | 'errorMessage'> | undefined,
-  unapprovedFlags: number
-): ReviewProgress {
-  if (!review) return { state: 'reviewing' };
-  if (review.status === 'failed')
-    return { state: 'failed', error: review.errorMessage };
-  if (review.status !== 'done') return { state: 'reviewing' };
-  if (review.verdict === 'human' && unapprovedFlags > 0)
-    return { state: 'review_required', flags: unapprovedFlags };
-  return { state: 'approved' };
-}
-
 export async function autoMergeStatus(
+  env: CloudflareBindings,
   db: DrizzleDB,
   git: GitService,
   pr: PullRequest
 ): Promise<AutoMergeStatus> {
   if (pr.state !== 'open') return { state: 'off' };
+  if (!(await hasInvitedAgents(db, pr.repositoryId))) return { state: 'off' };
   const [base, head] = await Promise.all([
     git.resolve(landTargetOf(pr)),
     git.resolve(pr.headRef),
   ]);
   if (!base || !head) return { state: 'off' };
-  const policyFile = await readPolicy(git, base);
-  if (!policyFile) return { state: 'off' };
   if (pr.autoMergeDisabledAt)
     return { state: 'disabled', at: pr.autoMergeDisabledAt };
 
   const waiting: string[] = [];
   const blocked: string[] = [];
 
-  let policy: ReviewPolicy | null = null;
-  try {
-    policy = parsePolicy(policyFile.text);
-  } catch (e) {
-    blocked.push(e instanceof Error ? e.message : String(e));
-  }
-
-  const review = await classificationFor(db, pr.id, head, policyFile.sha);
-  const openFlags =
-    review?.status === 'done' && review.verdict === 'human'
-      ? await db
-          .select({
-            id: prReviewFlags.id,
-            changesRequestedAt: prReviewFlags.changesRequestedAt,
-          })
-          .from(prReviewFlags)
-          .where(
-            and(
-              eq(prReviewFlags.classificationId, review.id),
-              isNull(prReviewFlags.approvedAt)
-            )
-          )
-          .all()
-      : [];
-  const progress = reviewProgress(
-    review,
-    review?.status === 'done' && review.verdict === 'human'
-      ? openFlags.length
-      : 0
-  );
-  if (progress.state === 'reviewing') waiting.push('Reviewing the changes');
-  else if (progress.state === 'failed') {
-    if (policy) blocked.push(`Review failed: ${progress.error ?? ''}`.trim());
-  } else if (progress.state === 'review_required') {
-    const changes = openFlags.filter((f) => f.changesRequestedAt).length;
-    const open = openFlags.length - changes;
-    if (changes)
-      waiting.push(`Changes requested on ${plural(changes, 'flag')}`);
-    if (open)
-      waiting.push(
-        `${plural(open, 'flag')} need${open === 1 ? 's' : ''} approval`
-      );
-  }
-
-  if (policy) {
-    const checks = await checkProblem(
-      db,
-      pr.repositoryId,
-      head,
-      policy.checks.require
+  const review = await reviewGateFor(db, resolutionConfigured(env), pr, head);
+  for (const r of review.reasons)
+    (r.kind === 'agent_review_failed' ? blocked : waiting).push(
+      reviewReasonText(r)
     );
-    if (checks)
-      (checks.kind === 'blocked' ? blocked : waiting).push(checks.reason);
-  }
+
+  const checks = await checksAt(db, pr.repositoryId, head);
+  if (checks)
+    (checks.kind === 'failed' ? blocked : waiting).push(checks.reason);
 
   const plan = await git.planMerge(base, head);
   if (plan.upToDate) blocked.push('Nothing to merge');
@@ -208,7 +97,7 @@ export async function maybeAutoMerge(
   const found = await findRepoById(db, pr.repositoryId);
   if (!found) return false;
   const git = gitFor(env, found.repo);
-  const status = await autoMergeStatus(db, git, pr);
+  const status = await autoMergeStatus(env, db, git, pr);
   if (status.state !== 'ready') return false;
   const author = await db
     .select({ name: users.name, email: users.email })
@@ -261,4 +150,26 @@ export async function autoMergeForCommit(
       await maybeAutoMerge(env, db, pr.id).catch((e) =>
         console.error('[review] auto-merge failed', pr.id, e)
       );
+}
+
+/** Tries to auto-merge every open pull request of a repository, after a change that may unblock several. */
+export async function autoMergeRepository(
+  env: CloudflareBindings,
+  db: DrizzleDB,
+  repositoryId: string
+) {
+  const prs = await db
+    .select({ id: pullRequests.id })
+    .from(pullRequests)
+    .where(
+      and(
+        eq(pullRequests.repositoryId, repositoryId),
+        eq(pullRequests.state, 'open')
+      )
+    )
+    .all();
+  for (const { id } of prs)
+    await maybeAutoMerge(env, db, id).catch((e) =>
+      console.error('[review] auto-merge failed', id, e)
+    );
 }

@@ -5,6 +5,7 @@ import {
   mergeResolutions,
   pullRequestComments,
   pullRequests,
+  reviewerStatuses,
   type MergeResolution,
   type PullRequest,
 } from '../db/app.schema';
@@ -36,6 +37,7 @@ import {
   ownerRepoParams,
   prEventSchema,
   publicUserSchema,
+  pullReasonSchema,
   pullStateSchema,
 } from './schemas';
 import { compareShas } from './repos-router';
@@ -43,21 +45,26 @@ import { attributeCommits } from '../lib/commit-authors';
 import { ensureResolution } from '../merge/auto';
 import { landPull, pullRef } from '../merge/land';
 import { addComment, openPull, pullShas } from '../lib/pulls';
-import {
-  ensureClassification,
-  retryClassification,
-  reviewConfigured,
-} from '../review/classify';
-import { maybeAutoMerge, type ReviewProgress } from '../review/auto-merge';
-import { reviewProgressFor } from '../review/list';
+import { reviewConfigured } from '../review/head';
+import { maybeAutoMerge } from '../review/auto-merge';
+import { listReview, reviewInputs, reviewVerdict } from '../review/gate';
 import { CHANGES_NOTE_MAX, decideFlag } from '../review/flags';
-import { reviewView } from '../review/view';
+import { reviewersView } from '../review/reviewers-view';
+import { publishChange } from '../live/publish';
+import { settleStates } from '../pulls/settle';
+import { retryReviewer } from '../review/reviewers';
+import { ensureHeadReview, retryHeadReview } from '../review/head';
 import { stackTreeView, stackViewFor } from '../stack/view';
 import { ensureStacking, retryFailedPairs } from '../stack/discover';
 import { dismissEdge, onPullClosed, startReconcile } from '../stack/retarget';
 import { PULL_STATES, type PullState } from '../pulls/state';
 import { pullStates, pullStateFor } from '../pulls/signals';
 import { eventsFor } from '../pulls/events';
+import {
+  approvalsAt,
+  approvePull,
+  withdrawApproval,
+} from '../review/approvals';
 import { landShas, landTargetOf } from '../lib/land-target';
 
 export const pullsRouter = new OpenAPIHono<RepoEnv>({
@@ -171,16 +178,18 @@ const listRoute = createRoute({
             aiResolution: z
               .enum(['queued', 'running', 'proposed', 'failed'])
               .nullable(),
-            /** Open PRs under a review.yml: the head commit's auto-merge review. */
+            /** Open PRs: the head commit's review in a word (agents, or a person's approval). */
             review: z
               .object({
                 state: z.enum([
                   'reviewing',
                   'failed',
+                  'changes_requested',
                   'review_required',
+                  'needs_approval',
                   'approved',
                 ]),
-                /** Unapproved flags, when review is required. */
+                /** Agents' findings waiting for a person. */
                 flags: z.number(),
               })
               .nullable(),
@@ -273,32 +282,33 @@ pullsRouter.openapi(listRoute, async (c) => {
       )
       .all())
       resolutions.set(r.pullRequestId, r);
-  const reviews = openList
-    ? await reviewProgressFor(
-        db,
-        c.get('git'),
-        repo.id,
-        rows.map((r) => r.pr),
-        refs
-      )
-    : new Map<string, ReviewProgress>();
+  // The review gate's inputs, read once for both the review summary and the states.
+  const tips = openList
+    ? rows.flatMap(({ pr }) => {
+        const head = refs.get(`refs/heads/${pr.headRef}`);
+        return pr.state === 'open' &&
+          head &&
+          refs.get(`refs/heads/${landTargetOf(pr)}`)
+          ? [{ pullRequestId: pr.id, head }]
+          : [];
+      })
+    : [];
+  const gates = await reviewInputs(db, repo.id, tips, reviewConfigured(c.env));
   const states = openList
     ? await pullStates(
         db,
         c.get('git'),
         repo.id,
         rows.map((r) => r.pr),
-        { refs, reviewConfigured: reviewConfigured(c.env) }
+        { refs, reviewConfigured: reviewConfigured(c.env), reviews: gates }
       )
     : new Map<string, PullState>();
   const shown = byPullState
     ? rows.filter((r) => states.get(r.pr.id)?.state === state)
     : rows;
   const review = (pr: PullRequest) => {
-    const p = reviews.get(pr.id);
-    return p
-      ? { state: p.state, flags: p.state === 'review_required' ? p.flags : 0 }
-      : null;
+    const gate = gates.get(pr.id);
+    return gate ? listReview(reviewVerdict(gate)) : null;
   };
   const aiResolution = (pr: PullRequest) => {
     const r = resolutions.get(pr.id);
@@ -527,79 +537,79 @@ function serializeResolution(
   };
 }
 
-const answerSchema = z.union([
-  z.object({ type: z.literal('noul'), value: z.number() }),
-  z.object({
-    type: z.literal('choice'),
-    value: z.string(),
-    confidence: z.number(),
-    probabilities: z.record(z.string(), z.number()),
-  }),
-  z.object({
-    type: z.literal('score'),
-    value: z.number(),
-    confidence: z.number(),
-    probabilities: z.record(z.string(), z.number()),
-  }),
-]);
+const reviewFlagSchema = z
+  .object({
+    id: z.string(),
+    source: z.enum(['question', 'limit', 'agent']),
+    kind: z.enum(['needs_person', 'change_requested']),
+    title: z.string(),
+    paths: z.array(z.string()),
+    detail: z.string().nullable(),
+    detailModel: z.string().nullable(),
+    agentSha: z.string().nullable(),
+    approvedBy: publicUserSchema.nullable(),
+    approvedAt: z.string().nullable(),
+    changesRequestedBy: publicUserSchema.nullable(),
+    changesRequestedAt: z.string().nullable(),
+    changesRequestedNote: z.string().nullable(),
+  })
+  .openapi('ReviewFlag');
 
 const reviewSchema = z
   .object({
-    classification: z
-      .object({
-        id: z.string(),
-        status: z.enum([
-          'summarizing',
-          'classifying',
-          'investigating',
-          'done',
-          'failed',
-        ]),
-        verdict: z.enum(['auto', 'human']).nullable(),
-        headSha: z.string(),
-        summaryModel: z.string(),
-        classifierModel: z.string(),
-        files: z.array(
-          z.object({
-            path: z.string(),
-            status: z.enum(['added', 'removed', 'modified']),
-            additions: z.number(),
-            deletions: z.number(),
-            summary: z.string(),
-          })
-        ),
-        errorMessage: z.string().nullable(),
-        durationMs: z.number().nullable(),
-        createdAt: z.string(),
-      })
+    headSha: z.string(),
+    agentsInvited: z.boolean(),
+    status: z
+      .enum([
+        'summarizing',
+        'triggering',
+        'reviewing',
+        'done',
+        'failed',
+        'classifying',
+        'investigating',
+      ])
       .nullable(),
-    questions: z.array(
+    errorMessage: z.string().nullable(),
+    summaryModel: z.string().nullable(),
+    files: z.array(
       z.object({
-        id: z.string(),
-        ask: z.string(),
-        type: z.enum(['noul', 'choice', 'score']),
-        threshold: z.string(),
-        answer: answerSchema.nullable(),
-        flagged: z.boolean(),
+        path: z.string(),
+        status: z.enum(['added', 'removed', 'modified']),
+        additions: z.number(),
+        deletions: z.number(),
+        summary: z.string(),
       })
     ),
-    flags: z.array(
+    createdAt: z.string().nullable(),
+    durationMs: z.number().nullable(),
+    reviewers: z.array(
       z.object({
         id: z.string(),
-        source: z.enum(['question', 'limit']),
-        key: z.string(),
-        title: z.string(),
-        value: z.unknown(),
-        paths: z.array(z.string()),
-        detail: z.string().nullable(),
-        detailModel: z.string().nullable(),
-        approvedBy: publicUserSchema.nullable(),
-        approvedAt: z.string().nullable(),
-        changesRequestedBy: publicUserSchema.nullable(),
-        changesRequestedAt: z.string().nullable(),
-        changesRequestedNote: z.string().nullable(),
+        agent: publicUserSchema,
+        /** `<handle>/<handle>`, for the agent_sha link; null once that repository is deleted. */
+        agentRepository: z.string().nullable(),
+        /** Still invited; a removed agent's row stays as history and stops counting. */
+        invited: z.boolean(),
+        status: z.enum(reviewerStatuses),
+        requested: z.boolean(),
+        probability: z.number().nullable(),
+        agentSha: z.string().nullable(),
+        summary: z.string().nullable(),
+        error: z.string().nullable(),
+        createdAt: z.string(),
+        finishedAt: z.string().nullable(),
+        flags: z.array(reviewFlagSchema),
       })
     ),
+    /** A review.yml review of this commit from before reviewer agents (history). */
+    legacy: z
+      .object({ createdAt: z.string(), flags: z.array(reviewFlagSchema) })
+      .nullable(),
+    /** Whether review lets this commit land, and why not (open pull requests only). */
+    verdict: z
+      .object({ satisfied: z.boolean(), reasons: z.array(pullReasonSchema) })
+      .nullable(),
     autoMerge: z.object({
       state: z.enum(['off', 'disabled', 'waiting', 'blocked', 'ready']),
       reasons: z.array(z.string()),
@@ -640,9 +650,13 @@ const getPullRoute = createRoute({
         resolvedByAi: z.boolean(),
         aiResolution: z.boolean(),
         resolution: resolutionSchema.nullable(),
-        /** Head commit's review; null without review.yml. Closed PRs keep the last review. */
+        /** The head commit's review by agents and people; null when the branches are gone. */
         review: reviewSchema.nullable(),
         canMerge: z.boolean(),
+        /** People who approved the head commit, oldest first (a new commit needs a new approval). */
+        approvals: z.array(
+          z.object({ user: publicUserSchema, createdAt: z.string() })
+        ),
         /** Place in the target's stack tree; null when the PR isn't open. */
         stack: stackNodeSchema.nullable(),
         /** Whose move it is, and why; null unless the PR is open with both branches. */
@@ -667,15 +681,17 @@ pullsRouter.openapi(getPullRoute, async (c) => {
     .orderBy(asc(pullRequestComments.createdAt))
     .all();
   const events = await eventsFor(db, pr.id);
+  const [shas, headLive] = await Promise.all([
+    pullShas(git, pr),
+    git.resolve(pr.headRef),
+  ]);
+  const approvals = shas ? await approvalsAt(db, pr.id, shas.head) : [];
   const people = await usersById(db, [
     pr.authorId,
     pr.mergedById ?? '',
     ...comments.map((x) => x.authorId),
     ...events.map((e) => e.actorId ?? ''),
-  ]);
-  const [shas, headLive] = await Promise.all([
-    pullShas(git, pr),
-    git.resolve(pr.headRef),
+    ...approvals.map((a) => a.userId),
   ]);
   let mergeable: boolean | null = null;
   let conflicts: string[] = [];
@@ -723,11 +739,11 @@ pullsRouter.openapi(getPullRoute, async (c) => {
         )
       );
   }
-  const review = await reviewView(db, git, pr, shas);
-  // Backstop for missed triggers: a reviewable commit without a review gets one.
-  if (target && review && !review.classification)
+  const review = await reviewersView(c.env, db, git, pr, shas);
+  // Backstop for missed triggers: a head with no review gets one where agents are invited.
+  if (target && review?.agentsInvited && review.status === null)
     c.executionCtx.waitUntil(
-      ensureClassification(c.env, db, git, pr, target).catch((e) =>
+      ensureHeadReview(c.env, db, pr, target).catch((e) =>
         console.error('[review] start failed', e)
       )
     );
@@ -764,6 +780,10 @@ pullsRouter.openapi(getPullRoute, async (c) => {
         : null,
       review,
       canMerge: c.get('perms').write,
+      approvals: approvals.map((a) => ({
+        user: people.get(a.userId) ?? ghost,
+        createdAt: a.createdAt.toISOString(),
+      })),
       stack,
       pullState,
       events: events.map((e) => ({
@@ -856,10 +876,9 @@ pullsRouter.openapi(updatePullRoute, async (c) => {
       );
     if (shas)
       c.executionCtx.waitUntil(
-        ensureClassification(
+        ensureHeadReview(
           c.env,
           c.get('db'),
-          c.get('git'),
           { ...pr, state: 'open' },
           shas
         ).catch((e) => console.error('[review] start failed', e))
@@ -944,6 +963,10 @@ const mergeRoute = createRoute({
             message: z.string().max(65536).optional(),
             /** Land a proposed AI conflict resolution instead of merging the branches. */
             resolutionId: z.string().optional(),
+            /** Approve the head commit as you merge it (a recorded approval; needs merge permission). */
+            approve: z.boolean().optional(),
+            /** The head commit you reviewed (and, with `approve`, approve); 409 if the branch has moved since. */
+            headSha: z.string().optional(),
           }),
         },
       },
@@ -964,6 +987,20 @@ pullsRouter.openapi(mergeRoute, async (c) => {
   if (!pr) return c.json({ error: 'Not Found' }, 404);
   const body = c.req.valid('json');
   const user = c.get('user')!;
+  if (body.approve) {
+    // This request lands the pull request itself: no auto-merge race, and it is merged by this person. A
+    // refused merge below keeps the approval: it is this person's decision about this commit.
+    const approved = await approvePull(
+      c.env,
+      c.get('db'),
+      c.get('git'),
+      pr,
+      user.id,
+      (work) => c.executionCtx.waitUntil(work),
+      { followUps: false, expectedHead: body.headSha }
+    );
+    if (!approved.ok) return c.json({ error: approved.error }, approved.status);
+  }
   const result = await landPull({
     env: c.env,
     db: c.get('db'),
@@ -976,13 +1013,105 @@ pullsRouter.openapi(mergeRoute, async (c) => {
     title: body.title,
     message: body.message,
     resolutionId: body.resolutionId,
+    expectedHead: body.headSha,
     after: (work) => c.executionCtx.waitUntil(work),
   });
-  if (!result.ok) return c.json({ error: result.error }, result.status);
+  if (!result.ok) {
+    if (body.approve) {
+      // The approval stands though the merge was refused: open pages and the pull request's state catch up
+      // (a refusal skips the ping that follows successful changes). It lands once whatever refused it clears:
+      // on its own where agents review, else by a later click.
+      c.executionCtx.waitUntil(
+        publishChange(c.env, pr.repositoryId, { approvals: true })
+      );
+      c.executionCtx.waitUntil(
+        settleStates(c.env, c.get('db'), pr.repositoryId)
+      );
+    }
+    return c.json({ error: result.error }, result.status);
+  }
   return c.json({ sha: result.sha }, 200);
 });
 
-// ── auto-merge review ────────────────────────────────────────────────────────
+// ── a person's approval ──────────────────────────────────────────────────────
+
+const approvalResponses = {
+  ...json200Response(
+    z.object({ ok: z.literal(true), headSha: z.string() }),
+    'The head commit is approved (or no longer approved by you)'
+  ),
+  ...json400Response,
+  ...json403Response,
+  ...json404Response,
+};
+
+const approveRoute = createRoute({
+  method: 'post',
+  path: '/{owner}/{repo}/pulls/{number}/approval',
+  tags: ['Pull requests'],
+  request: {
+    params: numberParams,
+    body: {
+      required: false,
+      content: {
+        'application/json': {
+          schema: z.object({
+            /** The head commit you reviewed; 409 if the branch has moved since. */
+            headSha: z.string().optional(),
+          }),
+        },
+      },
+    },
+  },
+  // Approving a head the person didn't see is refused (409); withdrawing never is.
+  responses: { ...approvalResponses, ...json409Response },
+});
+pullsRouter.openapi(approveRoute, async (c) => {
+  // Approving lets a pull request land, so it takes merge permission (agents never hold a session).
+  if (!c.get('perms').write)
+    return c.json({ error: 'You do not have permission to approve' }, 403);
+  const pr = await getPull(c, c.req.valid('param').number);
+  if (!pr) return c.json({ error: 'Not Found' }, 404);
+  // The body is optional: no JSON body approves whatever the head is now.
+  const body = (c.req.valid('json') ?? {}) as { headSha?: string };
+  const result = await approvePull(
+    c.env,
+    c.get('db'),
+    c.get('git'),
+    pr,
+    c.get('user')!.id,
+    (work) => c.executionCtx.waitUntil(work),
+    { expectedHead: body.headSha }
+  );
+  if (!result.ok) return c.json({ error: result.error }, result.status);
+  return c.json({ ok: true as const, headSha: result.headSha }, 200);
+});
+
+const withdrawRoute = createRoute({
+  method: 'delete',
+  path: '/{owner}/{repo}/pulls/{number}/approval',
+  tags: ['Pull requests'],
+  request: { params: numberParams },
+  responses: approvalResponses,
+});
+pullsRouter.openapi(withdrawRoute, async (c) => {
+  if (!c.get('perms').write)
+    return c.json({ error: 'You do not have permission to approve' }, 403);
+  const pr = await getPull(c, c.req.valid('param').number);
+  if (!pr) return c.json({ error: 'Not Found' }, 404);
+  const result = await withdrawApproval(
+    c.env,
+    c.get('db'),
+    c.get('git'),
+    pr,
+    c.get('user')!.id,
+    (work) => c.executionCtx.waitUntil(work)
+  );
+  if (!result.ok) return c.json({ error: result.error }, result.status);
+  return c.json({ ok: true as const, headSha: result.headSha }, 200);
+});
+
+// ── review findings ──────────────────────────────────────────────────────────
 
 const flagParams = numberParams.extend({ flagId: z.string() });
 
@@ -1084,18 +1213,44 @@ pullsRouter.openapi(retryReviewRoute, async (c) => {
   const shas = pr.state === 'open' ? await landShas(c.get('git'), pr) : null;
   if (!shas)
     return c.json({ error: 'Only open pull requests are reviewed' }, 400);
-  const row = await retryClassification(
+  const result = await retryHeadReview(c.env, c.get('db'), pr, shas);
+  if (!result.ok) return c.json({ error: result.error }, 400);
+  return c.json({ ok: true as const }, 200);
+});
+
+const reviewerParams = numberParams.extend({ reviewerId: z.string() });
+
+const retryReviewerRoute = createRoute({
+  method: 'post',
+  path: '/{owner}/{repo}/pulls/{number}/reviewers/{reviewerId}/retry',
+  tags: ['Pull requests'],
+  request: { params: reviewerParams },
+  responses: {
+    ...json200Response(z.object({ ok: z.literal(true) }), 'Review restarted'),
+    ...json400Response,
+    ...json403Response,
+    ...json404Response,
+    503: {
+      description: 'The review could not be started',
+      content: { 'application/json': { schema: errorSchema } },
+    },
+  },
+});
+pullsRouter.openapi(retryReviewerRoute, async (c) => {
+  if (!c.get('perms').write)
+    return c.json({ error: 'You do not have permission to do that' }, 403);
+  const { number, reviewerId } = c.req.valid('param');
+  const pr = await getPull(c, number);
+  if (!pr) return c.json({ error: 'Not Found' }, 404);
+  const result = await retryReviewer(
     c.env,
     c.get('db'),
-    c.get('git'),
     pr,
-    shas
+    reviewerId,
+    await c.get('git').resolve(pr.headRef),
+    (work) => c.executionCtx.waitUntil(work)
   );
-  if (!row)
-    return c.json(
-      { error: 'The target branch has no .gitorange/review.yml' },
-      400
-    );
+  if (!result.ok) return c.json({ error: result.error }, result.status);
   return c.json({ ok: true as const }, 200);
 });
 

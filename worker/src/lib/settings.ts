@@ -54,15 +54,15 @@ export const SETTINGS = {
   'ai.summary_model': {
     label: 'Review summary model',
     description:
-      'Writes the one-line summary of each changed file in an auto-merge review.',
+      'Writes the one-line summary of each changed file in a review.',
     group: 'AI models',
     schema: modelId,
     default: (env) => env.SUMMARY_MODEL || '@cf/zai-org/glm-5.3-flash',
   } satisfies Definition<string>,
   'ai.review_model': {
-    label: 'Review investigation model',
+    label: 'Agent review model',
     description:
-      'Investigates each flag in an auto-merge review and writes its explanation and diagram.',
+      "Runs each reviewer agent's review and writes its findings' explanations and diagrams.",
     group: 'AI models',
     schema: modelId,
     default: (env) => env.REVIEW_MODEL || '@cf/zai-org/glm-5.3',

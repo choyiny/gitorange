@@ -13,19 +13,11 @@ import { recordEvent } from '../pulls/events';
 import { findRepoById, gitFor } from '../lib/repos';
 import { pullRef } from '../merge/land';
 import type { StepRunner } from '../merge/resolution';
-import {
-  classificationFor,
-  diffsFor,
-  MODEL_RETRIES,
-  reviewConfigured,
-} from '../review/classify';
+import { reviewConfigured } from '../review/head';
+import { headReviewFor, hasInvitedAgents } from '../review/keys';
+import { diffsFor, MODEL_RETRIES, summaryLines } from '../review/detail';
 import { ignoreMatcher, readIgnore } from '../review/ignore';
-import {
-  DEFAULT_CLASSIFIER,
-  parsePolicy,
-  readPolicy,
-  STACKING_DEFAULTS,
-} from '../review/policy';
+import { STACKING_DEFAULTS, stackingTuning } from './defaults';
 import {
   readDecision,
   routeDecision,
@@ -62,29 +54,8 @@ function capLines(text: string, max: number): string {
 }
 
 /**
- * Stacking's tuning from the target branch's review.yml. Without a valid one, the defaults and no
- * `policySha`: there is no auto-merge review to wait for.
- */
-export async function stackingPolicy(git: GitService, baseSha: string) {
-  const file = await readPolicy(git, baseSha);
-  if (file)
-    try {
-      const p = parsePolicy(file.text);
-      return { ...p.stacking, model: p.model, policySha: file.sha };
-    } catch {
-      // An invalid review.yml is reported on its review; stacking goes on with the defaults.
-    }
-  return {
-    ...STACKING_DEFAULTS,
-    model: DEFAULT_CLASSIFIER,
-    policySha: null as string | null,
-  };
-}
-
-/**
- * Starts a stack run for the PR's current head and base. With a valid review.yml on the target, waits
- * until the head's auto-merge review has finished (the run reads its summaries). Returns whether one
- * was started.
+ * Starts a stack run for the PR's current head and base. Where agents review, waits until the head's review has
+ * finished (the run reads its one-liners). Returns whether one was started.
  */
 export async function ensureStacking(
   env: CloudflareBindings,
@@ -94,14 +65,8 @@ export async function ensureStacking(
   shas: { base: string; head: string }
 ): Promise<boolean> {
   if (!reviewConfigured(env) || pr.state !== 'open') return false;
-  const policy = await stackingPolicy(git, shas.base);
-  if (policy.policySha) {
-    const review = await classificationFor(
-      db,
-      pr.id,
-      shas.head,
-      policy.policySha
-    );
+  if (await hasInvitedAgents(db, pr.repositoryId)) {
+    const review = await headReviewFor(db, pr.id, shas.head);
     if (!review || (review.status !== 'done' && review.status !== 'failed'))
       return false;
   }
@@ -152,10 +117,7 @@ export async function summariesFor(
     )
     .orderBy(desc(prClassifications.createdAt))
     .get();
-  if (review?.files?.length)
-    return review.files
-      .map((f) => `- ${f.path} (${f.status}): ${f.summary}`)
-      .join('\n');
+  if (review?.files?.length) return summaryLines(review.files);
   return changes.map((c) => `- ${c.path}`).join('\n');
 }
 
@@ -176,6 +138,8 @@ export async function executeStacking(
     db: DrizzleDB;
     step: StepRunner;
     models: StackModels;
+    /** Tests only: overrides the built-in tuning. */
+    tuning?: Partial<typeof STACKING_DEFAULTS>;
   },
   params: StackParams
 ): Promise<void> {
@@ -195,7 +159,7 @@ export async function executeStacking(
       git.resolve(pr.headRef),
     ]);
     if (!target || !head) return null;
-    const policy = await stackingPolicy(git, target);
+    const policy = stackingTuning(deps.tuning);
     const side = async (
       p: PullRequest,
       h: string,

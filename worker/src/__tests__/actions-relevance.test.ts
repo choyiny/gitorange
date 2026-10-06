@@ -422,7 +422,7 @@ describe('gitorange/relevance reads the change', () => {
       id: crypto.randomUUID(),
       pullRequestId: prId,
       headSha: head,
-      policySha: 'p'.repeat(40),
+      policySha: '',
       status: 'done',
       summaryModel: '@cf/zai-org/glm-5.3-flash',
       classifierModel: '@cf/cloudflare/clef',
@@ -435,8 +435,6 @@ describe('gitorange/relevance reads the change', () => {
           summary: 'Adds the stack walker.',
         },
       ],
-      answers: {},
-      verdict: 'auto',
       createdAt: new Date(),
       finishedAt: new Date(),
     });

@@ -1,0 +1,164 @@
+import { and, asc, desc, eq } from 'drizzle-orm';
+import type { DrizzleDB } from '../db/middleware';
+import {
+  agents,
+  prClassifications,
+  prReviewers,
+  prReviewFlags,
+  repositories,
+  repositoryAgents,
+  type PrReviewFlag,
+  type PullRequest,
+} from '../db/app.schema';
+import { users } from '../db/auth.schema';
+import type { GitService } from '../git/service';
+import { usersById, type PublicUser } from '../lib/users';
+import { resolutionConfigured } from '../merge/resolution';
+import { autoMergeStatus, type AutoMergeStatus } from './auto-merge';
+import { flagTitleOf, reviewGateFor, type ReviewVerdict } from './gate';
+import { hasInvitedAgents, headReviewFor } from './keys';
+
+/** A flag as the API shows it. */
+export function flagJson(f: PrReviewFlag, people: Map<string, PublicUser>) {
+  return {
+    id: f.id,
+    source: f.source,
+    kind: f.kind,
+    title: flagTitleOf(f),
+    paths: f.paths,
+    detail: f.detail,
+    detailModel: f.detailModel,
+    agentSha: f.agentSha,
+    approvedBy: f.approvedById ? (people.get(f.approvedById) ?? null) : null,
+    approvedAt: f.approvedAt?.toISOString() ?? null,
+    changesRequestedBy: f.changesRequestedById
+      ? (people.get(f.changesRequestedById) ?? null)
+      : null,
+    changesRequestedAt: f.changesRequestedAt?.toISOString() ?? null,
+    changesRequestedNote: f.changesRequestedAt ? f.changesRequestedNote : null,
+  };
+}
+export type FlagJson = ReturnType<typeof flagJson>;
+
+/**
+ * The review of a pull request's head commit, for its page and MCP: every invited agent's row (requested or
+ * not), their findings, who approved, the verdict and auto-merge. A commit reviewed under review.yml before
+ * reviewer agents shows that review's flags as `legacy`.
+ */
+export async function reviewersView(
+  env: CloudflareBindings,
+  db: DrizzleDB,
+  git: GitService,
+  pr: PullRequest,
+  shas: { base: string; head: string } | null
+) {
+  if (!shas) return null;
+  const open = pr.state === 'open';
+  const review = await headReviewFor(db, pr.id, shas.head);
+  const legacy = review
+    ? undefined
+    : await db
+        .select()
+        .from(prClassifications)
+        .where(
+          and(
+            eq(prClassifications.pullRequestId, pr.id),
+            eq(prClassifications.headSha, shas.head)
+          )
+        )
+        .orderBy(desc(prClassifications.createdAt))
+        .limit(1)
+        .get();
+  const rows = await db
+    .select({
+      r: prReviewers,
+      handle: users.username,
+      name: users.name,
+      image: users.image,
+      agentRepo: repositories.name,
+      invited: repositoryAgents.agentId,
+    })
+    .from(prReviewers)
+    .innerJoin(users, eq(users.id, prReviewers.agentId))
+    .leftJoin(agents, eq(agents.userId, prReviewers.agentId))
+    .leftJoin(repositories, eq(repositories.id, agents.repositoryId))
+    .leftJoin(
+      repositoryAgents,
+      and(
+        eq(repositoryAgents.repositoryId, pr.repositoryId),
+        eq(repositoryAgents.agentId, prReviewers.agentId)
+      )
+    )
+    .where(
+      and(
+        eq(prReviewers.pullRequestId, pr.id),
+        eq(prReviewers.headSha, shas.head)
+      )
+    )
+    .orderBy(asc(users.username))
+    .all();
+  const reviewId = review?.id ?? legacy?.id;
+  const flags = reviewId
+    ? await db
+        .select()
+        .from(prReviewFlags)
+        .where(eq(prReviewFlags.classificationId, reviewId))
+        // `<agent id>:<index>`: an agent's findings in the order it gave them (they share a created_at second).
+        .orderBy(asc(prReviewFlags.key))
+        .all()
+    : [];
+  const people = await usersById(
+    db,
+    flags
+      .flatMap((f) => [f.approvedById, f.changesRequestedById])
+      .filter((id): id is string => !!id)
+  );
+  const status: AutoMergeStatus = open
+    ? await autoMergeStatus(env, db, git, pr)
+    : { state: 'off' };
+  const verdict: ReviewVerdict | null = open
+    ? await reviewGateFor(db, resolutionConfigured(env), pr, shas.head)
+    : null;
+  return {
+    headSha: shas.head,
+    agentsInvited: await hasInvitedAgents(db, pr.repositoryId),
+    status: review?.status ?? null,
+    errorMessage: review?.errorMessage ?? null,
+    summaryModel: review?.summaryModel ?? null,
+    files: review?.files ?? [],
+    createdAt: review?.createdAt.toISOString() ?? null,
+    durationMs: review?.durationMs ?? null,
+    reviewers: rows.map(({ r, handle, name, image, agentRepo, invited }) => ({
+      id: r.id,
+      agent: { id: r.agentId, username: handle ?? r.agentId, name, image },
+      agentRepository: agentRepo && handle ? `${handle}/${agentRepo}` : null,
+      invited: !!invited,
+      status: r.status,
+      requested: r.requested,
+      probability: r.probability,
+      agentSha: r.agentSha,
+      summary: r.summary,
+      error: r.error,
+      createdAt: r.createdAt.toISOString(),
+      finishedAt: r.finishedAt?.toISOString() ?? null,
+      flags: flags
+        .filter((f) => f.agentId === r.agentId)
+        .map((f) => flagJson(f, people)),
+    })),
+    legacy: legacy
+      ? {
+          createdAt: legacy.createdAt.toISOString(),
+          flags: flags.map((f) => flagJson(f, people)),
+        }
+      : null,
+    verdict,
+    autoMerge: {
+      state: status.state,
+      reasons: 'reasons' in status ? status.reasons : [],
+      disabledAt: status.state === 'disabled' ? status.at.toISOString() : null,
+    },
+  };
+}
+export type ReviewersView = NonNullable<
+  Awaited<ReturnType<typeof reviewersView>>
+>;
