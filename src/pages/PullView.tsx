@@ -25,6 +25,7 @@ import { ApiError, errorMessage } from '@/lib/api';
 import { blocking, reasonText } from '@/lib/pullState';
 import {
   anchoredReviewer,
+  earlierEntries,
   reviewEntries,
   slotOf,
   timelineSlots,
@@ -40,6 +41,7 @@ import { AiResolution } from '@/components/AiResolution';
 import { AutoMergeStatus } from '@/components/AutoMergeReview';
 import {
   AgentReview,
+  EarlierReview,
   LegacyReview,
   PersonApprovals,
   ReviewersSidebar,
@@ -346,7 +348,8 @@ function Conversation({
   const slots = timelineSlots(
     d.comments,
     d.events,
-    d.review ? reviewEntries(d.review.reviewers) : []
+    d.review ? reviewEntries(d.review.reviewers) : [],
+    d.review ? earlierEntries(d.review.earlier) : []
   );
   // "Review the flags" jumps to the first review with a finding for a person, else to the sidebar.
   const anchored = anchoredReviewer(slots);
@@ -364,6 +367,8 @@ function Conversation({
             e={x.event}
             repoPath={`/${repo.fullName}`}
           />
+        ) : x.kind === 'earlier' ? (
+          <EarlierReview key={x.review.id} repo={repo} r={x.review} />
         ) : (
           <AgentReview
             key={x.review.id}

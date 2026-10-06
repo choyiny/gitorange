@@ -39,6 +39,16 @@ export function reviewVerb(r: {
   }
 }
 
+/** An earlier commit's review: every finding is counted, since none of them is waiting on anyone any more. */
+export function earlierVerb(r: {
+  status: ShownStatus;
+  flags: { approvedAt: string | null }[];
+}): string {
+  if (r.status !== 'flagged') return reviewVerb(r);
+  const n = r.flags.length;
+  return `flagged ${n} finding${n === 1 ? '' : 's'}`;
+}
+
 /** Where a review sits in the timeline: when it finished, or when it started while it runs. */
 export function reviewTime(r: {
   status: ReviewerStatus;
@@ -58,34 +68,53 @@ export function reviewEntries<R extends ReviewerLike>(
   );
 }
 
+/** Earlier commits' reviews shown in the conversation: cancelled (`not_needed`) ones never are. */
+export function earlierEntries<R extends { status: ReviewerStatus }>(
+  earlier: R[]
+): (R & { status: ShownStatus })[] {
+  return earlier.filter(
+    (r): r is R & { status: ShownStatus } => r.status !== 'not_needed'
+  );
+}
+
 /** The slot something at `at` falls in: before the first comment made after it (comments.length: after them all). */
 export function slotOf(comments: { createdAt: string }[], at: string): number {
   const i = comments.findIndex((c) => c.createdAt > at);
   return i < 0 ? comments.length : i;
 }
 
-export type TimelineItem<E, R> =
+/** The parts of an earlier commit's review the timeline reads. */
+type EarlierLike = {
+  status: ReviewerStatus;
+  createdAt: string;
+  finishedAt: string | null;
+};
+
+export type TimelineItem<E, R, P = never> =
   | { kind: 'event'; at: string; event: E }
-  | { kind: 'review'; at: string; review: R };
+  | { kind: 'review'; at: string; review: R }
+  | { kind: 'earlier'; at: string; review: P };
 
 /**
- * Events and agent reviews between the comments they happened between: slot i comes before comment i, and
- * the last slot after every comment. Within a slot, time order; an event comes first at the same instant
- * (a push precedes the reviews of its commit).
+ * Events and agent reviews (the head commit's, and `earlier` commits') between the comments they happened
+ * between: slot i comes before comment i, and the last slot after every comment. Within a slot, time order; an
+ * event comes first at the same instant (a push precedes the reviews of its commit).
  */
 export function timelineSlots<
   E extends { createdAt: string },
   R extends ReviewerLike,
+  P extends EarlierLike = never,
 >(
   comments: { createdAt: string }[],
   events: E[],
-  reviews: R[]
-): TimelineItem<E, R>[][] {
-  const slots: TimelineItem<E, R>[][] = Array.from(
+  reviews: R[],
+  earlier: P[] = []
+): TimelineItem<E, R, P>[][] {
+  const slots: TimelineItem<E, R, P>[][] = Array.from(
     { length: comments.length + 1 },
     () => []
   );
-  const items: TimelineItem<E, R>[] = [
+  const items: TimelineItem<E, R, P>[] = [
     ...events.map((event) => ({
       kind: 'event' as const,
       at: event.createdAt,
@@ -96,6 +125,11 @@ export function timelineSlots<
       at: reviewTime(review),
       review,
     })),
+    ...earlier.map((review) => ({
+      kind: 'earlier' as const,
+      at: reviewTime(review),
+      review,
+    })),
   ];
   // Stable: events (listed first) keep their order, and win ties.
   items.sort((a, b) => (a.at < b.at ? -1 : a.at > b.at ? 1 : 0));
@@ -103,9 +137,12 @@ export function timelineSlots<
   return slots;
 }
 
-/** The review "Review the flags" jumps to: the first in the timeline with a finding still waiting on a person. */
+/**
+ * The review "Review the flags" jumps to: the first head commit review in the timeline with a finding still
+ * waiting on a person (earlier commits' findings no longer count).
+ */
 export function anchoredReviewer<R extends ReviewerLike>(
-  slots: TimelineItem<unknown, R>[][]
+  slots: TimelineItem<unknown, R, unknown>[][]
 ): string | null {
   for (const slot of slots)
     for (const item of slot)

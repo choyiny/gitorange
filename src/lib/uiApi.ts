@@ -279,6 +279,18 @@ export type Reviewer = {
   finishedAt: string | null;
   flags: ReviewFlag[];
 };
+/** A requested agent's review of an earlier head commit of the pull request. */
+export type EarlierReview = {
+  id: string;
+  headSha: string;
+  agent: User;
+  status: ReviewerStatus;
+  summary: string | null;
+  error: string | null;
+  createdAt: string;
+  finishedAt: string | null;
+  flags: ReviewFlag[];
+};
 /** One instance setting in Site admin (GET /api/admin/settings). */
 export type InstanceSetting = {
   key: string;
@@ -365,6 +377,8 @@ export type PullReview = {
   durationMs: number | null;
   reviewers: Reviewer[];
   legacy: { createdAt: string; flags: ReviewFlag[] } | null;
+  /** Requested agents' reviews of earlier head commits, newest first (at most 50): history that no longer counts. */
+  earlier: EarlierReview[];
   verdict: { satisfied: boolean; reasons: PullReason[] } | null;
   autoMerge: {
     state: 'off' | 'disabled' | 'waiting' | 'blocked' | 'ready';

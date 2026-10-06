@@ -608,6 +608,20 @@ const reviewSchema = z
     legacy: z
       .object({ createdAt: z.string(), flags: z.array(reviewFlagSchema) })
       .nullable(),
+    /** Requested agents' reviews of this pull request's earlier head commits, newest first (at most 50); history. */
+    earlier: z.array(
+      z.object({
+        id: z.string(),
+        headSha: z.string(),
+        agent: publicUserSchema,
+        status: z.enum(reviewerStatuses),
+        summary: z.string().nullable(),
+        error: z.string().nullable(),
+        createdAt: z.string(),
+        finishedAt: z.string().nullable(),
+        flags: z.array(reviewFlagSchema),
+      })
+    ),
     /** Whether review lets this commit land, and why not (open pull requests only). */
     verdict: z
       .object({ satisfied: z.boolean(), reasons: z.array(pullReasonSchema) })

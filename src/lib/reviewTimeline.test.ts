@@ -1,6 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import {
   anchoredReviewer,
+  earlierEntries,
+  earlierVerb,
   reviewEntries,
   reviewTime,
   reviewVerb,
@@ -151,6 +153,70 @@ describe('timelineSlots', () => {
       ['a', 'b']
     );
     expect(slots[1]).toEqual([]);
+  });
+});
+
+describe("earlier commits' reviews", () => {
+  const c = (createdAt: string) => ({ createdAt });
+  const p = (
+    id: string,
+    finishedAt: string | null,
+    status: ReviewerStatus = 'flagged'
+  ) => ({
+    id,
+    headSha: 'abc1234',
+    status,
+    createdAt: '2026-01-01T07:00:00Z',
+    finishedAt,
+    flags: [flag()],
+  });
+  it('sit at their own time among comments, events and head reviews', () => {
+    const slots = timelineSlots(
+      [c('2026-01-01T09:00:00Z')],
+      [{ id: 'push', createdAt: '2026-01-01T08:30:00Z' }],
+      [r({ id: 'head' })],
+      [p('old', '2026-01-01T08:00:00Z'), p('unfinished', null)]
+    );
+    const ids = slots.map((s) =>
+      s.map((x) => `${x.kind}:${x.kind === 'event' ? x.event.id : x.review.id}`)
+    );
+    expect(ids).toEqual([
+      ['earlier:unfinished', 'earlier:old', 'event:push'],
+      ['review:head'],
+    ]);
+  });
+  it('never anchor "Review the flags", even with findings left open', () => {
+    const slots = timelineSlots(
+      [],
+      [],
+      [r({ id: 'head' })],
+      [p('old', '2026-01-01T08:00:00Z')]
+    );
+    expect(anchoredReviewer(slots)).toBe(null);
+    const both = timelineSlots(
+      [],
+      [],
+      [r({ id: 'head', flags: [flag()] })],
+      [p('old', '2026-01-01T08:00:00Z')]
+    );
+    expect(anchoredReviewer(both)).toBe('head');
+  });
+  it('leave out cancelled ones', () => {
+    expect(
+      earlierEntries([
+        p('a', null),
+        p('b', null, 'not_needed'),
+        p('c', null, 'failed'),
+      ]).map((x) => x.id)
+    ).toEqual(['a', 'c']);
+  });
+  it('count every finding, since none waits on anyone any more', () => {
+    expect(earlierVerb({ status: 'flagged', flags: [flag(), flag('x')] })).toBe(
+      'flagged 2 findings'
+    );
+    expect(earlierVerb({ status: 'approved', flags: [] })).toBe(
+      'approved these changes'
+    );
   });
 });
 

@@ -1,4 +1,4 @@
-import { and, asc, desc, eq } from 'drizzle-orm';
+import { and, asc, desc, eq, inArray, ne } from 'drizzle-orm';
 import type { DrizzleDB } from '../db/middleware';
 import {
   agents,
@@ -16,7 +16,11 @@ import { usersById, type PublicUser } from '../lib/users';
 import { resolutionConfigured } from '../merge/resolution';
 import { autoMergeStatus, type AutoMergeStatus } from './auto-merge';
 import { flagTitleOf, reviewGateFor, type ReviewVerdict } from './gate';
-import { hasInvitedAgents, headReviewFor } from './keys';
+import { chunks } from '../stack/view';
+import { hasInvitedAgents, headReviewFor, headReviewId } from './keys';
+
+/** Earlier commits' reviews the page shows, newest first. */
+export const EARLIER_REVIEWS_MAX = 50;
 
 /** A flag as the API shows it. */
 export function flagJson(f: PrReviewFlag, people: Map<string, PublicUser>) {
@@ -44,7 +48,8 @@ export type FlagJson = ReturnType<typeof flagJson>;
 /**
  * The review of a pull request's head commit, for its page and MCP: every invited agent's row (requested or
  * not), their findings, who approved, the verdict and auto-merge. A commit reviewed under review.yml before
- * reviewer agents shows that review's flags as `legacy`.
+ * reviewer agents shows that review's flags as `legacy`. `earlier`: requested agents' reviews of the pull request's
+ * previous head commits, read-only history (MCP leaves them out).
  */
 export async function reviewersView(
   env: CloudflareBindings,
@@ -108,9 +113,48 @@ export async function reviewersView(
         .orderBy(asc(prReviewFlags.key))
         .all()
     : [];
+  const earlierRows = await db
+    .select({
+      r: prReviewers,
+      handle: users.username,
+      name: users.name,
+      image: users.image,
+    })
+    .from(prReviewers)
+    .innerJoin(users, eq(users.id, prReviewers.agentId))
+    .where(
+      and(
+        eq(prReviewers.pullRequestId, pr.id),
+        ne(prReviewers.headSha, shas.head),
+        eq(prReviewers.requested, true),
+        ne(prReviewers.status, 'not_needed')
+      )
+    )
+    .orderBy(desc(prReviewers.createdAt), desc(prReviewers.id))
+    .limit(EARLIER_REVIEWS_MAX)
+    .all();
+  // Their findings in one query (EARLIER_REVIEWS_MAX keeps it to one chunk), matched to agents below.
+  const earlierFlags: PrReviewFlag[] = [];
+  for (const part of chunks(
+    [...new Set(earlierRows.map(({ r }) => headReviewId(pr.id, r.headSha)))],
+    90
+  ))
+    earlierFlags.push(
+      ...(await db
+        .select()
+        .from(prReviewFlags)
+        .where(
+          and(
+            inArray(prReviewFlags.classificationId, part),
+            eq(prReviewFlags.source, 'agent')
+          )
+        )
+        .orderBy(asc(prReviewFlags.key))
+        .all())
+    );
   const people = await usersById(
     db,
-    flags
+    [...flags, ...earlierFlags]
       .flatMap((f) => [f.approvedById, f.changesRequestedById])
       .filter((id): id is string => !!id)
   );
@@ -152,6 +196,23 @@ export async function reviewersView(
           flags: flags.map((f) => flagJson(f, people)),
         }
       : null,
+    earlier: earlierRows.map(({ r, handle, name, image }) => ({
+      id: r.id,
+      headSha: r.headSha,
+      agent: { id: r.agentId, username: handle ?? r.agentId, name, image },
+      status: r.status,
+      summary: r.summary,
+      error: r.error,
+      createdAt: r.createdAt.toISOString(),
+      finishedAt: r.finishedAt?.toISOString() ?? null,
+      flags: earlierFlags
+        .filter(
+          (f) =>
+            f.classificationId === headReviewId(pr.id, r.headSha) &&
+            f.agentId === r.agentId
+        )
+        .map((f) => flagJson(f, people)),
+    })),
     verdict,
     autoMerge: {
       state: status.state,

@@ -15,13 +15,16 @@ import {
 import {
   api,
   type PullDetail,
+  type EarlierReview as EarlierReviewRow,
   type RepoDetail,
   type Reviewer,
+  type ReviewFlag,
   type ReviewerStatus,
 } from '@/lib/uiApi';
 import { useCurrentUser } from '@/lib/auth';
 import { fullDate, timeAgo } from '@/lib/format';
 import {
+  earlierVerb,
   reviewEntries,
   reviewTime,
   reviewVerb,
@@ -279,29 +282,102 @@ export function LegacyReview({ d }: { d: PullDetail }) {
         </div>
         <div className="p-2 p-sm-3">
           {legacy.flags.map((f) => (
-            <Flag
-              key={f.id}
-              f={f}
-              approver={
-                f.approvedAt
-                  ? {
-                      label: withVia(
-                        f.approvedBy?.username ?? 'a former user',
-                        f.approvedVia
-                      ),
-                      user: f.approvedBy,
-                    }
-                  : null
-              }
-              changesRequester={serverChangesRequester(f)}
-              canApprove={false}
-              approving={false}
-              requestingChanges={false}
-              investigating={false}
-              onApprove={() => {}}
-              onRequestChanges={async () => false}
-            />
+            <ReadOnlyFlag key={f.id} f={f} />
           ))}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/** A finding as history: who decided it, if anyone, and no controls. */
+function ReadOnlyFlag({ f }: { f: ReviewFlag }) {
+  return (
+    <Flag
+      f={f}
+      approver={
+        f.approvedAt
+          ? {
+              label: withVia(
+                f.approvedBy?.username ?? 'a former user',
+                f.approvedVia
+              ),
+              user: f.approvedBy,
+            }
+          : null
+      }
+      changesRequester={serverChangesRequester(f)}
+      canApprove={false}
+      approving={false}
+      requestingChanges={false}
+      investigating={false}
+      onApprove={() => {}}
+      onRequestChanges={async () => false}
+    />
+  );
+}
+
+/** An agent's review of an earlier head commit, read-only where it happened: its findings no longer count. */
+export function EarlierReview({
+  repo,
+  r,
+}: {
+  repo: RepoDetail;
+  r: EarlierReviewRow & { status: ShownStatus };
+}) {
+  const at = reviewTime(r);
+  const n = r.flags.length;
+  return (
+    <div className="d-flex mb-3" style={{ gap: 16 }}>
+      <Link to={`/${r.agent.username}`} className="d-none d-md-block">
+        <Avatar user={r.agent} size={40} />
+      </Link>
+      <div
+        className="timeline-comment comment-arrow flex-1 color-bg-subtle"
+        style={{ minWidth: 0 }}
+      >
+        <div className="timeline-comment-header flex-wrap">
+          <Avatar user={r.agent} size={20} className="d-md-none" />
+          <Link
+            to={`/${r.agent.username}`}
+            className="text-bold color-fg-default"
+          >
+            @{r.agent.username}
+          </Link>
+          <span className="d-inline-flex flex-items-center" style={{ gap: 4 }}>
+            <StatusIcon status={r.status} />
+            {earlierVerb(r)} on{' '}
+            <Link
+              to={`/${repo.fullName}/commit/${r.headSha}`}
+              className="Link--secondary text-mono"
+            >
+              {r.headSha.slice(0, 7)}
+            </Link>
+            , an earlier commit
+          </span>
+          <span title={fullDate(at)}>{timeAgo(at)}</span>
+          <span className="flex-1" />
+          <span className="Label">Agent</span>
+        </div>
+        <div className="p-2 p-sm-3">
+          {r.summary && <p className="mb-0 color-fg-muted">{r.summary}</p>}
+          {r.status === 'failed' && (
+            <div className="flash flash-error mt-2 f6">
+              {r.error ?? 'The review failed.'}
+            </div>
+          )}
+          {n > 0 && (
+            <details className="mt-2">
+              <summary className="f6 color-fg-muted">
+                {n} finding{n === 1 ? '' : 's'} on this earlier commit
+              </summary>
+              <div className="mt-2">
+                {r.flags.map((f) => (
+                  <ReadOnlyFlag key={f.id} f={f} />
+                ))}
+              </div>
+            </details>
+          )}
         </div>
       </div>
     </div>
