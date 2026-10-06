@@ -422,7 +422,6 @@ describe('gitorange/relevance reads the change', () => {
       id: crypto.randomUUID(),
       pullRequestId: prId,
       headSha: head,
-      policySha: '',
       status: 'done',
       summaryModel: '@cf/zai-org/glm-5.3-flash',
       classifierModel: '@cf/cloudflare/clef',

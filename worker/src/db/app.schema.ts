@@ -365,9 +365,6 @@ export const prClassifications = sqliteTable(
       .notNull()
       .references(() => pullRequests.id, { onDelete: 'cascade' }),
     headSha: text('head_sha').notNull(),
-    // Unused since reviewer agents (review.yml is gone): new rows write ''. Historical rows hold the blob sha of the
-    // review.yml they ran under. Kept until a follow-up migration drops it; never read it.
-    policySha: text('policy_sha').notNull(),
     // summarizing → triggering (Clef) → reviewing (agents) → done | failed. classifying/investigating: review.yml
     // reviews before reviewer agents (historical rows only).
     status: text('status', {
@@ -384,25 +381,15 @@ export const prClassifications = sqliteTable(
     summaryModel: text('summary_model').notNull(),
     classifierModel: text('classifier_model').notNull(),
     files: text('files', { mode: 'json' }).$type<FileSummary[]>(),
-    // Unused since reviewer agents (null on new rows; review.yml answers and verdict on historical ones). Kept until
-    // a follow-up migration drops them; never read them.
-    answers: text('answers', { mode: 'json' }).$type<
-      Record<string, ClassifierAnswer>
-    >(),
-    verdict: text('verdict', { enum: ['auto', 'human'] }),
     errorMessage: text('error_message'),
     durationMs: integer('duration_ms'),
     createdAt: integer('created_at', { mode: 'timestamp' }).notNull(),
     finishedAt: integer('finished_at', { mode: 'timestamp' }),
   },
   (t) => [
-    // policy_sha is '' on every new row, so this is unique per (pull request, head) — matching the head review's id
-    // `<pull request id>-<head sha>`.
-    uniqueIndex('pr_classifications_pr_head_policy_uq').on(
-      t.pullRequestId,
-      t.headSha,
-      t.policySha
-    ),
+    // Not unique: historical review.yml rows may share a (pull request, head); the head review's id
+    // `<pull request id>-<head sha>` keeps one review per head.
+    index('pr_classifications_pr_head_idx').on(t.pullRequestId, t.headSha),
   ]
 );
 

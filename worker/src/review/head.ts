@@ -221,10 +221,6 @@ export async function ensureHeadReview(
     id: headReviewId(pr.id, shas.head),
     pullRequestId: pr.id,
     headSha: shas.head,
-    // review.yml's columns, unused and never read: neutral values until a later migration drops them.
-    policySha: '',
-    answers: null,
-    verdict: null,
     status: 'summarizing',
     summaryModel: await getSetting(db, env, 'ai.summary_model'),
     classifierModel: classifierModel('clef'),

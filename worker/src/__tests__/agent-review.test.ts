@@ -223,15 +223,6 @@ describe('who reviews a pull request commit', () => {
     ).toHaveLength(2);
   });
 
-  it("writes neutral values to review.yml's columns, kept until a later migration drops them", async () => {
-    const { t } = await reviewed([['secagent', AGENT_MD()]]);
-    expect(
-      await t.env.DB.prepare(
-        'SELECT policy_sha, answers, verdict FROM pr_classifications'
-      ).first()
-    ).toEqual({ policy_sha: '', answers: null, verdict: null });
-  });
-
   it('ignores .gitorange/review.yml', async () => {
     const { t, admin, repo } = await appRepo();
     const reviewYml =
@@ -788,8 +779,8 @@ describe('the pull request page', () => {
       id: string;
     }>())!.id;
     await t.env.DB.prepare(
-      `INSERT INTO pr_classifications (id, pull_request_id, head_sha, policy_sha, status, summary_model, classifier_model, verdict, created_at)
-       VALUES ('legacy', ?, ?, 'p0', 'done', 's', 'c', 'human', 0)`
+      `INSERT INTO pr_classifications (id, pull_request_id, head_sha, status, summary_model, classifier_model, created_at)
+       VALUES ('legacy', ?, ?, 'done', 's', 'c', 0)`
     )
       .bind(pr, head)
       .run();

@@ -261,7 +261,6 @@ describe('the reviewer Workflow', () => {
       id: 'legacy',
       pullRequestId: pr.id,
       headSha: head,
-      policySha: 'p',
       status: 'summarizing',
       summaryModel: 'm',
       classifierModel: 'clef',

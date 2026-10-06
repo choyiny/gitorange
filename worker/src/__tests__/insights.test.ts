@@ -110,7 +110,6 @@ async function seed(t: TestEnv, cookie: string, name = 'app') {
     id: `${id(n)}-${key}`, // a head review's id: <pull request id>-<head sha>
     pullRequestId: id(n),
     headSha: key,
-    policySha: '',
     status,
     summaryModel: 'glm',
     classifierModel: 'clef',

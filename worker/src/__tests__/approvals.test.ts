@@ -84,16 +84,16 @@ async function manyApprovals() {
     if (kind === 0) {
       stmts.push(
         t.env.DB.prepare(
-          `INSERT INTO pr_classifications (id, pull_request_id, head_sha, policy_sha, status, summary_model, classifier_model, error_message, created_at)
-           VALUES (?, ?, 'h', '', 'failed', 's', 'c', 'The review could not be started.', ?)`
+          `INSERT INTO pr_classifications (id, pull_request_id, head_sha, status, summary_model, classifier_model, error_message, created_at)
+           VALUES (?, ?, 'h', 'failed', 's', 'c', 'The review could not be started.', ?)`
         ).bind(`${id}-h`, id, now)
       );
       count += 1;
     } else if (kind === 1) {
       stmts.push(
         t.env.DB.prepare(
-          `INSERT INTO pr_classifications (id, pull_request_id, head_sha, policy_sha, status, summary_model, classifier_model, created_at)
-           VALUES (?, ?, 'h', '', 'done', 's', 'c', ?)`
+          `INSERT INTO pr_classifications (id, pull_request_id, head_sha, status, summary_model, classifier_model, created_at)
+           VALUES (?, ?, 'h', 'done', 's', 'c', ?)`
         ).bind(`${id}-h`, id, now),
         t.env.DB.prepare(
           `INSERT INTO pr_reviewers (id, pull_request_id, head_sha, agent_id, requested, agent_sha, status, created_at)
