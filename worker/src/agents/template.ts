@@ -13,7 +13,7 @@ trigger:
   ask: Does this change alter how the program behaves (not only docs, comments, formatting or generated files)?
   # Review when the probability that the answer is yes is at least this (0 < above < 1).
   above: 0.5
-# pass: one reasoning-model call per review. pi: a Pi agent with read-only tools in a workspace.
+# pass: one reasoning-model call per review. pi: a Pi agent that also reads the repository at the commit (read-only tools); slower.
 engine: pass
 ---
 

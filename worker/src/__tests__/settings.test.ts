@@ -2,7 +2,14 @@ import { describe, expect, it } from 'vitest';
 import { drizzle } from 'drizzle-orm/d1';
 import { schema } from '../db/schema';
 import { runActionsRetention } from '../actions/retention';
-import { getSetting } from '../lib/settings';
+import { getSetting, PI_MAX_MINUTES } from '../lib/settings';
+import {
+  PI_DEFAULT_LIMITS,
+  PI_EXPIRE_SLACK_MS,
+  PI_RECHECK_MS,
+  PI_START_SLACK_MS,
+} from '../review/pi-contract';
+import { REVIEW_STALE_MS } from '../review/head';
 import { addMember, bootstrapAdmin, call, makeEnv } from './helpers/app';
 
 type Setting = {
@@ -10,6 +17,9 @@ type Setting = {
   value: unknown;
   default: unknown;
   overridden: boolean;
+  group: string;
+  min?: number;
+  max?: number;
 };
 type Settings = {
   settings: Setting[];
@@ -238,5 +248,105 @@ describe('Actions retention', () => {
       retentionDays: 7,
       deletedRuns: 2, // old and recent; the running one stays
     });
+  });
+});
+
+describe('Pi review settings', () => {
+  it('has a deep review model and the Pi limits, defaulting to the built-in limits', async () => {
+    const t = makeEnv();
+    const admin = await bootstrapAdmin(t);
+    const { settings } = await get(t, admin);
+    const by = (key: string) => settings.find((s) => s.key === key)!;
+    expect(by('ai.review_pi_model')).toMatchObject({
+      // The same default as the agent review model (REVIEW_MODEL in wrangler.test.jsonc).
+      value: '@cf/zai-org/glm-5.3',
+      default: by('ai.review_model').default,
+      overridden: false,
+      group: 'AI models',
+    });
+    expect(
+      [
+        'review.pi_minutes',
+        'review.pi_max_tool_calls',
+        'review.pi_max_model_calls',
+        'review.pi_max_input_tokens',
+      ].map((k) => [by(k).value, by(k).group])
+    ).toEqual([
+      [PI_DEFAULT_LIMITS.wallClockMs / 60_000, 'Reviews'],
+      [PI_DEFAULT_LIMITS.maxToolCalls, 'Reviews'],
+      [PI_DEFAULT_LIMITS.maxModelCalls, 'Reviews'],
+      [PI_DEFAULT_LIMITS.maxInputTokens, 'Reviews'],
+    ]);
+  });
+
+  it('keeps the limits sane, and the longest Pi review well inside the stale window', async () => {
+    const t = makeEnv();
+    const admin = await bootstrapAdmin(t);
+    const cases: [string, unknown[], number[]][] = [
+      ['review.pi_minutes', [4, PI_MAX_MINUTES + 1, 30.5, '30', null], [5, 60]],
+      ['review.pi_max_tool_calls', [4, 501, 0], [5, 500]],
+      ['review.pi_max_model_calls', [4, 501, -1], [5, 500]],
+      [
+        'review.pi_max_input_tokens',
+        [99_999, 50_000_001],
+        [100_000, 50_000_000],
+      ],
+    ];
+    for (const [key, bad, good] of cases) {
+      for (const v of bad)
+        expect((await put(t, admin, key, v)).status, `${key} = ${v}`).toBe(400);
+      for (const v of good)
+        expect((await put(t, admin, key, v)).status, `${key} = ${v}`).toBe(200);
+    }
+    expect((await put(t, admin, 'ai.review_pi_model', 'gpt-4o')).status).toBe(
+      400
+    );
+    expect(
+      (await put(t, admin, 'ai.review_pi_model', '@cf/qwen/qwen3-coder')).status
+    ).toBe(200);
+    // From the row's created_at: the start step's worst case, the longest allowed review, its last check and the
+    // DO's own expiry all end before stale recovery (2 h) could fail a row that is still being reviewed.
+    expect(
+      PI_START_SLACK_MS +
+        PI_MAX_MINUTES * 60_000 +
+        PI_RECHECK_MS +
+        PI_EXPIRE_SLACK_MS
+    ).toBeLessThan(REVIEW_STALE_MS);
+  });
+
+  it('follows the resolved agent review model until it is overridden itself', async () => {
+    const t = makeEnv();
+    const admin = await bootstrapAdmin(t);
+    const pi = async () =>
+      (await get(t, admin)).settings.find(
+        (x) => x.key === 'ai.review_pi_model'
+      )!;
+    expect((await put(t, admin, 'ai.review_model', '@cf/a/x')).status).toBe(
+      200
+    );
+    expect(await pi()).toMatchObject({
+      value: '@cf/a/x',
+      default: '@cf/a/x',
+      overridden: false,
+    });
+    const db = drizzle(t.env.DB, { schema });
+    expect(await getSetting(db, t.env, 'ai.review_pi_model')).toBe('@cf/a/x');
+    expect((await put(t, admin, 'ai.review_pi_model', '@cf/b/y')).status).toBe(
+      200
+    );
+    expect(await pi()).toMatchObject({ value: '@cf/b/y', overridden: true });
+    expect(await getSetting(db, t.env, 'ai.review_pi_model')).toBe('@cf/b/y');
+  });
+
+  it('exposes numeric bounds to Site admin', async () => {
+    const t = makeEnv();
+    const admin = await bootstrapAdmin(t);
+    const { settings } = await get(t, admin);
+    const by = (key: string) => settings.find((x) => x.key === key)!;
+    expect(by('review.pi_max_input_tokens')).toMatchObject({
+      min: 100_000,
+      max: 50_000_000,
+    });
+    expect(by('review.pi_minutes')).toMatchObject({ min: 5, max: 60 });
   });
 });

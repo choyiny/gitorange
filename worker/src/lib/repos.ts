@@ -229,10 +229,13 @@ export function visibleTo(user: SessionUser): SQL | undefined {
   );
 }
 
+/** Git over one Artifacts repository, by its storage name (`repositories.artifacts_name`). */
+export function gitForName(env: CloudflareBindings, artifactsName: string) {
+  return new GitService(new ArtifactsRepoClient(env.ARTIFACTS, artifactsName));
+}
+
 export function gitFor(env: CloudflareBindings, repo: Repository) {
-  return new GitService(
-    new ArtifactsRepoClient(env.ARTIFACTS, repo.artifactsName)
-  );
+  return gitForName(env, repo.artifactsName);
 }
 
 export type RepoEnv = AppEnv & {

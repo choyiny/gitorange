@@ -79,6 +79,8 @@ export function stepDisplayName(
   numbers: Map<string, number>
 ): string {
   if (FIXED[name]) return FIXED[name];
+  // `pi:<handle>:<check>`: one look at an agent's running Pi review.
+  if (name.startsWith('pi:')) return `Pi review by @${name.split(':')[1]}`;
   const r = name.replace(/^stack-/, '');
   if (r.startsWith('reconcile:')) {
     const kind = r.slice('reconcile:'.length).split(':')[0];

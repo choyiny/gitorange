@@ -1,3 +1,4 @@
+import { PI_CANCELLED, PI_CLOSED, PI_SUPERSEDED } from '../review/pi';
 import { describe, expect, it } from 'vitest';
 import { drizzle } from 'drizzle-orm/d1';
 import { schema } from '../db/schema';
@@ -413,16 +414,6 @@ describe("an agent's review", () => {
     });
   });
 
-  it('runs engine: pi as a single pass, and says so', async () => {
-    const { t } = await reviewed([['secagent', AGENT_MD({ engine: 'pi' })]]);
-    const { models, calls } = agentModels();
-    await runReviews(t, models);
-    expect(calls.reviewed).toHaveLength(1);
-    expect((await reviewers(t))[0].summary).toContain(
-      'engine: pi runs as a single pass'
-    );
-  });
-
   it('leaves the reviewer failed when the review model keeps failing', async () => {
     const { t } = await reviewed([['secagent', AGENT_MD()]]);
     await runReviews(t, agentModels({ failReview: ['secagent'] }).models);
@@ -459,9 +450,93 @@ describe('agent runs name the agent', () => {
         needsPerson: 1,
         changeRequested: 1,
         engine: 'pi',
+        fallback: true,
       })
     ).toBe(
-      '2 findings: 1 needs a person, 1 change requested (engine: pi ran as a single pass)'
+      "2 findings: 1 needs a person, 1 change requested (engine: pi isn't set up here, so it ran as a single pass)"
+    );
+    expect(
+      decisionFor('review', {
+        verdict: 'started',
+        needsPerson: 0,
+        changeRequested: 0,
+        engine: 'pi',
+      })
+    ).toBe('Started a Pi review');
+    expect(stepDisplayName('pi:secagent:3', none)).toBe(
+      'Pi review by @secagent'
+    );
+    expect(
+      decisionFor('pi', {
+        state: 'running',
+        turns: 4,
+        toolCalls: 9,
+        durationMs: 180_000,
+      })
+    ).toBe('Running: 4 turns, 9 tool calls, 3 min');
+    expect(
+      decisionFor('pi', {
+        state: 'finished',
+        outcome: {
+          verdict: 'approve',
+          needsPerson: 0,
+          changeRequested: 0,
+          engine: 'pi',
+          pi: { turns: 14, toolCalls: 38, durationMs: 372_000 },
+        },
+      })
+    ).toBe('Approved (Pi: 14 turns, 38 tool calls, 6 min)');
+    expect(
+      decisionFor('pi', {
+        state: 'finished',
+        outcome: {
+          verdict: 'failed',
+          needsPerson: 0,
+          changeRequested: 0,
+          engine: 'pi',
+          error: 'The Pi review ran out of time (30 minutes).',
+        },
+      })
+    ).toBe('The Pi review ran out of time (30 minutes).');
+    const skipped = {
+      verdict: 'skipped',
+      needsPerson: 0,
+      changeRequested: 0,
+      engine: 'pi',
+    };
+    expect(
+      decisionFor('pi', {
+        state: 'finished',
+        outcome: { ...skipped, stopped: PI_SUPERSEDED },
+      })
+    ).toBe(PI_SUPERSEDED);
+    expect(
+      decisionFor('pi', {
+        state: 'finished',
+        outcome: { ...skipped, stopped: PI_CANCELLED },
+      })
+    ).toBe(PI_CANCELLED);
+    expect(decisionFor('pi', { state: 'finished', outcome: skipped })).toBe(
+      'Stopped: the pull request closed, a newer commit replaced this one, or the review was cancelled'
+    );
+    expect(
+      decisionFor('pi', {
+        state: 'finished',
+        outcome: { ...skipped, verdict: 'failed', error: PI_CLOSED },
+      })
+    ).toBe(PI_CLOSED);
+    expect(
+      decisionFor('pi', {
+        state: 'finished',
+        outcome: {
+          ...skipped,
+          verdict: 'failed',
+          error: 'The Pi review ran out of time (30 minutes).',
+          pi: { turns: 9, toolCalls: 20, durationMs: 1_800_000 },
+        },
+      })
+    ).toBe(
+      'The Pi review ran out of time (30 minutes). (Pi: 9 turns, 20 tool calls, 30 min)'
     );
     expect(decisionFor('trigger', { secagent: 0.82, docsagent: 0.05 })).toBe(
       '@secagent 0.82, @docsagent 0.05'
@@ -637,12 +712,15 @@ describe('a review that cannot finish', () => {
       review.headSha
     );
     const [r] = await reviewers(t);
-    const outcome = await runAgentReview(t.env, db, models, {
-      ...(loaded as { ok: true; value: HeadContext }).value,
-      reviewId: review.id,
-      summaries: '',
-      reviewer: { reviewerId: r.id, handle: 'secagent' },
-    });
+    const outcome = await runAgentReview(
+      { env: t.env, db, models },
+      {
+        ...(loaded as { ok: true; value: HeadContext }).value,
+        reviewId: review.id,
+        summaries: '',
+        reviewer: { reviewerId: r.id, handle: 'secagent' },
+      }
+    );
     expect(outcome).toEqual({
       verdict: 'findings',
       needsPerson: 1,

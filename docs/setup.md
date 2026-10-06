@@ -53,7 +53,7 @@ Fill in:
 - `vars.FROM_EMAIL` — an address on your Email Sending domain, e.g. `noreply@example.com`.
 - `vars.R2_ACCOUNT_ID` — your account ID again (pre-signed LFS URLs point at `https://<account>.r2.cloudflarestorage.com`).
 - `routes` — uncomment and set `pattern` to your hostname if you're using a custom domain.
-- `vars.D1_DATABASE_ID` — the same `database_id` again, so **Site admin → Usage & cost** reads this database's analytics. The other usage variables (`WORKER_NAME`, the bucket, namespace, and Workflow names) already match the names above. After the first deploy, fill in `JOB_RUNNER_NAMESPACE_ID`, `MERGE_RESOLVER_NAMESPACE_ID`, and `LIVE_NAMESPACE_ID` from the dashboard's **Durable Objects** page (each class's namespace ID). Until then, Durable Object usage shows as "not configured".
+- `vars.D1_DATABASE_ID` — the same `database_id` again, so **Site admin → Usage & cost** reads this database's analytics. The other usage variables (`WORKER_NAME`, the bucket, namespace, and Workflow names) already match the names above. After the first deploy, fill in `JOB_RUNNER_NAMESPACE_ID`, `MERGE_RESOLVER_NAMESPACE_ID`, `AGENT_REVIEWER_NAMESPACE_ID`, and `LIVE_NAMESPACE_ID` from the dashboard's **Durable Objects** page (each class's namespace ID). Until then, Durable Object usage shows as "not configured".
 
 Keep `triggers.crons` as shipped: a daily job deletes Actions runs past their retention (set in **Site admin → Settings**, 90 days by default). `APP_NAME`, `FROM_EMAIL`, and the model variables are defaults that a site admin can change later in **Site admin → Settings** without a deploy.
 

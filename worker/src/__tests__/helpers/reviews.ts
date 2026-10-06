@@ -12,6 +12,12 @@ import {
   executeReviewerRetry,
 } from '../../review/head';
 import type { AgentReviewModels } from '../../review/models';
+import type {
+  PiLimits,
+  PiReviewerApi,
+  PiStartRequest,
+  PiStatus,
+} from '../../review/pi-contract';
 import { agentRepo, newAgent } from './agents';
 import { bootstrapAdmin, call, makeEnv, settle, type TestEnv } from './app';
 import type { FakeRepo } from './fake-artifacts';
@@ -21,6 +27,10 @@ export const step = {
   do: async (_name: string, a: unknown, b?: unknown) =>
     ((b ?? a) as () => Promise<unknown>)(),
   sleep: async () => {},
+  // No event ever arrives in tests: every Pi review is driven by its checks, as after a lost event.
+  waitForEvent: async (name: string) => {
+    throw new Error(`${name}: timed out`);
+  },
 } as unknown as StepRunner;
 
 export const AGENT_MD = (
@@ -180,8 +190,100 @@ export function agentModels(
 type Payload = { headReview?: { id: string }; reviewer?: { id: string } };
 const ran = new WeakMap<TestEnv, Set<string>>();
 
+export type FakePiAnswer =
+  | { state: 'running' }
+  | { state: 'done'; text: string }
+  | { state: 'unanswered'; reason: string }
+  | { state: 'missing' };
+
+/**
+ * A scripted AgentReviewer per DO name: `answer(n, request)` is what its n-th status() reports (1-based). Each check
+ * adds `turnsPerCheck` model calls (2), twice as many tool calls, 1,000 input and 100 output tokens per call.
+ * Records every start (by name) and every stop; a stopped object reports `missing`. Its start returns the request's
+ * model and limits (what a real DO runs with), or `effective` where given; `failStart` makes start throw after the
+ * object exists (as a start step that timed out after the DO began).
+ */
+export function fakePi(
+  answer: (
+    n: number,
+    request: PiStartRequest
+  ) => FakePiAnswer | Promise<FakePiAnswer> = () => ({
+    state: 'done',
+    text: JSON.stringify(APPROVE),
+  }),
+  opts: {
+    startedAt?: number;
+    turnsPerCheck?: number;
+    failStart?: boolean;
+    effective?: { model?: string; limits?: Partial<PiLimits> };
+  } = {}
+) {
+  const objects = new Map<
+    string,
+    {
+      request: PiStartRequest;
+      startedAt: number;
+      checks: number;
+      stopped: boolean;
+    }
+  >();
+  const starts: string[] = [];
+  const stopped: string[] = [];
+  const api = (name: string): PiReviewerApi => ({
+    async start(request) {
+      starts.push(name);
+      const o = objects.get(name) ?? {
+        request,
+        startedAt: opts.startedAt ?? Date.now(),
+        checks: 0,
+        stopped: false,
+      };
+      objects.set(name, o);
+      if (opts.failStart) throw new Error('start timed out');
+      return {
+        startedAt: o.startedAt,
+        model: opts.effective?.model ?? o.request.model,
+        limits: { ...o.request.limits, ...opts.effective?.limits },
+      };
+    },
+    async status(): Promise<PiStatus> {
+      const o = objects.get(name);
+      const none = {
+        turns: 0,
+        toolCalls: 0,
+        tokensIn: null,
+        tokensOut: null,
+        tokensCached: null,
+      };
+      if (!o || o.stopped) return { state: 'missing', startedAt: 0, ...none };
+      o.checks += 1;
+      const a = await answer(o.checks, o.request);
+      const turns = o.checks * (opts.turnsPerCheck ?? 2);
+      return {
+        ...a,
+        startedAt: o.startedAt,
+        turns,
+        toolCalls: turns * 2,
+        tokensIn: turns * 1000,
+        tokensOut: turns * 100,
+        tokensCached: 0,
+      } as PiStatus;
+    },
+    async stop() {
+      const o = objects.get(name);
+      if (o) o.stopped = true;
+      stopped.push(name);
+    },
+  });
+  return { api, objects, starts, stopped };
+}
+
 /** Runs every review Workflow started so far (once each), inline, until none are left. */
-export async function runReviews(t: TestEnv, models: AgentReviewModels) {
+export async function runReviews(
+  t: TestEnv,
+  models: AgentReviewModels,
+  opts: { pi?: (name: string) => PiReviewerApi } = {}
+) {
   const db = drizzle(t.env.DB, { schema });
   const done = ran.get(t) ?? new Set<string>();
   ran.set(t, done);
@@ -194,16 +296,16 @@ export async function runReviews(t: TestEnv, models: AgentReviewModels) {
     if (!next) return;
     done.add(next.id);
     const p = next.params as Payload;
-    if (p.headReview)
-      await executeHeadReview(
-        { env: t.env, db, step, models },
-        p.headReview.id
-      );
-    else if (p.reviewer)
-      await executeReviewerRetry(
-        { env: t.env, db, step, models },
-        p.reviewer.id
-      );
+    const deps = {
+      env: t.env,
+      db,
+      step,
+      models,
+      pi: opts.pi,
+      instanceId: next.id,
+    };
+    if (p.headReview) await executeHeadReview(deps, p.headReview.id);
+    else if (p.reviewer) await executeReviewerRetry(deps, p.reviewer.id);
   }
 }
 

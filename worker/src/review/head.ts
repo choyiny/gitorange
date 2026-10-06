@@ -14,7 +14,6 @@ import {
   agents,
   prClassifications,
   prReviewers,
-  prReviewFlags,
   pullRequests,
   repositories,
   repositoryAgents,
@@ -27,7 +26,6 @@ import type { DrizzleDB } from '../db/middleware';
 import type { FileChange } from '../git/service';
 import { pingingSteps } from '../live/publish';
 import { settleStates } from '../pulls/settle';
-import { d1Of } from '../pulls/events';
 import { landTargetOf } from '../lib/land-target';
 import { findRepoById, gitFor } from '../lib/repos';
 import { getSetting } from '../lib/settings';
@@ -39,8 +37,6 @@ import { ensureStacking } from '../stack/discover';
 import { chunks } from '../stack/view';
 import { maybeAutoMerge } from './auto-merge';
 import {
-  composeDetail,
-  diffsFor,
   MODEL_RETRIES,
   SUMMARY_BATCH,
   summarizeFile,
@@ -49,16 +45,37 @@ import {
 } from './detail';
 import { ignoreMatcher, readIgnore } from './ignore';
 import { headReviewFor, headReviewId, hasInvitedAgents } from './keys';
-import { readKnowledge } from './knowledge';
 import { clipDescription, oneLine } from './contract';
 import { classifierModel, type AgentReviewModels } from './models';
 import type { RetryResult } from './reviewers';
+import {
+  failReviewer,
+  MAX_SUMMARIZED_FILES,
+  MODEL_FAILED,
+  NO_FINDINGS,
+  PI_FALLBACK_NOTE,
+  PI_GONE,
+  prepareReview,
+  recordedOutcome,
+  recordReview,
+  carriedAttempt,
+  type PiStarted,
+  type ReviewContext,
+  type ReviewOutcome,
+} from './outcome';
+import {
+  abandonPiReview,
+  awaitPiReview,
+  quietPiCheck,
+  startPiReview,
+} from './pi';
+import type { PiReviewerApi } from './pi-contract';
+
+export { MAX_SUMMARIZED_FILES } from './outcome';
+export type { ReviewContext, ReviewOutcome } from './outcome';
 
 /** Reviews run on the MERGE_RESOLUTION Workflow, like AI conflict resolution. */
 export const reviewConfigured = resolutionConfigured;
-
-/** Files summarized per head; the rest get a fixed one-liner without a model call. */
-export const MAX_SUMMARIZED_FILES = 300;
 
 /** Above this many changed files nothing is reviewed: the review fails and a person approves. */
 export const MAX_REVIEW_FILES = 5000;
@@ -77,9 +94,6 @@ export const AGENT_REVIEW_RETRIES: WorkflowStepConfig = {
   retries: { limit: 2, delay: '10 seconds', backoff: 'exponential' },
   timeout: '10 minutes',
 };
-
-export const PI_NOTE =
-  'engine: pi runs as a single pass until Pi reviews arrive.';
 
 export type InvitedAgent = {
   agentId: string;
@@ -317,225 +331,149 @@ export async function loadHead(
   };
 }
 
-export type ReviewContext = HeadContext & {
-  reviewId: string;
-  summaries: string;
-  reviewer: { reviewerId: string; handle: string };
-};
-
-export type ReviewOutcome = {
-  verdict: 'approve' | 'findings' | 'failed' | 'skipped';
-  needsPerson: number;
-  changeRequested: number;
-  engine: AgentEngine | null;
-  error?: string;
-};
-
-const MODEL_FAILED = 'The review model failed: ';
-
-/**
- * The outcome a reviewer row already records, for a step re-run after its write landed: its verdict from its
- * status, its findings counted from this review's flags. Rows that never reviewed (not needed, removed) skip.
- */
-async function recordedOutcome(
-  db: DrizzleDB,
-  reviewId: string,
-  row: typeof prReviewers.$inferSelect
-): Promise<ReviewOutcome> {
-  const none = { needsPerson: 0, changeRequested: 0, engine: null };
-  if (row.status === 'failed')
-    return { verdict: 'failed', ...none, error: row.error ?? undefined };
-  if (
-    row.status !== 'approved' &&
-    row.status !== 'flagged' &&
-    row.status !== 'changes_requested'
-  )
-    return { verdict: 'skipped', ...none };
-  const kinds = await db
-    .select({ kind: prReviewFlags.kind })
-    .from(prReviewFlags)
-    .where(
-      and(
-        eq(prReviewFlags.classificationId, reviewId),
-        eq(prReviewFlags.agentId, row.agentId)
-      )
-    )
-    .all();
-  const changeRequested = kinds.filter(
-    (k) => k.kind === 'change_requested'
-  ).length;
-  return {
-    verdict: row.status === 'approved' ? 'approve' : 'findings',
-    needsPerson: kinds.length - changeRequested,
-    changeRequested,
-    engine: row.summary?.includes(PI_NOTE) ? 'pi' : 'pass',
-  };
+export interface AgentReviewDeps {
+  env: CloudflareBindings;
+  db: DrizzleDB;
+  step: StepRunner;
+  models: AgentReviewModels;
+  /** The AgentReviewer Durable Object by name; absent where AGENT_REVIEWER isn't bound (engine: pi falls back). */
+  pi?: (name: string) => PiReviewerApi;
+  /** This Workflow instance, for the Pi reviewer's "settled" event. */
+  instanceId?: string;
 }
 
 /**
- * One agent's review, run inside its Workflow step: AGENT.md and knowledge at the row's agent_sha, the diff
- * within the budget, one model call, then the outcome and its flags in one transaction. Throws when the model
- * fails (the step retries). Skips a row that is no longer reviewing (its agent was removed, or an earlier
- * attempt finished it).
+ * One agent's review, run inside its `review:<handle>` step: prepare its input (AGENT.md and knowledge at the row's
+ * agent_sha, the diff within the budget), then either start its Pi review (engine: pi where AGENT_REVIEWER is bound;
+ * the checks that follow finish it) or make the single-pass call and record the outcome in one fenced write. Throws
+ * when the model fails (the step retries). Skips a row that is no longer reviewing (its agent was removed, or an
+ * earlier attempt finished it).
  */
 export async function runAgentReview(
-  env: CloudflareBindings,
-  db: DrizzleDB,
-  models: AgentReviewModels,
+  deps: Omit<AgentReviewDeps, 'step'>,
   ctx: ReviewContext
 ): Promise<ReviewOutcome> {
-  const none = { needsPerson: 0, changeRequested: 0, engine: null };
+  const { env, db, models } = deps;
   const row = await db
     .select()
     .from(prReviewers)
     .where(eq(prReviewers.id, ctx.reviewer.reviewerId))
     .get();
-  if (!row) return { verdict: 'skipped', ...none };
+  if (!row) return { verdict: 'skipped', ...NO_FINDINGS };
   if (row.status !== 'reviewing') return recordedOutcome(db, ctx.reviewId, row);
-  const fail = async (error: string): Promise<ReviewOutcome> => {
-    await db
-      .update(prReviewers)
-      .set({ status: 'failed', error, finishedAt: new Date() })
-      .where(
-        and(eq(prReviewers.id, row.id), eq(prReviewers.status, 'reviewing'))
-      );
-    return { verdict: 'failed', ...none, error };
-  };
-  const own = await db
-    .select({ repo: repositories })
-    .from(agents)
-    .innerJoin(repositories, eq(repositories.id, agents.repositoryId))
-    .where(eq(agents.userId, row.agentId))
-    .get();
-  if (!own || !row.agentSha)
-    return fail("The agent's repository could not be read.");
-  const agentGit = gitFor(env, own.repo);
-  const config = await readAgentConfig(agentGit, row.agentSha);
-  if (!config.ok) return fail(config.error);
-  const knowledge = await readKnowledge(agentGit, row.agentSha);
-  const git = gitFor(env, ctx.repo);
-  const ignored = ignoreMatcher(ctx.ignoreText);
-  const notShown = ctx.more.length
-    ? `\n\nNot shown (more than ${MAX_SUMMARIZED_FILES} files changed): ${ctx.more.length} more files, listed in the summaries.`
-    : '';
-  const diffs = (await diffsFor(git, ctx.changes, [], ignored)) + notShown;
+  // A Retry renewed the row after this Workflow requested it: the new attempt is its own Workflow's.
+  const { generation } = ctx.reviewer;
+  if (generation !== undefined && row.createdAt.getTime() !== generation)
+    return { verdict: 'skipped', ...NO_FINDINGS };
+  // Every write is fenced by the generation this Workflow carried, never one re-read later.
+  const attempt =
+    generation === undefined
+      ? row
+      : { ...row, createdAt: new Date(generation) };
+  const prepared = await prepareReview(env, db, ctx, row);
+  if (!prepared.ok) return failReviewer(db, attempt, prepared.error);
+  const { input, changedPaths, engine } = prepared.value;
+  if (engine === 'pi' && deps.pi)
+    return startPiReview(
+      { env, db, pi: deps.pi, instanceId: deps.instanceId ?? null },
+      attempt,
+      prepared.value,
+      ctx
+    );
   const review = await models
-    .review(
-      {
-        handle: ctx.reviewer.handle,
-        agentSha: row.agentSha,
-        instructions: config.config.instructions,
-        knowledge,
-        title: ctx.pr.title,
-        description: ctx.pr.body,
-        summaries: ctx.summaries,
-        diffs,
-      },
-      [...ctx.changes, ...ctx.more].map((c) => c.path)
-    )
+    .review(input, changedPaths)
     .catch((e: unknown) => {
       throw new Error(`${MODEL_FAILED}${shortError(e)}`);
     });
-  const now = new Date();
-  const flags = await Promise.all(
-    review.findings.map(async (f, i) => ({
-      id: crypto.randomUUID(),
-      classificationId: ctx.reviewId,
-      source: 'agent' as const,
-      key: `${row.agentId}:${i}`,
-      value: { title: f.title },
-      paths: f.paths,
-      detail: await composeDetail(git, ctx.changes, f, ignored),
-      detailModel: models.reviewModelId ?? null,
-      agentId: row.agentId,
-      kind: f.kind,
-      agentSha: row.agentSha,
-    }))
+  // engine: pi without the AgentReviewer binding: the single pass, said out loud.
+  const fallback = engine === 'pi';
+  const { recorded, ...counts } = await recordReview(
+    env,
+    db,
+    ctx,
+    attempt,
+    review,
+    {
+      modelId: models.reviewModelId ?? null,
+      note: fallback ? PI_FALLBACK_NOTE : undefined,
+    }
   );
-  const changeRequested = review.findings.filter(
-    (f) => f.kind === 'change_requested'
-  ).length;
-  const needsPerson = review.findings.length - changeRequested;
-  const engine = config.config.engine;
-  const summary =
-    [review.summary, engine === 'pi' ? PI_NOTE : '']
-      .filter(Boolean)
-      .join(' ') || null;
-  const status = changeRequested
-    ? 'changes_requested'
-    : needsPerson
-      ? 'flagged'
-      : 'approved';
-  // One transaction (a raw D1 batch: drizzle's batch can't bind raw statements): each finding is inserted only
-  // while this row is still reviewing (an agent removed mid-review leaves no findings behind), then the status
-  // moves on, only from reviewing (a row cancelled meanwhile stays cancelled). Inserts go first: after the update
-  // the row isn't reviewing.
-  const d1 = d1Of(db);
-  const at = Math.floor(now.getTime() / 1000);
-  await d1.batch([
-    ...flags.map((f) =>
-      d1
-        .prepare(
-          `INSERT OR IGNORE INTO pr_review_flags
-             (id, classification_id, source, key, value, paths, detail, detail_model, agent_id, kind, agent_sha,
-              created_at)
-           SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
-            WHERE EXISTS (SELECT 1 FROM pr_reviewers WHERE id = ? AND status = 'reviewing')`
-        )
-        .bind(
-          f.id,
-          f.classificationId,
-          f.source,
-          f.key,
-          JSON.stringify(f.value),
-          JSON.stringify(f.paths),
-          f.detail,
-          f.detailModel,
-          f.agentId,
-          f.kind,
-          f.agentSha,
-          at,
-          row.id
-        )
-    ),
-    d1
-      .prepare(
-        `UPDATE pr_reviewers SET status = ?, summary = ?, error = NULL, finished_at = ?
-          WHERE id = ? AND status = 'reviewing'`
-      )
-      .bind(status, summary, at, row.id),
-  ]);
-  return { verdict: review.verdict, needsPerson, changeRequested, engine };
+  // The row moved on while the model answered (cancelled, removed, retried): nothing was written.
+  if (!recorded) return { verdict: 'skipped', ...NO_FINDINGS };
+  return {
+    verdict: review.verdict,
+    ...counts,
+    engine,
+    ...(fallback ? { fallback: true } : {}),
+  };
 }
 
-/** One agent's review step; after its retries, a step that records the failure. */
+/**
+ * One agent's review: its `review:<handle>` step (the single pass, or a Pi review's start followed by its checks);
+ * after the step's retries, a step that records the failure (and stops a started Pi review).
+ */
 export async function reviewStep(
-  env: CloudflareBindings,
-  db: DrizzleDB,
-  models: AgentReviewModels,
+  deps: AgentReviewDeps,
   step: StepRunner,
   ctx: ReviewContext
 ): Promise<void> {
+  const { db } = deps;
   const { handle, reviewerId } = ctx.reviewer;
+  let started: PiStarted | undefined;
   try {
-    await step.do(`review:${handle}`, AGENT_REVIEW_RETRIES, () =>
-      runAgentReview(env, db, models, ctx)
+    const outcome = await step.do(
+      `review:${handle}`,
+      AGENT_REVIEW_RETRIES,
+      () => runAgentReview(deps, ctx)
     );
+    if (outcome.started) {
+      started = outcome.started;
+      // Started, but the binding was removed since: nothing can check or finish the review here.
+      if (!deps.pi) throw new Error(PI_GONE);
+      await awaitPiReview(
+        {
+          env: deps.env,
+          db,
+          pi: deps.pi,
+          instanceId: deps.instanceId ?? null,
+        },
+        step,
+        ctx,
+        started
+      );
+    }
   } catch (e) {
     console.error('[review] agent review failed', reviewerId, e);
     const message = shortError(e);
-    // The model's failures arrive already worded; anything else (git, D1) says the review failed.
-    const error = message.startsWith(MODEL_FAILED)
-      ? message
-      : `The review failed: ${message}`;
+    // The model's failures arrive already worded; anything else (git, D1, the DO) says the review failed.
+    const error =
+      message.startsWith(MODEL_FAILED) || message === PI_GONE
+        ? message
+        : `The review failed: ${message}`;
     await step.do(`review-failed:${handle}`, async () => {
+      // Whether or not the start step returned: it may have failed after the object began (a slow checkout, a lost
+      // reply), and an object left running spends until it expires. Stopping one that never started is harmless.
+      const generation = started?.generation ?? ctx.reviewer.generation;
+      if (deps.pi && generation !== undefined)
+        await abandonPiReview(
+          {
+            env: deps.env,
+            db,
+            pi: deps.pi,
+            instanceId: deps.instanceId ?? null,
+          },
+          ctx,
+          generation,
+          started?.model
+        );
+      // The same fence as every reviewer write: only this attempt, still reviewing.
       await db
         .update(prReviewers)
         .set({ status: 'failed', error, finishedAt: new Date() })
         .where(
-          and(
-            eq(prReviewers.id, reviewerId),
-            eq(prReviewers.status, 'reviewing')
+          carriedAttempt(
+            reviewerId,
+            started?.generation ?? ctx.reviewer.generation
           )
         );
       return true;
@@ -568,16 +506,9 @@ function triggerDecision(
     .join('; ');
 }
 
-export interface AgentReviewDeps {
-  env: CloudflareBindings;
-  db: DrizzleDB;
-  step: StepRunner;
-  models: AgentReviewModels;
-}
-
 /** Reviews one pull request commit with its repository's agents (MERGE_RESOLUTION Workflow). */
 export async function executeHeadReview(deps: AgentReviewDeps, id: string) {
-  const { env, db, models } = deps;
+  const { env, db } = deps;
   let step = deps.step;
   const job = await step
     .do('load', async () => {
@@ -646,9 +577,12 @@ export async function executeHeadReview(deps: AgentReviewDeps, id: string) {
     });
     return;
   }
-  step = pingingSteps(env, step, job.pr.repositoryId, { approvals: true });
+  step = pingingSteps(env, step, job.pr.repositoryId, {
+    approvals: true,
+    quiet: quietPiCheck,
+  });
   try {
-    await reviewHead(env, db, models, step, id, job);
+    await reviewHead(deps, step, id, job);
   } catch (e) {
     // Never left in progress: an unfinished review would be reused for this commit and block it for good.
     console.error('[review] stopped', id, e);
@@ -836,13 +770,12 @@ async function advance(
 }
 
 async function reviewHead(
-  env: CloudflareBindings,
-  db: DrizzleDB,
-  models: AgentReviewModels,
+  deps: AgentReviewDeps,
   step: StepRunner,
   id: string,
   job: LoadedJob
 ) {
+  const { env, db, models } = deps;
   const { pr, changes, headSha } = job;
   const git = gitFor(env, job.repo);
   const ignored = ignoreMatcher(job.ignoreText);
@@ -957,6 +890,7 @@ async function reviewHead(
           agentId: prReviewers.agentId,
           status: prReviewers.status,
           probability: prReviewers.probability,
+          createdAt: prReviewers.createdAt,
         })
         .from(prReviewers)
         .where(
@@ -972,7 +906,11 @@ async function reviewHead(
     await noteDecision(triggerDecision(stored));
     return stored
       .filter((s) => s.status === 'reviewing')
-      .map((s) => ({ reviewerId: s.id, handle: s.handle }));
+      .map((s) => ({
+        reviewerId: s.id,
+        handle: s.handle,
+        generation: s.createdAt.getTime(),
+      }));
   });
 
   if (!reviewing) return;
@@ -981,7 +919,7 @@ async function reviewHead(
   const summaries = summaryLines(oneLiners);
   await Promise.all(
     reviewing.map((reviewer) =>
-      reviewStep(env, db, models, step, {
+      reviewStep(deps, step, {
         reviewId: id,
         pr,
         repo: job.repo,
@@ -1073,7 +1011,7 @@ export async function executeReviewerRetry(
   deps: AgentReviewDeps,
   reviewerId: string
 ) {
-  const { env, db, models } = deps;
+  const { env, db } = deps;
   let step = deps.step;
   const job = await step.do('load', async () => {
     const row = await db
@@ -1095,7 +1033,12 @@ export async function executeReviewerRetry(
         }) as const
     );
     if (!loaded) return null;
-    if (!loaded.ok) return { ok: false as const, error: loaded.error };
+    if (!loaded.ok)
+      return {
+        ok: false as const,
+        error: loaded.error,
+        generation: row.createdAt.getTime(),
+      };
     const review = await headReviewFor(db, row.pullRequestId, row.headSha);
     const handle =
       (
@@ -1111,6 +1054,7 @@ export async function executeReviewerRetry(
       reviewId: headReviewId(row.pullRequestId, row.headSha),
       headSha: row.headSha,
       handle,
+      generation: row.createdAt.getTime(),
       summaries:
         summaries || loaded.value.changes.map((c) => `- ${c.path}`).join('\n'),
       ...loaded.value,
@@ -1122,18 +1066,16 @@ export async function executeReviewerRetry(
       await db
         .update(prReviewers)
         .set({ status: 'failed', error: job.error, finishedAt: new Date() })
-        .where(
-          and(
-            eq(prReviewers.id, reviewerId),
-            eq(prReviewers.status, 'reviewing')
-          )
-        );
+        .where(carriedAttempt(reviewerId, job.generation));
       return true;
     });
     return;
   }
-  step = pingingSteps(env, step, job.pr.repositoryId, { approvals: true });
-  await reviewStep(env, db, models, step, {
+  step = pingingSteps(env, step, job.pr.repositoryId, {
+    approvals: true,
+    quiet: quietPiCheck,
+  });
+  await reviewStep(deps, step, {
     reviewId: job.reviewId,
     pr: job.pr,
     repo: job.repo,
@@ -1141,7 +1083,7 @@ export async function executeReviewerRetry(
     more: job.more,
     ignoreText: job.ignoreText,
     summaries: job.summaries,
-    reviewer: { reviewerId, handle: job.handle },
+    reviewer: { reviewerId, handle: job.handle, generation: job.generation },
   });
   await step.do('finish', async () => {
     const left = await db

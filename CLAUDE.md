@@ -54,13 +54,19 @@ and better-auth. Git storage is **Cloudflare Artifacts**: one Artifacts repo per
   Tests drive `executeResolution`/`executeSweep` with fake steps and a fake resolver.
 - Reviews (`worker/src/review/`): reviewer agents invited per repository (`repository_agents`). Per head commit
   (`pr_classifications`, id `<pr id>-<head sha>`): GLM one-liner per file → one Clef call over every agent's
-  `trigger.ask` (`pr_reviewers`, requested iff p ≥ above; unsure = requested) → each requested agent reviews in one
-  GLM-5.3 call at its repository's default-branch SHA (`agent_sha`; `AGENT.md` + `knowledge/` ≤ 20 files / 64 KB)
-  → approve or findings (`pr_review_flags.kind` `needs_person` | `change_requested`). `review/gate.ts`
-  (`reviewVerdict`) is the only landing rule for review; a person's `pr_approvals` row satisfies it except over an
-  agent's open `change_requested` finding (dismiss it or push), and is recorded as an `approved` event (withdrawing: `withdrawn`). `landPull`:
-  stack gate → checks → review. Auto-merge is on iff the repository invites ≥ 1 agent. `.orangeignore` and lockfiles
-  stay out of model calls. Tests drive `executeHeadReview`/`executeReviewerRetry` with fake `AgentReviewModels`
+  `trigger.ask` (`pr_reviewers`, requested iff p ≥ above; unsure = requested) → each requested agent reviews
+  (`engine: pass`: one GLM-5.3 call) at its repository's default-branch SHA (`agent_sha`; `AGENT.md` + `knowledge/`
+  ≤ 20 files / 64 KB) → approve or findings (`pr_review_flags.kind` `needs_person` | `change_requested`).
+  `engine: pi`: `AgentReviewer` DO (`review/agent-reviewer.ts`, binding `AGENT_REVIEWER`; one per row attempt
+  `<id>:<created_at ms>`) checks out the head (`review/checkout.ts`) and runs Pi with read-only tools; the Workflow
+  starts it in `review:<handle>`, then `waitForEvent` + `pi:<handle>:<n>` checks (`review/pi.ts`), recording through
+  `recordReview` (`review/outcome.ts`, fenced on status and `created_at`). Limits are Site admin settings
+  (`review.pi_*`, `ai.review_pi_model`), read once per review start. No binding → single pass with
+  `PI_FALLBACK_NOTE`. Tests use `fakePi` (`helpers/reviews.ts`). `review/gate.ts` (`reviewVerdict`) is the only
+  landing rule for review; a person's `pr_approvals` row satisfies it except over an agent's open `change_requested`
+  finding (dismiss it or push), and is recorded as an `approved` event (withdrawing: `withdrawn`). `landPull`: stack
+  gate → checks → review. Auto-merge is on iff the repository invites ≥ 1 agent. `.orangeignore` and lockfiles stay
+  out of model calls. Tests drive `executeHeadReview`/`executeReviewerRetry` with fake `AgentReviewModels`
   (`helpers/reviews.ts`). `GET /api/approvals` (`review/inbox.ts`) groups findings by agent.
 - Agent runs (`worker/src/agent-runs/`): every `MERGE_RESOLUTION` Workflow is recorded as `agent_runs` + `agent_steps` (Actions
   tab → Agent) by one wrapper at the entrypoint (`recordAgentRun`): ids are the instance id and `<run>:<step name>` (replay-safe),

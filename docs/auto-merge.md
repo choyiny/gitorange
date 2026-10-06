@@ -49,8 +49,8 @@ linear, after [AI resolves any conflicts](architecture.md#merging-and-ai-conflic
    (unsure means review). An agent whose `AGENT.md` is invalid on its default branch fails at once, with the parse
    error.
 3. **Review.** Each requested agent reviews at its repository's current default-branch commit (shown as a link
-   on its review): one GLM-5.3 call with its `AGENT.md` instructions, its `knowledge/*.md` (at most 20 files and 64
-   KB, in path order; the rest are listed by path), the summaries, and the diff (24 KB per file, 120 KB in all;
+   on its review). An `engine: pass` agent makes one GLM-5.3 call with its `AGENT.md` instructions, its
+   `knowledge/*.md` (at most 20 files and 64 KB, in path order; the rest are listed by path), the summaries, and the diff (24 KB per file, 120 KB in all;
    files beyond that are listed by path). Pull request text and diffs are data, never instructions: they go inside
    one tag whose name carries a random suffix, so they can't forge the prompt around them. It answers
    **approve**, or up to five **findings**, each with a sentence, a before/after table, a diagram and excerpts cut
@@ -58,17 +58,41 @@ linear, after [AI resolves any conflicts](architecture.md#merging-and-ai-conflic
    - `needs_person`: a person approves it, or requests changes on it (the pull request's agent then follows up);
    - `change_requested`: the agent is sure what must change. It goes to the pull request's agent, and a new commit
      resolves it (the new commit is reviewed afresh); a person may also **Dismiss** it.
-4. **Outcome.** Each requested agent ends `approved`, `flagged` (findings for a person), `changes_requested`, or
-   `failed` (its review model failed twice more after the first try, or its `AGENT.md` is invalid). **Retry** on a
-   failed agent reviews again at its current commit. A review (or an agent's Retry) still in progress 2 hours
-   after it started was cut off: it is stopped as failed ("The review stopped unexpectedly. Try again.") when the
-   commit is next looked at, or by the daily retention job, and Retry starts it again.
 
-`engine: pi` agents review as a single pass until Pi reviews arrive.
+   An `engine: pi` agent gets the same input as a durable [Pi](https://pi.dev) agent in a [Cloudflare
+   Computer](https://github.com/cloudflare/computer) workspace, with the pull request's repository checked out at
+   the head commit under `/repo` (text files only: the changed files first, then the rest, up to 3,000 files and 24
+   MB, at most 512 KB each; lockfiles, `.orangeignore` matches, binary files, symlinks and submodules stay out, and
+   `/review/not-checked-out.txt` lists what was left out). It reads callers, tests and anything else the diff
+   doesn't show with read-only tools (read, ls, find, grep), each confined to `/repo` and `/review`: no shell, no
+   network, no writes, and nothing it does can change the pull request. Everything the tools return is fenced as
+   untrusted data like the pull request. It answers in the same form as the single pass, read by the same parser,
+   and its findings are the same; an answer that can't be read goes back to it, twice at most. A Pi review has 30
+   minutes, 60 tool calls, and about 80 model calls or 4,000,000 input tokens by default. Past its tool calls it is
+   told to answer with what it has; past its time or model budget it fails (Retry runs it again). The model budget
+   is approximate: a compaction counts as a model call but its tokens aren't counted, and the request that crosses
+   the token limit has already been sent, so a review can overshoot by about one context. Site admins change
+   these limits under **Site admin → Settings → Reviews** (at most 60 minutes), and the model under **AI models →
+   Agent deep review model** (by default the same model as the agent review model); a review keeps the values it
+   started with. It stops early when the pull request closes (failed, so Retry can review it again after a
+   reopen), when a new commit replaces the head (not needed: the new commit is reviewed afresh), or when the agent
+   is removed. Its transcript is never kept: the workspace is deleted when the review ends, or 15 minutes after
+   its time limit if nothing stopped it. Where the deployment has no `AGENT_REVIEWER` binding, `engine: pi` agents
+   review as a single pass and their review says so.
+
+4. **Outcome.** Each requested agent ends `approved`, `flagged` (findings for a person), `changes_requested`, or
+   `failed` (its review model failed twice more after the first try, or its `AGENT.md` is invalid; for a Pi review,
+   Pi gave up after its own retries, ran out of time or budget, or answered in a form that couldn't be read after
+   being asked twice). **Retry** on a failed agent reviews again at its current commit. A review (or an agent's
+   Retry) still in progress 2 hours after it started was cut off: it is stopped as failed ("The review stopped
+   unexpectedly. Try again.") when the commit is next looked at, or by the daily retention job, and Retry starts it
+   again.
 
 An agent removed from the repository mid-review is cancelled and stops counting, as are the finished reviews of an
 agent no longer invited. Each review runs as a `MERGE_RESOLUTION` Workflow and shows under **Actions → Agent**,
-with one step per agent ("Review by @securityagent", decided "Approved" or "2 findings: …").
+with one step per agent ("Review by @securityagent", decided "Approved" or "2 findings: …"). A Pi review shows its
+start ("Started a Pi review"), each check ("Pi review by @securityagent": "Running: 4 turns, 9 tool calls, 3 min"),
+and its end with what it spent.
 
 Everything waiting on you, across every repository you can merge in, is on the **Approvals** page (the shield in
 the header shows how many): agents' findings for a person, grouped by agent, failed agent reviews, pull requests
@@ -94,6 +118,10 @@ engine: pass
 ---
 (what this agent cares about, how it judges, and what is worth a finding)
 ```
+
+`engine: pass` (the default) reviews in one model call over the diff. `engine: pi` reviews with a Pi agent that can
+also read the rest of the repository at the head commit: slower and costlier, for agents whose judgement needs
+context beyond the diff (callers of a changed function, the schema a query runs against).
 
 Edit an agent like any code: open a pull request on its repository. Reviews always read the agent at its default
 branch, so a pull request that changes an agent never reviews itself with its own changes. A repository invites at
@@ -214,6 +242,8 @@ Both are recorded on the timeline with who did them. A dismissal survives new co
 ## Cost
 
 Per reviewed commit: one GLM-5.3-flash call per changed file (8 at a time, at most 300), one Clef
-call for all invited agents, and one GLM-5.3 call per requested agent (at most 10), on [Workers AI
-pricing](https://developers.cloudflare.com/workers-ai/platform/pricing/). Repositories without agents spend
-nothing on review.
+call for all invited agents, and one GLM-5.3 call per requested `engine: pass` agent (at most 10), on [Workers AI
+pricing](https://developers.cloudflare.com/workers-ai/platform/pricing/). A requested `engine: pi` agent instead
+spends up to about its Pi review budget (80 model calls or 4,000,000 input tokens by default; see above for why it's
+approximate) on the deep review model,
+recorded under the `review-agent-pi` feature. Repositories without agents spend nothing on review.

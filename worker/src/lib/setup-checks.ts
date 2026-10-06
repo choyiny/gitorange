@@ -304,6 +304,13 @@ const BINDINGS: BindingSpec[] = [
     snippet: `"durable_objects": { "bindings": [{ "name": "MERGE_RESOLVER", "class_name": "MergeResolver" }, …] }`,
   },
   {
+    name: 'AGENT_REVIEWER',
+    required: false,
+    without:
+      'engine: pi agents review as a single pass (one model call), as engine: pass agents do, and their reviews say so.',
+    snippet: `"durable_objects": { "bindings": [{ "name": "AGENT_REVIEWER", "class_name": "AgentReviewer" }, …] }`,
+  },
+  {
     name: 'AI',
     required: false,
     without:
@@ -902,6 +909,7 @@ const USAGE_VARS: [string, string, string][] = [
 const DO_NAMESPACES: [string, string][] = [
   ['JOB_RUNNER_NAMESPACE_ID', 'JobRunner'],
   ['MERGE_RESOLVER_NAMESPACE_ID', 'MergeResolver'],
+  ['AGENT_REVIEWER_NAMESPACE_ID', 'AgentReviewer'],
   ['LIVE_NAMESPACE_ID', 'LiveHub'],
 ];
 
@@ -1010,7 +1018,8 @@ async function usageChecks(ctx: Ctx): Promise<SetupCheck[]> {
           category: 'Usage & cost',
           title: 'Durable Object namespace IDs',
           status: 'ok',
-          detail: 'JobRunner, MergeResolver, and LiveHub are all set.',
+          detail:
+            'JobRunner, MergeResolver, AgentReviewer, and LiveHub are all set.',
           fix: [],
         }
   );

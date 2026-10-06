@@ -104,9 +104,10 @@ in the Actions tab under **Agent**, step by step: how long each step took, which
 estimated cost, and what it decided. Prompts and diffs are never kept.
 
 **Review.** Reviewers are agents you write, each in its own repository (`AGENT.md`: when it reviews, and how),
-invited per repository. Every review records the agent's commit, so a change to an agent is a reviewed pull
-request like any other. No pull request lands without an agent's or a person's review; agents can't approve over
-MCP, so an agent can't route around a person. See [Reviewer agents and auto-merge](docs/auto-merge.md).
+invited per repository. An agent reviews in one model call over the diff, or — with `engine: pi` — as a Pi agent
+that reads the whole repository at the commit with read-only tools. Every review records the agent's commit, so a
+change to an agent is a reviewed pull request like any other. No pull request lands without an agent's or a
+person's review; agents can't approve over MCP, so an agent can't route around a person. See [Reviewer agents and auto-merge](docs/auto-merge.md).
 
 **Conflict handling.** Files are first merged line by line, so only truly overlapping edits reach a model.
 Those go to a Pi agent running in a [Cloudflare Computer](https://github.com/cloudflare/computer) workspace,
@@ -156,22 +157,22 @@ open pull requests are found before either lands.
 
 GitOrange is one Worker that uses these Cloudflare products:
 
-| Product                                                                                 | What GitOrange uses it for                                                                      |
-| --------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------- |
-| [Workers](https://developers.cloudflare.com/workers/)                                   | The API, the web app, the git smart-HTTP endpoint, and the MCP server, on one origin            |
-| [Artifacts](https://developers.cloudflare.com/artifacts/)                               | Git storage: one repository per GitOrange repository; merges are pushed as ordinary git objects |
-| [Workers AI](https://developers.cloudflare.com/workers-ai/)                             | Clef (decisions), GLM-5.3-flash (summaries), GLM-5.3 (explanations and the conflict agent)      |
-| [AI Gateway](https://developers.cloudflare.com/ai-gateway/)                             | Every model call, tagged by feature, for logs and cost                                          |
-| [Agents SDK](https://developers.cloudflare.com/agents/)                                 | The Pi agent harness that resolves conflicts, durable across restarts                           |
-| [Cloudflare Computer](https://github.com/cloudflare/computer)                           | The sandboxed filesystem the conflict agent works in                                            |
-| [Durable Objects](https://developers.cloudflare.com/durable-objects/)                   | The conflict agent, one runner per Actions job, and a hibernating WebSocket hub for live pages  |
-| [Workflows](https://developers.cloudflare.com/workflows/)                               | Reviews, conflict resolution, stack discovery, and Actions runs, as durable steps               |
-| [Containers](https://developers.cloudflare.com/containers/)                             | A Linux container per Actions job                                                               |
-| [D1](https://developers.cloudflare.com/d1/)                                             | Users, pull requests, reviews, relationships, and state history                                 |
-| [R2](https://developers.cloudflare.com/r2/)                                             | Git LFS objects, Actions logs, and the Actions cache, moved through pre-signed URLs             |
-| [Email Sending](https://developers.cloudflare.com/email-service/)                       | Invitations and email verification                                                              |
-| [Cron Triggers](https://developers.cloudflare.com/workers/configuration/cron-triggers/) | Actions history retention and the daily usage sync                                              |
-| [GraphQL Analytics API](https://developers.cloudflare.com/analytics/graphql-api/)       | **Site admin → Usage & cost**: what the instance costs, by product and feature                  |
+| Product                                                                                 | What GitOrange uses it for                                                                                           |
+| --------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------- |
+| [Workers](https://developers.cloudflare.com/workers/)                                   | The API, the web app, the git smart-HTTP endpoint, and the MCP server, on one origin                                 |
+| [Artifacts](https://developers.cloudflare.com/artifacts/)                               | Git storage: one repository per GitOrange repository; merges are pushed as ordinary git objects                      |
+| [Workers AI](https://developers.cloudflare.com/workers-ai/)                             | Clef (decisions), GLM-5.3-flash (summaries), GLM-5.3 (explanations and the conflict agent)                           |
+| [AI Gateway](https://developers.cloudflare.com/ai-gateway/)                             | Every model call, tagged by feature, for logs and cost                                                               |
+| [Agents SDK](https://developers.cloudflare.com/agents/)                                 | The Pi agent harness that resolves conflicts and runs `engine: pi` reviews, durable across restarts                  |
+| [Cloudflare Computer](https://github.com/cloudflare/computer)                           | The sandboxed filesystem the conflict agent and `engine: pi` reviewers work in                                       |
+| [Durable Objects](https://developers.cloudflare.com/durable-objects/)                   | The conflict agent, `engine: pi` reviews, one runner per Actions job, and a hibernating WebSocket hub for live pages |
+| [Workflows](https://developers.cloudflare.com/workflows/)                               | Reviews, conflict resolution, stack discovery, and Actions runs, as durable steps                                    |
+| [Containers](https://developers.cloudflare.com/containers/)                             | A Linux container per Actions job                                                                                    |
+| [D1](https://developers.cloudflare.com/d1/)                                             | Users, pull requests, reviews, relationships, and state history                                                      |
+| [R2](https://developers.cloudflare.com/r2/)                                             | Git LFS objects, Actions logs, and the Actions cache, moved through pre-signed URLs                                  |
+| [Email Sending](https://developers.cloudflare.com/email-service/)                       | Invitations and email verification                                                                                   |
+| [Cron Triggers](https://developers.cloudflare.com/workers/configuration/cron-triggers/) | Actions history retention and the daily usage sync                                                                   |
+| [GraphQL Analytics API](https://developers.cloudflare.com/analytics/graphql-api/)       | **Site admin → Usage & cost**: what the instance costs, by product and feature                                       |
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="docs/diagrams/architecture-dark.png">

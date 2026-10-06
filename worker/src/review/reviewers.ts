@@ -95,8 +95,11 @@ export async function retryReviewer(
         agentSha: agent.agentSha,
         error: agent.error,
         summary: null,
-        // A retry is a new review: its clock (stale after REVIEW_STALE_MS) starts now.
-        createdAt: new Date(),
+        // A retry is a new review: its clock (stale after REVIEW_STALE_MS) starts now, and its generation (created_at
+        // in seconds: it names the Pi reviewer and fences every write) moves forward even within the same second.
+        createdAt: new Date(
+          Math.max(Date.now(), row.createdAt.getTime() + 1000)
+        ),
         finishedAt: agent.error ? new Date() : null,
       })
       .where(and(eq(prReviewers.id, row.id), eq(prReviewers.status, 'failed')))

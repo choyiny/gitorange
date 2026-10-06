@@ -11,6 +11,7 @@ import {
 import { monthBounds, priceSeries, usageReport } from '../usage/report';
 import { addDays, dayOf, daysToSync, syncUsage } from '../usage/sync';
 import { GRAPHQL_URL } from '../usage/probes';
+import { usageFromTranscript } from '../usage/record';
 import { runScheduled, USAGE_SYNC_CRON } from '../cron';
 import {
   addMember,
@@ -184,6 +185,58 @@ describe('Usage pricing', () => {
       days: 28,
     });
     expect(monthBounds('2026-10').days).toBe(31);
+  });
+});
+
+describe('usageFromTranscript', () => {
+  it('counts a pi harness transcript: entry records carry their messages under model', () => {
+    const entries = [
+      {
+        id: 'e1',
+        conversationId: 'c',
+        kind: 'user',
+        model: [{ role: 'user', content: 'hi' }],
+      },
+      {
+        id: 'e2',
+        conversationId: 'c',
+        kind: 'assistant',
+        model: [
+          {
+            role: 'assistant',
+            content: [],
+            usage: { input: 100, output: 10, cacheRead: 40 },
+          },
+        ],
+      },
+      {
+        id: 'e3',
+        conversationId: 'c',
+        kind: 'tool',
+        model: [{ role: 'toolResult', content: [] }],
+      },
+      { id: 'e4', conversationId: 'c', kind: 'note', data: {} },
+      {
+        id: 'e5',
+        conversationId: 'c',
+        kind: 'assistant',
+        model: [
+          { role: 'assistant', content: [], usage: { input: 5, output: 1 } },
+        ],
+      },
+    ];
+    expect(usageFromTranscript(entries)).toEqual({
+      requests: 2,
+      tokensIn: 145,
+      tokensOut: 11,
+      tokensCached: 40,
+    });
+    // Plain messages still count.
+    expect(
+      usageFromTranscript([
+        { role: 'assistant', usage: { input: 1, output: 2 } },
+      ])
+    ).toEqual({ requests: 1, tokensIn: 1, tokensOut: 2, tokensCached: 0 });
   });
 });
 

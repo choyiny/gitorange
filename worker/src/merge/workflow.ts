@@ -14,6 +14,7 @@ import {
 } from '../review/head';
 import { headReviewId } from '../review/keys';
 import { workersAiAgentModels } from '../review/models';
+import type { PiReviewerApi } from '../review/pi-contract';
 import { getSettings } from '../lib/settings';
 import { executeStacking, type StackParams } from '../stack/discover';
 import { workersAiStackModels } from '../stack/models';
@@ -89,6 +90,8 @@ export class MergeResolutionWorkflow extends WorkflowEntrypoint<
         (reviewer
           ? headReviewId(reviewer.pullRequestId, reviewer.headSha)
           : undefined);
+      const piBinding = (this.env as Partial<CloudflareBindings>)
+        .AGENT_REVIEWER;
       const deps = {
         env: this.env,
         db,
@@ -98,6 +101,12 @@ export class MergeResolutionWorkflow extends WorkflowEntrypoint<
           { summary: ids['ai.summary_model'], review: ids['ai.review_model'] },
           { classificationId: reviewId }
         ),
+        // Without the binding, engine: pi agents review as a single pass and say so.
+        pi: piBinding
+          ? (name: string) =>
+              piBinding.getByName(name) as unknown as PiReviewerApi
+          : undefined,
+        instanceId: event.instanceId,
       };
       if (p.headReview) await executeHeadReview(deps, p.headReview.id);
       else await executeReviewerRetry(deps, p.reviewer!.id);

@@ -3,13 +3,18 @@ import { drizzle } from 'drizzle-orm/d1';
 import { eq } from 'drizzle-orm';
 import { schema } from '../db/schema';
 import { prClassifications, pullRequests } from '../db/app.schema';
-import { executeHeadReview, retryHeadReview } from '../review/head';
+import {
+  executeHeadReview,
+  executeReviewerRetry,
+  retryHeadReview,
+} from '../review/head';
+import type { StepRunner } from '../merge/resolution';
 import { retryReviewer } from '../review/reviewers';
 import { MergeResolutionWorkflow } from '../merge/workflow';
 import { runActionsRetention } from '../actions/retention';
 import { headReviewId } from '../review/keys';
 import { step } from './helpers/reviews';
-import { addMember, call } from './helpers/app';
+import { addMember, call, settle } from './helpers/app';
 import { newAgent } from './helpers/agents';
 import { commitPaths } from './helpers/seed';
 import {
@@ -597,5 +602,100 @@ describe('removing and deleting agents', () => {
       method: 'PUT',
     });
     expect(again.status).toBe(200);
+  });
+});
+
+/** Steps run inline, renewing the reviewer row (as a Retry does) just before the step named `name`. */
+function renewingBefore(t: T, name: string): StepRunner {
+  return {
+    do: async (n: string, a: unknown, b?: unknown) => {
+      if (n === name)
+        await t.env.DB.prepare(
+          'UPDATE pr_reviewers SET created_at = created_at + 5'
+        ).run();
+      return ((b ?? a) as () => Promise<unknown>)();
+    },
+    sleep: async () => {},
+  } as unknown as StepRunner;
+}
+
+describe('generation fencing', () => {
+  it('writes nothing when the row was renewed before its review step started', async () => {
+    const { t } = await failedReview(AGENT_MD());
+    const { models, calls } = agentModels({ review: () => FINDING });
+    await settle(t);
+    const started = t.actions.resolutions.find(
+      (s) => (s.params as { headReview?: unknown }).headReview
+    )!;
+    const { db } = await pullOne(t);
+    await executeHeadReview(
+      { env: t.env, db, step: renewingBefore(t, 'review:secagent'), models },
+      (started.params as { headReview: { id: string } }).headReview.id
+    );
+    expect(calls.reviewed).toEqual([]);
+    expect((await reviewers(t))[0]).toMatchObject({
+      status: 'reviewing',
+      error: null,
+    });
+    expect(await flags(t)).toEqual([]);
+  });
+
+  it("doesn't fail a retried row that was renewed after its retry couldn't load", async () => {
+    const { t, admin } = await failedReview(AGENT_MD());
+    await runReviews(t, agentModels({ failReview: ['secagent'] }).models);
+    const [failed] = await reviewers(t);
+    expect((await retry(t, admin, failed.id)).status).toBe(200);
+    const broken = new Proxy(t.env.ARTIFACTS as unknown as object, {
+      get: () => async () => {
+        throw new Error('Artifacts down');
+      },
+    });
+    const { db } = await pullOne(t);
+    await executeReviewerRetry(
+      {
+        env: { ...t.env, ARTIFACTS: broken } as unknown as typeof t.env,
+        db,
+        step: renewingBefore(t, 'fail'),
+        models: agentModels().models,
+      },
+      failed.id
+    );
+    expect((await reviewers(t))[0]).toMatchObject({
+      status: 'reviewing',
+      error: null,
+    });
+  });
+
+  it('drops a review that finished for an earlier attempt of the reviewer row', async () => {
+    const { t } = await failedReview(AGENT_MD());
+    const { models } = agentModels({
+      review: async () => {
+        // A Retry renewed the row while this answer was on its way: it belongs to the old attempt.
+        await t.env.DB.prepare(
+          'UPDATE pr_reviewers SET created_at = created_at + 5'
+        ).run();
+        return FINDING;
+      },
+    });
+    await runReviews(t, models);
+    expect((await reviewers(t))[0].status).toBe('reviewing');
+    expect(await flags(t)).toEqual([]);
+  });
+
+  it("doesn't fail a reviewer row that was renewed while its model call failed", async () => {
+    const { t } = await failedReview(AGENT_MD());
+    const { models } = agentModels({
+      review: async () => {
+        await t.env.DB.prepare(
+          'UPDATE pr_reviewers SET created_at = created_at + 5'
+        ).run();
+        throw new Error('model down');
+      },
+    });
+    await runReviews(t, models);
+    expect((await reviewers(t))[0]).toMatchObject({
+      status: 'reviewing',
+      error: null,
+    });
   });
 });

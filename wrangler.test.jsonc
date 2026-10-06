@@ -63,6 +63,7 @@
     "MERGE_RESOLUTION_WORKFLOW_NAME": "gitorange-merge-resolution-test",
     "JOB_RUNNER_NAMESPACE_ID": "ns-job-runner",
     "MERGE_RESOLVER_NAMESPACE_ID": "ns-merge-resolver",
+    "AGENT_REVIEWER_NAMESPACE_ID": "",
     "LIVE_NAMESPACE_ID": "",
   },
 }

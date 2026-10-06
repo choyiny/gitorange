@@ -41,8 +41,9 @@ export function usageFromResponse(out: unknown): TokenUsage {
 }
 
 /**
- * Summed token counts of a pi transcript (the merge resolver's messages): every assistant
- * message carries `usage: { input, output, cacheRead }`. Returns the call count too.
+ * Summed token counts of a pi transcript (the merge resolver's messages: entry records whose `model` holds the
+ * messages, or plain messages): every assistant message carries `usage: { input, output, cacheRead }`. Returns the
+ * call count too.
  */
 export function usageFromTranscript(
   messages: unknown
@@ -52,7 +53,13 @@ export function usageFromTranscript(
   let tokensOut = 0;
   let tokensCached = 0;
   let reported = false;
-  for (const m of Array.isArray(messages) ? messages : []) {
+  // The pi harness's transcript is entry records, each carrying its model messages under `model`.
+  const flat = (Array.isArray(messages) ? messages : []).flatMap((e) =>
+    e && typeof e === 'object' && Array.isArray((e as any).model)
+      ? ((e as any).model as unknown[])
+      : [e]
+  );
+  for (const m of flat) {
     if (!m || typeof m !== 'object' || (m as any).role !== 'assistant')
       continue;
     requests++;

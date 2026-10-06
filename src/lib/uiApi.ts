@@ -282,11 +282,13 @@ export type InstanceSetting = {
   key: string;
   label: string;
   description: string;
-  group: 'General' | 'AI models' | 'Actions';
+  group: 'General' | 'AI models' | 'Reviews' | 'Actions';
   value: unknown;
   default: unknown;
   overridden: boolean;
   updatedAt: string | null;
+  min?: number;
+  max?: number;
 };
 export type AdminSettingsView = {
   settings: InstanceSetting[];

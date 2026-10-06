@@ -143,6 +143,7 @@ export { ActionsRun } from './actions/run-workflow';
 export { JobRunner } from './actions/job-runner';
 export { ActionsQueue } from './actions/queue';
 export { MergeResolver } from './merge/resolver';
+export { AgentReviewer } from './review/agent-reviewer';
 export { MergeResolutionWorkflow } from './merge/workflow';
 export { LiveHub } from './live/hub';
 

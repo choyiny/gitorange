@@ -31,7 +31,7 @@ import {
   type TestEnv,
 } from './helpers/app';
 import { commitFiles, commitPaths } from './helpers/seed';
-import { AGENT_MD, invitedAgent } from './helpers/reviews';
+import { AGENT_MD, APPROVE, fakePi, invitedAgent } from './helpers/reviews';
 
 const dbOf = (t: TestEnv) => drizzle(t.env.DB, { schema });
 
@@ -39,8 +39,9 @@ const dbOf = (t: TestEnv) => drizzle(t.env.DB, { schema });
  * A Workflow-like step runner: completed steps are cached by name and replayed without running
  * again; a step with `retries` is retried that many times before it fails.
  */
-function durableSteps() {
+function durableSteps(opts: { wait?: boolean } = {}) {
   const cache = new Map<string, unknown>();
+  const waited: string[] = [];
   const runner = {
     async do(name: string, a: unknown, b?: unknown) {
       const fn = (b ?? a) as () => Promise<unknown>;
@@ -61,8 +62,14 @@ function durableSteps() {
         }
     },
     async sleep() {},
+    async waitForEvent(name: string) {
+      waited.push(name);
+      throw new Error(`${name}: timed out`);
+    },
   };
-  return { step: rpcStub(runner) as unknown as StepRunner, cache };
+  if (opts.wait === false)
+    delete (runner as Partial<typeof runner>).waitForEvent;
+  return { step: rpcStub(runner) as unknown as StepRunner, cache, waited };
 }
 
 /**
@@ -151,7 +158,7 @@ function watchedDb(t: TestEnv, fail: (sql: string) => boolean = () => false) {
 
 // ── review ────────────────────────────────────────────────────────────────────
 
-async function reviewPull() {
+async function reviewPull(md = AGENT_MD()) {
   const t = makeEnv({ actions: true });
   const admin = await bootstrapAdmin(t);
   await call(t, '/api/repos', {
@@ -159,7 +166,7 @@ async function reviewPull() {
     json: { name: 'app', visibility: 'private' },
   });
   const repo = [...t.fake.repos.values()][0];
-  await invitedAgent(t, admin, 'secagent', AGENT_MD());
+  await invitedAgent(t, admin, 'secagent', md);
   const base = { 'src/app.ts': 'export const a = 1;\n' };
   const main = await commitPaths(repo, 'main', base, 'base');
   repo.refs.set('refs/heads/feature', main);
@@ -252,6 +259,45 @@ async function runReview(
 }
 
 describe('agent runs: recording', () => {
+  it('passes waits for an event through to the Workflow, never as steps', async () => {
+    const { t, review } = await reviewPull();
+    const { step, waited } = durableSteps();
+    const payload = review.params as MergeResolutionParams;
+    await recordAgentRun(
+      t.env,
+      dbOf(t),
+      { instanceId: review.id, payload },
+      step,
+      async (s) => {
+        await s.waitForEvent!('pi-wait:secagent:1', {
+          type: 'pi-x-1',
+          timeout: '2 minutes',
+        }).catch(() => undefined);
+        await s.do('load', async () => true);
+      }
+    );
+    expect(waited).toEqual(['pi-wait:secagent:1']);
+    const [run] = await runs(t);
+    expect((await stepsOf(t, run.id)).map((x) => x.name)).toEqual(['load']);
+  });
+
+  it('has no wait for an event where the runner it wraps has none', async () => {
+    const { t, review } = await reviewPull();
+    const { step } = durableSteps({ wait: false });
+    const payload = review.params as MergeResolutionParams;
+    let wait: unknown = 'unset';
+    await recordAgentRun(
+      t.env,
+      dbOf(t),
+      { instanceId: review.id, payload },
+      step,
+      async (s) => {
+        wait = s.waitForEvent;
+      }
+    );
+    expect(wait).toBeUndefined();
+  });
+
   it('records a review run with its steps, models, tokens, cost and decisions', async () => {
     const { t, head, review } = await reviewPull();
     await runReview(t, review, reviewModels(t));
@@ -544,6 +590,63 @@ describe('agent runs: recording', () => {
       'SELECT COUNT(*) AS n FROM ai_usage'
     ).first<{ n: number }>();
     expect(usage?.n).toBe(3);
+  });
+
+  it('records a Pi review: its start, its checks, and its spend on the last check; waits are not steps', async () => {
+    const { t, review } = await reviewPull(AGENT_MD({ engine: 'pi' }));
+    const pi = fakePi((n) =>
+      n < 2
+        ? { state: 'running' }
+        : { state: 'done', text: JSON.stringify(APPROVE) }
+    );
+    const db = dbOf(t);
+    const payload = review.params as MergeResolutionParams;
+    await recordAgentRun(
+      t.env,
+      db,
+      { instanceId: review.id, payload },
+      durableSteps().step,
+      (step) =>
+        executeHeadReview(
+          {
+            env: t.env,
+            db,
+            step,
+            models: reviewModels(t),
+            pi: pi.api,
+            instanceId: review.id,
+          },
+          payload.headReview!.id
+        )
+    );
+    const [run] = await runs(t);
+    expect(run.status).toBe('succeeded');
+    const steps = await stepsOf(t, run.id);
+    expect(steps.map((s) => s.name)).toEqual([
+      'load',
+      'summary:0',
+      'save-files',
+      'agents',
+      'trigger',
+      'reviewers',
+      'review:secagent',
+      'pi:secagent:1',
+      'pi:secagent:2',
+      'finish',
+      'stacking',
+      'auto-merge',
+    ]);
+    const by = (n: string) => steps.find((s) => s.name === n)!;
+    expect(by('review:secagent').decision).toBe('Started a Pi review');
+    expect(by('pi:secagent:1').decision).toBe(
+      'Running: 2 turns, 4 tool calls, 1 min'
+    );
+    expect(by('pi:secagent:2')).toMatchObject({
+      decision: 'Approved (Pi: 4 turns, 8 tool calls, 1 min)',
+      model: '@cf/zai-org/glm-5.3',
+      tokens_in: 4000,
+      tokens_out: 400,
+    });
   });
 });
 

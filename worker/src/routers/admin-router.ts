@@ -26,12 +26,15 @@ const settingSchema = z.object({
   key: z.string(),
   label: z.string(),
   description: z.string(),
-  group: z.enum(['General', 'AI models', 'Actions']),
+  group: z.enum(['General', 'AI models', 'Reviews', 'Actions']),
   value: z.unknown(),
   default: z.unknown(),
   /** Saved in Site admin, rather than the default from wrangler or the built-in one. */
   overridden: z.boolean(),
   updatedAt: z.string().nullable(),
+  /** Inclusive limits of a number setting. */
+  min: z.number().optional(),
+  max: z.number().optional(),
 });
 
 const listRoute = createRoute({

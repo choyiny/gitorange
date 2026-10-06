@@ -34,6 +34,7 @@
       { "name": "JOB_RUNNER", "class_name": "JobRunner" },
       { "name": "ACTIONS_QUEUE", "class_name": "ActionsQueue" },
       { "name": "MERGE_RESOLVER", "class_name": "MergeResolver" },
+      { "name": "AGENT_REVIEWER", "class_name": "AgentReviewer" },
       { "name": "LIVE", "class_name": "LiveHub" }
     ]
   },
@@ -41,6 +42,7 @@
     "JobRunner": { "type": "durable-object", "storage": "sqlite" },
     "ActionsQueue": { "type": "durable-object", "storage": "sqlite" },
     "MergeResolver": { "type": "durable-object", "storage": "sqlite" },
+    "AgentReviewer": { "type": "durable-object", "storage": "sqlite" },
     "LiveHub": { "type": "durable-object", "storage": "sqlite" }
   },
   "workflows": [
@@ -50,7 +52,7 @@
   // Daily housekeeping: deletes Actions runs past their retention (Site admin → Actions).
   "triggers": { "crons": ["17 4 * * *", "30 2 * * *"] },
   // Workers AI: AI conflict resolution (RESOLVER_MODEL) and reviewer agents' reviews (SUMMARY_MODEL
-  // one-liners, Clef for which agents review, REVIEW_MODEL for each review).
+  // one-liners, Clef for which agents review, REVIEW_MODEL for each review, single pass or Pi).
   "ai": { "binding": "AI" },
   "assets": {
     "binding": "ASSETS",
@@ -80,6 +82,7 @@
     "MERGE_RESOLUTION_WORKFLOW_NAME": "gitorange-merge-resolution",
     "JOB_RUNNER_NAMESPACE_ID": "",
     "MERGE_RESOLVER_NAMESPACE_ID": "",
+    "AGENT_REVIEWER_NAMESPACE_ID": "",
     "LIVE_NAMESPACE_ID": ""
   }
 }

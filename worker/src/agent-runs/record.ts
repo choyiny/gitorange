@@ -196,6 +196,48 @@ const plural = (n: number, word: string) => `${n} ${word}${n === 1 ? '' : 's'}`;
 const firstLine = (s: unknown) =>
   typeof s === 'string' ? (s.trim().split('\n')[0] ?? '') : '';
 
+const minutes = (ms: number) => `${Math.max(1, Math.round(ms / 60_000))} min`;
+
+/** What a Pi review spent, in a few words; empty without one. */
+function piSpend(p: unknown): string {
+  const r = p as { turns?: unknown; toolCalls?: unknown; durationMs?: unknown };
+  return typeof r?.turns === 'number'
+    ? `${plural(r.turns, 'turn')}, ${plural(Number(r.toolCalls), 'tool call')}, ${minutes(Number(r.durationMs))}`
+    : '';
+}
+
+/** An agent's review outcome (the single pass's step, or a Pi review's last check) in a line. */
+function reviewDecision(r: any): string | null {
+  if (!r?.verdict) return null;
+  if (r.verdict === 'started') return 'Started a Pi review';
+  const spend = piSpend(r.pi);
+  const how = r.fallback
+    ? " (engine: pi isn't set up here, so it ran as a single pass)"
+    : spend
+      ? ` (Pi: ${spend})`
+      : '';
+  if (r.verdict === 'approve') return `Approved${how}`;
+  if (r.verdict === 'findings')
+    return `${plural(r.needsPerson + r.changeRequested, 'finding')}: ${[
+      r.needsPerson
+        ? `${r.needsPerson} need${r.needsPerson === 1 ? 's' : ''} a person`
+        : '',
+      r.changeRequested
+        ? `${plural(r.changeRequested, 'change')} requested`
+        : '',
+    ]
+      .filter(Boolean)
+      .join(', ')}${how}`;
+  if (r.verdict === 'failed')
+    return `${r.error ?? 'Failed'}${spend ? ` (Pi: ${spend})` : ''}`;
+  if (r.verdict === 'skipped' && r.engine === 'pi')
+    return (
+      r.stopped ??
+      'Stopped: the pull request closed, a newer commit replaced this one, or the review was cancelled'
+    );
+  return 'Nothing to review: removed from the repository, or already reviewed';
+}
+
 /**
  * A decision summary from a step's result, where the result is the decision. Tolerant of shapes:
  * anything unexpected gives no summary.
@@ -248,24 +290,11 @@ export function decisionFor(name: string, result: unknown): string | null {
         : null;
     case 'pr':
       return r === true ? 'Started an AI conflict resolution' : null;
-    case 'review': {
-      if (!r?.verdict) return null;
-      const pi = r.engine === 'pi' ? ' (engine: pi ran as a single pass)' : '';
-      if (r.verdict === 'approve') return `Approved${pi}`;
-      if (r.verdict === 'findings')
-        return `${plural(r.needsPerson + r.changeRequested, 'finding')}: ${[
-          r.needsPerson
-            ? `${r.needsPerson} need${r.needsPerson === 1 ? 's' : ''} a person`
-            : '',
-          r.changeRequested
-            ? `${plural(r.changeRequested, 'change')} requested`
-            : '',
-        ]
-          .filter(Boolean)
-          .join(', ')}${pi}`;
-      if (r.verdict === 'failed') return r.error ?? 'Failed';
-      return 'Nothing to review: removed from the repository, or already reviewed';
-    }
+    case 'review':
+      return reviewDecision(r);
+    case 'pi':
+      if (r?.state === 'running') return `Running: ${piSpend(r)}`;
+      return r?.state === 'finished' ? reviewDecision(r.outcome) : null;
     case 'trigger':
       return r && typeof r === 'object'
         ? Object.entries(r as Record<string, number>)
@@ -533,6 +562,17 @@ function recordingSteps(
     // A sleep (a sweep's settle delay) isn't a step: nothing to record.
     sleep: (name: string, duration: number) => inner.sleep(name, duration),
   };
+  // A wait for an event (a Pi review's "settled") isn't a step either: passed through, never recorded. Only where
+  // the wrapped runner has one (as pingingSteps), so a runner without it leaves callers on their sleep fallback.
+  // Called as a method: in production `inner` is an RPC stub.
+  const waiting = inner as unknown as {
+    waitForEvent?: (n: string, o: unknown) => Promise<unknown>;
+  };
+  if (waiting.waitForEvent)
+    (steps as Record<string, unknown>).waitForEvent = (
+      name: string,
+      options: unknown
+    ) => waiting.waitForEvent!(name, options);
   return steps as unknown as StepRunner;
 }
 

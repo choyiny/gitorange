@@ -126,7 +126,7 @@ Fill in the top level (production):
 
 Also replace the `FROM_EMAIL` and `R2_ACCOUNT_ID` placeholders in `env.dev.vars` so local development works later.
 
-Do not rename bindings — the code looks them up by name: `DB`, `ARTIFACTS`, `EMAIL`, `LFS`, `ACTIONS_LOGS`, `ACTIONS_CACHE`, `ACTIONS_RUN`, `JOB_RUNNER`, `ACTIONS_QUEUE`, `MERGE_RESOLVER`, `MERGE_RESOLUTION`, `LIVE`, `AI`, `ASSETS`. Keep the `containers`, `durable_objects`, `exports`, `workflows`, and `ai` entries as shipped: they run Actions, AI conflict resolution, reviewer agents' reviews, and live page updates. Keep `assets.run_worker_first` as shipped; the git endpoint depends on it. `wrangler.jsonc` is gitignored; never commit it.
+Do not rename bindings — the code looks them up by name: `DB`, `ARTIFACTS`, `EMAIL`, `LFS`, `ACTIONS_LOGS`, `ACTIONS_CACHE`, `ACTIONS_RUN`, `JOB_RUNNER`, `ACTIONS_QUEUE`, `MERGE_RESOLVER`, `AGENT_REVIEWER`, `MERGE_RESOLUTION`, `LIVE`, `AI`, `ASSETS`. Keep the `containers`, `durable_objects`, `exports`, `workflows`, and `ai` entries as shipped: they run Actions, AI conflict resolution, reviewer agents' reviews, and live page updates. Keep `assets.run_worker_first` as shipped; the git endpoint depends on it. `wrangler.jsonc` is gitignored; never commit it.
 
 ### Step 4: Migrate and deploy
 
@@ -160,7 +160,7 @@ Site admin → **Usage & cost** shows what this deployment costs on Cloudflare. 
    ! yarn wrangler secret put CF_ANALYTICS_TOKEN
    ```
 
-2. For Durable Object usage, ask them to open https://dash.cloudflare.com/?to=/:account/workers/durable-objects, select each of `JobRunner`, `MergeResolver`, and `LiveHub`, and read its namespace ID from the page. Put the IDs in `vars.JOB_RUNNER_NAMESPACE_ID`, `vars.MERGE_RESOLVER_NAMESPACE_ID`, and `vars.LIVE_NAMESPACE_ID`, then run `yarn deploy` again.
+2. For Durable Object usage, ask them to open https://dash.cloudflare.com/?to=/:account/workers/durable-objects, select each of `JobRunner`, `MergeResolver`, `AgentReviewer`, and `LiveHub`, and read its namespace ID from the page. Put the IDs in `vars.JOB_RUNNER_NAMESPACE_ID`, `vars.MERGE_RESOLVER_NAMESPACE_ID`, `vars.AGENT_REVIEWER_NAMESPACE_ID`, and `vars.LIVE_NAMESPACE_ID`, then run `yarn deploy` again.
 
 Skipping this is fine: the page labels what isn't set up, and nothing else depends on it.
 
@@ -194,7 +194,7 @@ Report, with real values substituted:
 - Invitations sent from `<FROM_EMAIL>` (binding `EMAIL`)
 - R2 bucket `gitorange-lfs` (binding `LFS`) for Git LFS — R2 secrets `<set | not set yet>`
 - GitOrange Actions: Workflow `gitorange-actions-run`, `JobRunner` containers, logs in R2 bucket `gitorange-actions-logs`, cache in `gitorange-actions-cache`
-- AI: conflict resolution and reviewer agents' reviews on Workers AI (Workflow `gitorange-merge-resolution`, `MergeResolver` Durable Object), logged in AI Gateway `<AI_GATEWAY>`
+- AI: conflict resolution and reviewer agents' reviews on Workers AI (Workflow `gitorange-merge-resolution`, `MergeResolver` and `AgentReviewer` Durable Objects), logged in AI Gateway `<AI_GATEWAY>`
 - Live updates: `LiveHub` Durable Object (binding `LIVE`)
 - Daily Cron Trigger (`triggers.crons`, kept as shipped): deletes Actions runs past their retention (Site admin → Settings, 90 days by default)
 - Instance name, invitation sender, and AI models can later be changed in Site admin → Settings without a deploy; the wrangler vars are only defaults

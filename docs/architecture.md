@@ -9,19 +9,20 @@ GitOrange is one Cloudflare Worker backed by D1, Artifacts, and R2, with Actions
 
 The diagram's source is [`diagrams/architecture.html`](diagrams/architecture.html) (light) and [`diagrams/architecture-dark.html`](diagrams/architecture-dark.html) (dark); the PNGs are 2× screenshots of them.
 
-| Concern                                                                                   | Where it lives                                                                                                                                                                                                    |
-| ----------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Git objects and refs (branches, commits, files)                                           | **Cloudflare Artifacts** — one Artifacts repo per GitOrange repository                                                                                                                                            |
-| Users, sessions, invitations, access tokens, repository metadata, pull requests, comments | **D1**                                                                                                                                                                                                            |
-| Invitation emails                                                                         | **Cloudflare Email Sending**                                                                                                                                                                                      |
-| Git LFS file contents                                                                     | **R2**, one object per repository and oid; D1's `lfs_objects` records which objects each repository has                                                                                                           |
-| Actions runs, jobs, and steps                                                             | **D1** (`workflow_runs`, `workflow_jobs`, `workflow_steps`); step logs in **R2**; jobs run in **Cloudflare Containers**                                                                                           |
-| OAuth clients, consents, tokens, and signing keys for the MCP server                      | **D1**, in better-auth's generated tables (`oauth_*`, `jwkss`)                                                                                                                                                    |
-| Reviews                                                                                   | **D1** (`pr_classifications` per head commit, `pr_reviewers`, `pr_review_flags`, `pr_approvals`); runs on **Workflows** and **Workers AI** (GLM-5.3-flash, Clef, GLM-5.3)                                         |
-| AI merge resolutions                                                                      | **D1** (`merge_resolutions`); resolved commits on `refs/resolutions/*` in **Artifacts**; transcripts in **R2**; runs on **Workflows**, **Durable Objects** (Cloudflare Computer + Pi Durable), and **Workers AI** |
-| Reviewer agents                                                                           | **D1** (`agents`, `repository_agents`); each agent's `AGENT.md`, `avatar.png` and `knowledge/` in its own **Artifacts** repository                                                                                |
-| Live updates                                                                              | One **Durable Object** (`LiveHub`, hibernating WebSockets); stores nothing                                                                                                                                        |
-| Web interface                                                                             | React SPA in `src/`, served from the same Worker via the `ASSETS` binding                                                                                                                                         |
+| Concern                                                                                   | Where it lives                                                                                                                                                                                                       |
+| ----------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Git objects and refs (branches, commits, files)                                           | **Cloudflare Artifacts** — one Artifacts repo per GitOrange repository                                                                                                                                               |
+| Users, sessions, invitations, access tokens, repository metadata, pull requests, comments | **D1**                                                                                                                                                                                                               |
+| Invitation emails                                                                         | **Cloudflare Email Sending**                                                                                                                                                                                         |
+| Git LFS file contents                                                                     | **R2**, one object per repository and oid; D1's `lfs_objects` records which objects each repository has                                                                                                              |
+| Actions runs, jobs, and steps                                                             | **D1** (`workflow_runs`, `workflow_jobs`, `workflow_steps`); step logs in **R2**; jobs run in **Cloudflare Containers**                                                                                              |
+| OAuth clients, consents, tokens, and signing keys for the MCP server                      | **D1**, in better-auth's generated tables (`oauth_*`, `jwkss`)                                                                                                                                                       |
+| Reviews                                                                                   | **D1** (`pr_classifications` per head commit, `pr_reviewers`, `pr_review_flags`, `pr_approvals`); runs on **Workflows** and **Workers AI** (GLM-5.3-flash, Clef, GLM-5.3)                                            |
+| AI merge resolutions                                                                      | **D1** (`merge_resolutions`); resolved commits on `refs/resolutions/*` in **Artifacts**; transcripts in **R2**; runs on **Workflows**, **Durable Objects** (Cloudflare Computer + Pi Durable), and **Workers AI**    |
+| Pi reviews (`engine: pi`)                                                                 | **D1** (`pr_reviewers`, `pr_review_flags`, `ai_usage`); one `AgentReviewer` **Durable Object** per attempt (Cloudflare Computer workspace + Pi Durable), deleted when the review ends; **Workers AI**; nothing in R2 |
+| Reviewer agents                                                                           | **D1** (`agents`, `repository_agents`); each agent's `AGENT.md`, `avatar.png` and `knowledge/` in its own **Artifacts** repository                                                                                   |
+| Live updates                                                                              | One **Durable Object** (`LiveHub`, hibernating WebSockets); stores nothing                                                                                                                                           |
+| Web interface                                                                             | React SPA in `src/`, served from the same Worker via the `ASSETS` binding                                                                                                                                            |
 
 Nothing about git content is copied into D1. The repository page, history, and diffs are read from Artifacts on each request.
 
@@ -125,7 +126,7 @@ Every `MERGE_RESOLUTION` Workflow (an agents' review (one step per agent), an AI
 
 Site admin → Usage & cost (`GET /api/admin/usage?month=`, the `gitorange_get_usage` MCP tool; [`worker/src/usage/`](../worker/src/usage/)) estimates what this deployment costs on Cloudflare. It has two sources:
 
-- **GitOrange's own records.** `runner_sessions` holds one row per Actions container from boot to destroy (written by the executor; a cancelled run stops its rows), priced by instance size. `ai_usage` holds every Workers AI call's token counts: review calls in `workersAiModels`, and each merge resolution's whole pi conversation, summed from its transcript. Email sends are counted in `usage_daily`.
+- **GitOrange's own records.** `runner_sessions` holds one row per Actions container from boot to destroy (written by the executor; a cancelled run stops its rows), priced by instance size. `ai_usage` holds every Workers AI call's token counts: review calls in `workersAiAgentModels`, each merge resolution's whole pi conversation summed from its transcript, and each Pi review's conversation summed the same way (feature `review-agent-pi`, one row per attempt, written by the check or failure step that ends it). Email sends are counted in `usage_daily`.
 - **Cloudflare's GraphQL Analytics API.** A daily cron ([`cron.ts`](../worker/src/cron.ts) dispatches on `controller.cron`) runs one small query per metric and day ([`usage/probes.ts`](../worker/src/usage/probes.ts)). Each query is filtered to this deployment's script, Durable Object namespaces, Workflows, D1 database, buckets, Artifacts namespace, and AI Gateway, all named by vars. The results land in `usage_daily`, with failures recorded per query in `usage_syncs`.
 
 Costs are computed when the report is read, from the price table in [`usage/pricing.ts`](../worker/src/usage/pricing.ts), so nothing priced is stored.
@@ -182,6 +183,31 @@ admins invite agents in Settings → Agents (`repository_agents`). Deleting an a
 keeps its user row, so past activity stays attributed; its repository stays until an admin deletes it.
 
 Each head commit is reviewed by the invited agents (see [Reviews and auto-merge](#reviews-and-auto-merge)).
+
+An `engine: pi` agent's review runs in an `AgentReviewer` Durable Object ([`review/agent-reviewer.ts`](../worker/src/review/agent-reviewer.ts)),
+one per reviewer row attempt, named `<pr_reviewers.id>:<created_at ms>` (Retry always moves `created_at` forward, so
+every attempt gets a fresh object). `start` copies the head commit's text files from Artifacts into `/repo` of a
+Cloudflare Computer workspace in its own SQLite (`checkoutHead` in [`review/checkout.ts`](../worker/src/review/checkout.ts):
+changed files first; lockfiles, `.orangeignore` matches, binaries, symlinks, submodules and `.git` entries left out,
+as is everything past 3,000 files, 1,000 tree reads, 2,000 blob reads or 24 MB, and any file over 512 KB; what was
+left out is listed in `/review/not-checked-out.txt`), then submits one prompt to a Pi Durable harness on the deep
+review model (`ai.review_pi_model`, which follows `ai.review_model` until set) through the `AI` binding (AI Gateway
+feature `review-agent-pi`). The user prompt is the single pass's (`reviewUserPrompt`, the pull request inside the
+random untrusted tag); the system prompt (`piSystemPrompt`) carries the JSON schema; the tools are
+`createPiTools({ readonly: true })` (read, ls, find, grep), each path checked against `/repo` and `/review`, budgeted (`review.pi_max_tool_calls`, 60 by default; past it the agent
+is told to answer), and every text result is wrapped in the same untrusted tag. An answer that doesn't parse goes
+back to the model (twice at most). The object aborts its own run once it passes the model-call or input-token budget
+(`review.pi_max_model_calls`, 80; `review.pi_max_input_tokens`, 4,000,000). The review Workflow starts it inside the
+agent's `review:<handle>` step, then waits for the object's "settled" event (`step.waitForEvent`, 2 minutes) and
+checks (`pi:<handle>:<n>`, [`review/pi.ts`](../worker/src/review/pi.ts)): it stops the object when the row is no
+longer that attempt (removed, retried, stopped as stale after 2 hours), the pull request closed or its head moved,
+the wall clock passed (`review.pi_minutes`, 30 by default, 5 to 60), or the budget is spent — limits and model read
+once when the review starts; otherwise an answer is parsed with `parseAgentReview` and recorded with the single
+pass's fenced write (`recordReview`: only while the row is `reviewing` with the same `created_at`). A review that
+fails (including its start step) stops the object and records what it spent. The object returns only the answer's
+text and counts, never the transcript, and deletes all its storage when the Workflow stops it, or by itself 15
+minutes after its wall clock ends. Without the `AGENT_REVIEWER` binding, `engine: pi` agents review as a single
+pass, noted on the review.
 
 ## Access model
 

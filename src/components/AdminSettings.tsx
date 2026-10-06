@@ -6,7 +6,12 @@ import { errorMessage } from '@/lib/api';
 import { timeAgo } from '@/lib/format';
 import { Spinner } from './Spinner';
 
-const GROUPS: InstanceSetting['group'][] = ['General', 'AI models', 'Actions'];
+const GROUPS: InstanceSetting['group'][] = [
+  'General',
+  'AI models',
+  'Reviews',
+  'Actions',
+];
 
 function SettingRow({
   s,
@@ -108,9 +113,10 @@ function SettingRow({
             id={`setting-${s.key}`}
             className="form-control"
             type="number"
-            min={1}
+            min={s.min ?? 1}
+            max={s.max}
             step={1}
-            style={{ width: 100 }}
+            style={{ width: 140 }}
             value={text}
             onChange={(e) => setText(e.target.value)}
             required

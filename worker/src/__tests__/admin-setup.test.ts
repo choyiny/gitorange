@@ -73,6 +73,8 @@ function fullEnv(overrides: Record<string, unknown> = {}): TestEnv {
     MERGE_RESOLVER_NAMESPACE_ID: '78f866a1c792450095145fbd79082892',
     LIVE_NAMESPACE_ID: '9a896aa6a1754ed78b6415ec9b0fd5a7',
     MERGE_RESOLVER: { getByName: () => ({}) },
+    AGENT_REVIEWER_NAMESPACE_ID: '5c1f0e7a9b2d4c6e8f0a1b2c3d4e5f60',
+    AGENT_REVIEWER: { getByName: () => ({}) },
     AI: {
       gateway: () => ({ getUrl: async () => 'https://gateway.example/' }),
       run: async () => ({ response: 'OK' }),
@@ -155,6 +157,7 @@ describe('Site admin → Setup', () => {
       'binding-ARTIFACTS',
       'binding-AI',
       'binding-LIVE',
+      'binding-AGENT_REVIEWER',
       'probe-d1',
       'probe-artifacts',
       'probe-r2-LFS',
@@ -293,6 +296,24 @@ describe('Site admin → Setup', () => {
     const firstWarning = body.checks.findIndex((c) => c.status === 'warning');
     const lastError = body.checks.map((c) => c.status).lastIndexOf('error');
     expect(lastError).toBeLessThan(firstWarning);
+  });
+
+  it('warns when AGENT_REVIEWER is missing: Pi agents review as a single pass', async () => {
+    const t = without(
+      fullEnv(),
+      'AGENT_REVIEWER',
+      'AGENT_REVIEWER_NAMESPACE_ID'
+    );
+    fakeR2Api();
+    const admin = await bootstrapAdmin(t);
+    const { body } = await checks(t, admin);
+    const check = byId(body, 'binding-AGENT_REVIEWER');
+    expect(check.status).toBe('warning');
+    expect(check.detail).toContain('engine: pi agents review as a single pass');
+    expect(check.fix[0].code).toContain('"class_name": "AgentReviewer"');
+    expect(byId(body, 'usage-do-namespaces').detail).toContain(
+      'AGENT_REVIEWER_NAMESPACE_ID is not set'
+    );
   });
 
   it('reports failing probes: Artifacts, R2 credentials, and pending migrations', async () => {

@@ -526,6 +526,14 @@ export interface StepRunner {
   ): Promise<T>;
   /** A durable sleep (milliseconds). */
   sleep(name: string, duration: number): Promise<void>;
+  /**
+   * Waits for `instance.sendEvent({ type })`; throws when `timeout` passes first. Optional: callers fall back to a
+   * sleep where a runner lacks it.
+   */
+  waitForEvent?<T = unknown>(
+    name: string,
+    options: { type: string; timeout?: string }
+  ): Promise<{ payload: T }>;
 }
 
 export interface ResolutionDeps {

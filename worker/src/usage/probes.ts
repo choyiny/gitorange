@@ -46,6 +46,10 @@ export function usageResources(env: CloudflareBindings): UsageResources {
         className: 'MergeResolver',
         namespaceId: str(env.MERGE_RESOLVER_NAMESPACE_ID),
       },
+      {
+        className: 'AgentReviewer',
+        namespaceId: str(env.AGENT_REVIEWER_NAMESPACE_ID),
+      },
       { className: 'LiveHub', namespaceId: str(env.LIVE_NAMESPACE_ID) },
     ].filter((d) => d.namespaceId),
     aiGateway: gateway === 'off' ? null : gateway,
@@ -218,7 +222,7 @@ export function buildProbes(r: UsageResources): {
     }
   } else
     unconfigured['durable-objects'] =
-      'No Durable Object namespace IDs are set (JOB_RUNNER_NAMESPACE_ID, MERGE_RESOLVER_NAMESPACE_ID, LIVE_NAMESPACE_ID)';
+      'No Durable Object namespace IDs are set (JOB_RUNNER_NAMESPACE_ID, MERGE_RESOLVER_NAMESPACE_ID, AGENT_REVIEWER_NAMESPACE_ID, LIVE_NAMESPACE_ID)';
 
   if (r.workflows.length) {
     for (const name of r.workflows) {

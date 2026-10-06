@@ -49,17 +49,24 @@ interface Steps {
   waitForEvent?(name: string, options: unknown): Promise<unknown>;
 }
 
-/** Wraps a Workflow step runner so each completed step pings the repository. */
+/**
+ * Wraps a Workflow step runner so each completed step pings the repository, except one `quiet` says changed nothing
+ * anyone sees (a poll that found the work still running).
+ */
 export function pingingSteps<S>(
   env: CloudflareBindings,
   step: S,
   repositoryId: string,
-  opts: { approvals?: boolean } = {}
+  opts: {
+    approvals?: boolean;
+    quiet?: (name: string, result: unknown) => boolean;
+  } = {}
 ): S {
   const inner = step as unknown as Steps;
   const wrapped: Steps = {
     async do<T>(name: string, ...args: unknown[]): Promise<T> {
       const result = await inner.do<T>(name, ...args);
+      if (opts.quiet?.(name, result)) return result;
       await publishChange(env, repositoryId, opts);
       return result;
     },
