@@ -17,13 +17,18 @@ import {
   api,
   qk,
   type Comment,
-  type PullEvent,
   type PullDetail,
   type RepoDetail,
 } from '@/lib/uiApi';
 import { useCurrentUser } from '@/lib/auth';
 import { ApiError, errorMessage } from '@/lib/api';
 import { blocking, reasonText } from '@/lib/pullState';
+import {
+  anchoredReviewer,
+  reviewEntries,
+  slotOf,
+  timelineSlots,
+} from '@/lib/reviewTimeline';
 import { fullDate, timeAgo } from '@/lib/format';
 import { Avatar } from '@/components/Avatar';
 import { CommitList } from '@/components/CommitList';
@@ -33,7 +38,12 @@ import { Markdown } from '@/components/Markdown';
 import { ChecksBox } from '@/components/Checks';
 import { AiResolution } from '@/components/AiResolution';
 import { AutoMergeStatus } from '@/components/AutoMergeReview';
-import { ReviewersBox } from '@/components/ReviewersBox';
+import {
+  AgentReview,
+  LegacyReview,
+  PersonApprovals,
+  ReviewersSidebar,
+} from '@/components/ReviewersBox';
 import { PullStateLabel, PullStateReasons } from '@/components/PullStateLabel';
 import { PullEventItem } from '@/components/PullEvents';
 import { Spinner } from '@/components/Spinner';
@@ -292,6 +302,7 @@ function MergeBox({
         {d.review && d.review.autoMerge.state !== 'off' && (
           <AutoMergeStatus repo={repo} d={d} onChange={onDone} />
         )}
+        {d.review && <PersonApprovals repo={repo} d={d} onChange={onDone} />}
         {d.canMerge &&
           d.mergeable &&
           (confirming ? (
@@ -331,26 +342,41 @@ function Conversation({
   const [error, setError] = useState<string | null>(null);
   const [branchDeleted, setBranchDeleted] = useState(false);
   const canEdit = d.canMerge || pr.author.id === me.id;
-  // Index of the first comment after the review (comments.length: after them all).
-  const reviewAt = !d.review
-    ? -1
-    : d.review.createdAt
-      ? (() => {
-          const at = d.comments.findIndex(
-            (c) => c.createdAt > d.review!.createdAt!
-          );
-          return at < 0 ? d.comments.length : at;
-        })()
-      : d.comments.length;
-  // GitOrange's events between the comments they happened between.
-  const slots: PullEvent[][] = Array.from(
-    { length: d.comments.length + 1 },
-    () => []
+  // GitOrange's events, and each requested agent's review, between the comments they happened between.
+  const slots = timelineSlots(
+    d.comments,
+    d.events,
+    d.review ? reviewEntries(d.review.reviewers) : []
   );
-  for (const e of d.events) {
-    const i = d.comments.findIndex((c) => c.createdAt > e.createdAt);
-    slots[i < 0 ? d.comments.length : i].push(e);
-  }
+  // "Review the flags" jumps to the first review with a finding for a person, else to the sidebar.
+  const anchored = anchoredReviewer(slots);
+  const legacy =
+    d.review?.legacy && d.review.legacy.flags.length > 0
+      ? slotOf(d.comments, d.review.legacy.createdAt)
+      : -1;
+  const slot = (i: number) => (
+    <>
+      {i === legacy && <LegacyReview d={d} />}
+      {slots[i].map((x) =>
+        x.kind === 'event' ? (
+          <PullEventItem
+            key={x.event.id}
+            e={x.event}
+            repoPath={`/${repo.fullName}`}
+          />
+        ) : (
+          <AgentReview
+            key={x.review.id}
+            repo={repo}
+            d={d}
+            r={x.review}
+            anchor={anchored === x.review.id}
+            onChange={refresh}
+          />
+        )
+      )}
+    </>
+  );
   const send = async (andState?: 'open' | 'closed') => {
     setBusy(true);
     setError(null);
@@ -384,13 +410,8 @@ function Conversation({
         />
         {d.comments.map((c, i) => (
           <Fragment key={c.id}>
-            {/* The auto-merge review sits in the timeline where it happened. */}
-            {slots[i].map((e) => (
-              <PullEventItem key={e.id} e={e} repoPath={`/${repo.fullName}`} />
-            ))}
-            {reviewAt === i && (
-              <ReviewersBox repo={repo} d={d} onChange={refresh} />
-            )}
+            {/* Events and agent reviews sit in the timeline where they happened. */}
+            {slot(i)}
             <TimelineComment
               c={c}
               me={c.author.id === me.id}
@@ -398,12 +419,7 @@ function Conversation({
             />
           </Fragment>
         ))}
-        {slots[d.comments.length].map((e) => (
-          <PullEventItem key={e.id} e={e} repoPath={`/${repo.fullName}`} />
-        ))}
-        {reviewAt === d.comments.length && (
-          <ReviewersBox repo={repo} d={d} onChange={refresh} />
-        )}
+        {slot(d.comments.length)}
         {pr.state === 'merged' && (
           <>
             <TimelineEvent
@@ -528,6 +544,14 @@ function Conversation({
         </div>
       </div>
       <aside className="col-md-3 f6">
+        {d.review && (
+          <ReviewersSidebar
+            repo={repo}
+            d={d}
+            anchor={anchored === null}
+            onChange={refresh}
+          />
+        )}
         {d.stack && (
           <StackSidebar repo={repo} number={pr.number} stack={d.stack} />
         )}
