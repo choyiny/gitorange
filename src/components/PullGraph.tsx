@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { Link, useNavigate } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
 import { AlertIcon, GitBranchIcon } from '@primer/octicons-react';
 import { api, qk, type RepoDetail } from '@/lib/uiApi';
@@ -58,11 +58,16 @@ function decodeLabels(root: Element) {
     if (t.nodeValue) t.nodeValue = decodeEntities(t.nodeValue);
 }
 
-/** PR number of a rendered node, from the node ids pullGraph gives (`pr12`, `m9`); never from labels. */
+/** The node id pullGraph gave a rendered node (`pr12`, `m9`, `land`). */
+function idOf(el: Element): string {
+  return (
+    el.getAttribute('data-id') ?? /flowchart-(\w+)-\d+$/.exec(el.id)?.[1] ?? ''
+  );
+}
+
+/** PR number of a rendered node, from its id; never from labels. */
 function numberOf(el: Element): number | null {
-  const id =
-    el.getAttribute('data-id') ?? /flowchart-(\w+)-\d+$/.exec(el.id)?.[1] ?? '';
-  const m = /^(?:pr|m)(\d+)$/.exec(id);
+  const m = /^(?:pr|m)(\d+)$/.exec(idOf(el));
   return m ? Number(m[1]) : null;
 }
 
@@ -72,6 +77,7 @@ function TargetGraph({ graph, base }: { graph: Graph; base: string }) {
   const [status, setStatus] = useState<'drawing' | 'drawn' | 'failed'>(
     'drawing'
   );
+  const tipsKey = JSON.stringify(graph.tips);
   useEffect(() => {
     let live = true;
     setStatus('drawing');
@@ -87,6 +93,15 @@ function TargetGraph({ graph, base }: { graph: Graph; base: string }) {
         for (const el of root.querySelectorAll('g.node')) {
           const n = numberOf(el);
           if (n === null) continue;
+          const tip = graph.tips[idOf(el)];
+          if (tip) {
+            const title = document.createElementNS(
+              'http://www.w3.org/2000/svg',
+              'title'
+            );
+            title.textContent = tip;
+            el.prepend(title);
+          }
           const go = () => navigate(`${base}/pull/${n}`);
           el.setAttribute('role', 'link');
           el.setAttribute('tabindex', '0');
@@ -103,7 +118,8 @@ function TargetGraph({ graph, base }: { graph: Graph; base: string }) {
     return () => {
       live = false;
     };
-  }, [graph.source, base, navigate]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- redraw when the text changes, not on every refetch
+  }, [graph.source, tipsKey, base, navigate]);
   return (
     <div className="mb-3">
       <div
@@ -112,6 +128,19 @@ function TargetGraph({ graph, base }: { graph: Graph; base: string }) {
       >
         <GitBranchIcon />{' '}
         <strong className="wb-break-word">{graph.target}</strong>
+        {graph.landed.length > 0 && (
+          <span className="f6 color-fg-muted ml-2">
+            recently landed:{' '}
+            {graph.landed.map((l, i) => (
+              <span key={l.number}>
+                {i > 0 && ', '}
+                <Link to={`${base}/pull/${l.number}`} title={l.title}>
+                  #{l.number}
+                </Link>
+              </span>
+            ))}
+          </span>
+        )}
       </div>
       {graph.cycles.length > 0 && (
         <div className="flash flash-warn mx-3 mt-3">

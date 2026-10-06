@@ -1,5 +1,10 @@
 import { describe, expect, it } from 'vitest';
-import { decodeEntities, mermaidText, pullGraph } from './pullGraph';
+import {
+  decodeEntities,
+  mermaidText,
+  nodeTooltip,
+  pullGraph,
+} from './pullGraph';
 import type { StackDependency, StackTree } from './uiApi';
 
 type Node = StackTree['targets'][number]['nodes'][number];
@@ -250,5 +255,69 @@ describe('decodeEntities', () => {
   });
   it('leaves out-of-range codes alone', () => {
     expect(decodeEntities('&#99999999;')).toBe('&#99999999;');
+  });
+});
+
+describe('nodeTooltip', () => {
+  it('lists the basics and the state with its reasons', () => {
+    const t = nodeTooltip(
+      node(3, {
+        pullState: {
+          state: 'human_review',
+          reasons: [{ kind: 'changes_requested', flags: 2 }],
+        },
+      })
+    ).split('\n');
+    expect(t[0]).toBe('#3 PR 3');
+    expect(t[1]).toBe('branch-3 · @u');
+    expect(t[2]).toMatch(/changes requested on 2 flags/);
+  });
+
+  it('describes each dependency kind, pending, unchecked and checking', () => {
+    const t = nodeTooltip(
+      node(3, {
+        parent: dep(1, 'builds_on', { reason: 'adds the helper' }),
+        waitsOn: [
+          dep(2, 'conflicts', { reason: 'same lines' }),
+          dep(4, 'ordered_after'),
+        ],
+        mustAccountFor: [
+          dep(5, 'must_account_for', { reason: 'renames it' }),
+          dep(6, 'must_account_for', { reason: 'moves it', accounted: true }),
+        ],
+        pending: [7],
+        unchecked: [8],
+        checking: true,
+      })
+    ).split('\n');
+    expect(t).toEqual(
+      expect.arrayContaining([
+        'stacked on #1: adds the helper',
+        'waits on #2: same lines',
+        'lands after #4',
+        'must change for #5: renames it',
+        'must change for #6: moves it (accounted for)',
+        'checking #7…',
+        "couldn't check against #8",
+        'checking…',
+      ])
+    );
+  });
+
+  it('returns markup-like titles verbatim', () => {
+    expect(
+      nodeTooltip(node(1, { title: '<script>alert(1)</script>' }))
+    ).toMatch(/^#1 <script>alert\(1\)<\/script>\n/);
+  });
+
+  it('is exposed per node id, merged ones marked', () => {
+    const g = pullGraph(
+      tree({
+        branch: 'main',
+        nodes: [node(2, { parent: dep(1, 'builds_on', { landed: true }) })],
+      })
+    )[0];
+    expect(g.tips.pr2).toContain('#2 PR 2');
+    expect(g.tips.m1).toBe('#1 (merged)');
   });
 });

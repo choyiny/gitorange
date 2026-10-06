@@ -1,3 +1,4 @@
+import { reasonText, STATE_LABEL } from './pullState';
 import type { PullStateName, StackDependency, StackTree } from './uiApi';
 
 /** One Mermaid flowchart per land target: how its open pull requests are slated to land. */
@@ -6,6 +7,10 @@ export type PullGraph = {
   source: string;
   /** Open PRs that depend on each other in a circle. */
   cycles: number[];
+  /** Hover text per node id (`pr12`, `m9`), plain text. */
+  tips: Record<string, string>;
+  /** Recently landed PRs into this target. */
+  landed: { number: number; title: string }[];
 };
 
 // Kept as-is inside a quoted label; everything else becomes a Mermaid entity code (#NN;).
@@ -48,6 +53,40 @@ function truncate(s: string): string {
   return cps.length > MAX_TITLE
     ? `${cps.slice(0, MAX_TITLE - 1).join('')}…`
     : s;
+}
+
+type TipNode = StackTree['targets'][number]['nodes'][number];
+
+/** Plain-text hover details for a PR node, one item per line; set as an SVG title, never as markup. */
+export function nodeTooltip(n: TipNode): string {
+  const lines = [
+    `#${n.number} ${n.title}`,
+    `${n.headRef} · @${n.author.username}`,
+  ];
+  if (n.pullState) {
+    const why = n.pullState.reasons.map(reasonText).join('; ');
+    lines.push(`${STATE_LABEL[n.pullState.state]}${why ? `: ${why}` : ''}`);
+  }
+  const why = (d: StackDependency) => (d.reason ? `: ${d.reason}` : '');
+  const seen = new Set<number>();
+  const dep = (d: StackDependency, as: 'parent' | 'wait' | 'account') => {
+    if (seen.has(d.number)) return;
+    seen.add(d.number);
+    if (d.kind === 'ordered_after') lines.push(`lands after #${d.number}`);
+    else if (d.kind === 'must_account_for')
+      lines.push(
+        `must change for #${d.number}${why(d)}${d.accounted ? ' (accounted for)' : ''}`
+      );
+    else if (as === 'parent') lines.push(`stacked on #${d.number}${why(d)}`);
+    else lines.push(`waits on #${d.number}${why(d)}`);
+  };
+  if (n.parent) dep(n.parent, 'parent');
+  for (const d of n.waitsOn) dep(d, 'wait');
+  for (const d of n.mustAccountFor) dep(d, 'account');
+  for (const p of n.pending) lines.push(`checking #${p}…`);
+  for (const u of n.unchecked) lines.push(`couldn't check against #${u}`);
+  if (n.checking) lines.push('checking…');
+  return lines.join('\n');
 }
 
 const label = (text: string) => `["${mermaidText(text)}"]`;
@@ -101,12 +140,16 @@ export function pullGraph(tree: StackTree): PullGraph[] {
       nodeLines.push(
         `  pr${n.number}${label(`#${n.number} ${truncate(n.title)}`)}`
       );
+    const tips: Record<string, string> = {};
+    for (const n of t.nodes) tips[`pr${n.number}`] = nodeTooltip(n);
     const extra = new Set<string>();
     const idOf = (d: StackDependency) => {
       const id = d.landed ? `m${d.number}` : `pr${d.number}`;
       if (!open.has(d.number) && !extra.has(id)) {
         extra.add(id);
         const title = landedTitle.get(d.number);
+        if (d.landed)
+          tips[id] = `#${d.number}${title ? ` ${title}` : ''} (merged)`;
         nodeLines.push(
           `  ${id}${label(
             `#${d.number}${title ? ` ${truncate(title)}` : ''}${d.landed ? ' (merged)' : ''}`
@@ -173,6 +216,6 @@ export function pullGraph(tree: StackTree): PullGraph[] {
       ),
       ...styles,
     ].join('\n');
-    return { target: t.branch, source, cycles };
+    return { target: t.branch, source, cycles, tips, landed: t.landed };
   });
 }
