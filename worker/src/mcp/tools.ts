@@ -22,6 +22,7 @@ import {
 } from '../lib/repos';
 import type { SessionUser } from '../variables';
 import { McpToolError } from './errors';
+import { AGENT_TOOLS } from './agent-tools';
 import { PULL_TOOLS } from './pull-tools';
 import { MODERATOR_TOOLS } from './moderator-tools';
 import type { Moderator } from './moderators';
@@ -501,6 +502,7 @@ export const TOOL_MODULES: ToolModule[] = [
   createRepositoryTool,
   getUsage,
   ...PULL_TOOLS,
+  ...AGENT_TOOLS,
 ];
 export const TOOL_DEFINITIONS = TOOL_MODULES.map((m) => m.definition);
 /** Only for moderator connections: listed and callable after index.ts reads the moderator row on that call. */

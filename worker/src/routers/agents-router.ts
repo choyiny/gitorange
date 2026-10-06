@@ -1,5 +1,5 @@
 import { OpenAPIHono, createRoute, z } from '@hono/zod-openapi';
-import { and, eq } from 'drizzle-orm';
+import { eq } from 'drizzle-orm';
 import { requireAdmin } from '../auth/guards';
 import { repositoryAgents } from '../db/app.schema';
 import {
@@ -11,13 +11,10 @@ import {
   serializeAgent,
 } from '../agents/accounts';
 import { AVATAR_PATH } from '../agents/config';
-import { d1Of } from '../pulls/events';
+import { inviteAgent, removeAgent } from '../agents/membership';
 import { settleStates } from '../pulls/settle';
 import { autoMergeRepository } from '../review/auto-merge';
-import {
-  cancelAgentReviews,
-  MAX_AGENTS_PER_REPOSITORY,
-} from '../review/reviewers';
+import { cancelAgentReviews } from '../review/reviewers';
 import {
   findRepoById,
   gitFor,
@@ -232,48 +229,13 @@ const inviteRoute = createRoute({
 });
 repoAgentsRouter.openapi(inviteRoute, async (c) => {
   if (!c.get('perms').admin) return c.json({ error: ADMIN_ONLY }, 403);
-  const db = c.get('db');
-  const view = await agentByHandle(db, c.req.valid('param').handle);
-  if (!view || view.agent.deletedAt)
-    return c.json({ error: 'Agent not found' }, 404);
-  const repoId = c.get('repo').id;
-  // One guarded insert, so racing invitations never pass the cap.
-  const d1 = d1Of(db);
-  const { meta } = await d1
-    .prepare(
-      `INSERT INTO repository_agents (repository_id, agent_id, invited_by_id, created_at)
-       SELECT ?, ?, ?, ?
-        WHERE (SELECT COUNT(*) FROM repository_agents WHERE repository_id = ?) < ?
-       ON CONFLICT DO NOTHING`
-    )
-    .bind(
-      repoId,
-      view.agent.userId,
-      c.get('user')!.id,
-      Math.floor(Date.now() / 1000),
-      repoId,
-      MAX_AGENTS_PER_REPOSITORY
-    )
-    .run();
-  if (!meta.changes) {
-    const already = await db
-      .select({ id: repositoryAgents.agentId })
-      .from(repositoryAgents)
-      .where(
-        and(
-          eq(repositoryAgents.repositoryId, repoId),
-          eq(repositoryAgents.agentId, view.agent.userId)
-        )
-      )
-      .get();
-    if (!already)
-      return c.json(
-        {
-          error: `A repository can invite at most ${MAX_AGENTS_PER_REPOSITORY} agents. Remove one first.`,
-        },
-        400
-      );
-  }
+  const result = await inviteAgent(
+    c.get('db'),
+    c.get('repo').id,
+    c.req.valid('param').handle,
+    c.get('user')!.id
+  );
+  if (!result.ok) return c.json({ error: result.error }, result.status);
   return c.json({ ok: true as const }, 200);
 });
 
@@ -290,19 +252,13 @@ const removeRoute = createRoute({
 });
 repoAgentsRouter.openapi(removeRoute, async (c) => {
   if (!c.get('perms').admin) return c.json({ error: ADMIN_ONLY }, 403);
-  const db = c.get('db');
-  const view = await agentByHandle(db, c.req.valid('param').handle);
-  if (!view) return c.json({ error: 'Agent not found' }, 404);
-  await db
-    .delete(repositoryAgents)
-    .where(
-      and(
-        eq(repositoryAgents.repositoryId, c.get('repo').id),
-        eq(repositoryAgents.agentId, view.agent.userId)
-      )
-    );
-  await cancelAgentReviews(db, view.agent.userId, c.get('repo').id);
-  c.executionCtx.waitUntil(settleStates(c.env, db, c.get('repo').id));
-  c.executionCtx.waitUntil(autoMergeRepository(c.env, db, c.get('repo').id));
+  const result = await removeAgent(
+    c.env,
+    c.get('db'),
+    c.get('repo').id,
+    c.req.valid('param').handle,
+    (work) => c.executionCtx.waitUntil(work)
+  );
+  if (!result.ok) return c.json({ error: result.error }, result.status);
   return c.json({ ok: true as const }, 200);
 });

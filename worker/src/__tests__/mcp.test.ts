@@ -201,6 +201,11 @@ describe('MCP server', () => {
       ['gitorange_merge_pull_request', false],
       ['gitorange_request_changes_on_review_flag', false],
       ['gitorange_get_run_logs', true],
+      ['gitorange_list_agents', true],
+      ['gitorange_list_repository_agents', true],
+      ['gitorange_invite_agent', false],
+      ['gitorange_remove_agent', false],
+      ['gitorange_create_agent', false],
     ]);
     const unknown = (await (
       await rpc(t, access_token, 'resources/list')
@@ -359,7 +364,7 @@ describe('MCP server', () => {
     const res = await call(t, '/api/mcp', { cookie: admin });
     const body = (await res.json()) as { serverUrl: string; tools: unknown[] };
     expect(body.serverUrl).toBe(`${ORIGIN}/mcp`);
-    expect(body.tools).toHaveLength(13);
+    expect(body.tools).toHaveLength(18);
     expect((await call(t, '/api/mcp')).status).toBe(401);
   });
 });
