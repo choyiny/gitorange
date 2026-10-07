@@ -52,7 +52,6 @@ export async function dismissedByAgent(
     .where(
       and(
         eq(prClassifications.pullRequestId, pullRequestId),
-        eq(prReviewFlags.source, 'agent'),
         eq(prReviewFlags.kind, 'change_requested'),
         isNotNull(prReviewFlags.approvedAt),
         isNull(agents.deletedAt),

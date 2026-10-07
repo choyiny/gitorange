@@ -263,7 +263,7 @@ export async function repoInsights(
           FROM pr_review_flags f
           JOIN pr_classifications c ON c.id = f.classification_id
           JOIN pull_requests p ON p.id = c.pull_request_id
-          WHERE p.repository_id = ${repoId} AND f.source = 'agent' AND f.kind = 'change_requested'
+          WHERE p.repository_id = ${repoId} AND f.kind = 'change_requested'
             AND f.approved_at >= ${since}
           UNION ALL
           SELECT l.agent_id, 0, 1

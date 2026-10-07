@@ -211,9 +211,8 @@ export async function recordReview(
       d1
         .prepare(
           `INSERT OR IGNORE INTO pr_review_flags
-             (id, classification_id, source, key, value, paths, detail, detail_model, agent_id, kind, agent_sha,
-              created_at)
-           SELECT ?, ?, 'agent', ?, ?, ?, ?, ?, ?, ?, ?, ?
+             (id, classification_id, key, value, paths, detail, detail_model, agent_id, kind, agent_sha, created_at)
+           SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
             WHERE EXISTS (SELECT 1 FROM pr_reviewers WHERE id = ? AND status = 'reviewing' AND created_at = ?)`
         )
         .bind(

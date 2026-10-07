@@ -389,8 +389,6 @@ export const prReviewFlags = sqliteTable(
     classificationId: text('classification_id')
       .notNull()
       .references(() => prClassifications.id, { onDelete: 'cascade' }),
-    // Always 'agent'; dropped in the next migration (the old code still writes it while both are deployed).
-    source: text('source', { enum: ['agent'] }).notNull(),
     // `<agent id>:<index>`: the agent's findings in the order it gave them.
     key: text('key').notNull(),
     value: text('value', { mode: 'json' }).$type<unknown>(),
@@ -429,7 +427,6 @@ export const prReviewFlags = sqliteTable(
   (t) => [
     uniqueIndex('pr_review_flags_classification_key_uq').on(
       t.classificationId,
-      t.source,
       t.key
     ),
   ]

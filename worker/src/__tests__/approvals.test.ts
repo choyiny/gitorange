@@ -103,8 +103,8 @@ async function manyApprovals() {
       for (const key of ['a', 'b'])
         stmts.push(
           t.env.DB.prepare(
-            `INSERT INTO pr_review_flags (id, classification_id, source, key, value, paths, agent_id, kind, created_at)
-             VALUES (?, ?, 'agent', ?, '{"title":"T"}', '[]', ?, 'needs_person', ?)`
+            `INSERT INTO pr_review_flags (id, classification_id, key, value, paths, agent_id, kind, created_at)
+             VALUES (?, ?, ?, '{"title":"T"}', '[]', ?, 'needs_person', ?)`
           ).bind(`f${id}${key}`, `${id}-h`, `${agentId}:${key}`, agentId, now)
         );
       count += 2;

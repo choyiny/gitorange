@@ -149,7 +149,6 @@ async function seed(t: TestEnv, cookie: string, name = 'app') {
   ) => ({
     id: `${repo.id}-${key}`,
     classificationId: `${id(reviewPull[classification])}-${classification}`,
-    source: 'agent' as const,
     key: `${agentId}:${index}`,
     value: { title: key },
     agentId,
