@@ -592,6 +592,101 @@ export class GitService {
     );
     return commit.sha;
   }
+
+  /**
+   * Commits `files` (repository paths; null deletes) on top of `parent`, and moves `branch` there with
+   * compare-and-swap: throws GitPushError when the branch is no longer at `parent`. Returns the new commit.
+   */
+  async commitFiles(opts: {
+    branch: string;
+    parent: string;
+    files: Record<string, string | null>;
+    author: Signature;
+    committer?: Signature;
+    message: string;
+  }): Promise<string> {
+    const parent = await this.commit(opts.parent);
+    if (!parent) throw new Error('Missing commit');
+    const objects: GitObject[] = [];
+    let tree = await this.applyFiles(parent.treeHash, opts.files, objects);
+    if (!tree) {
+      const empty = await makeTree([]);
+      objects.push(empty);
+      tree = empty.sha;
+    }
+    const commit = await makeCommit({
+      tree,
+      parents: [opts.parent],
+      author: opts.author,
+      committer: opts.committer,
+      message: opts.message,
+    });
+    await this.client.push(
+      [
+        {
+          ref: `refs/heads/${opts.branch}`,
+          old: opts.parent,
+          new: commit.sha,
+        },
+      ],
+      [...objects, commit]
+    );
+    return commit.sha;
+  }
+
+  /** `treeSha` with `files` (paths relative to it) written or removed, new objects in `out`; null when empty. */
+  private async applyFiles(
+    treeSha: string | null,
+    files: Record<string, string | null>,
+    out: GitObject[]
+  ): Promise<string | null> {
+    const entries = new Map<string, TreeEntry>(
+      (treeSha ? await this.tree(treeSha) : []).map((e) => [
+        e.name,
+        { name: e.name, mode: e.mode, hash: e.hash },
+      ])
+    );
+    const dirs = new Map<string, Record<string, string | null>>();
+    for (const [path, content] of Object.entries(files)) {
+      const slash = path.indexOf('/');
+      if (slash >= 0) {
+        const name = path.slice(0, slash);
+        const sub = dirs.get(name) ?? {};
+        sub[path.slice(slash + 1)] = content;
+        dirs.set(name, sub);
+        continue;
+      }
+      const old = entries.get(path);
+      // Never a silent swap of a directory for a file (or back): that would drop everything under it.
+      if (old && isTree(old))
+        throw new Error(`${path} is a directory, not a file`);
+      if (Object.keys(files).some((p) => p.startsWith(`${path}/`)))
+        throw new Error(`${path} is written both as a file and a directory`);
+      if (content === null) {
+        entries.delete(path);
+        continue;
+      }
+      const blob = await makeBlob(content);
+      out.push(blob);
+      entries.set(path, {
+        name: path,
+        mode: old && isRegularFile(old.mode) ? old.mode : '100644',
+        hash: blob.sha,
+      });
+    }
+    for (const [name, sub] of dirs) {
+      const old = entries.get(name);
+      if (old && !isTree(old))
+        throw new Error(`${name} is a file, not a directory`);
+      const hash = await this.applyFiles(old ? old.hash : null, sub, out);
+      if (hash) entries.set(name, { name, mode: '40000', hash });
+      else entries.delete(name);
+    }
+    if (!entries.size) return null;
+    const tree = await makeTree([...entries.values()]);
+    out.push(tree);
+    return tree.sha;
+  }
 }
 
 /** Builds the tree for `files` (paths may contain directories), collecting every new object in `out`. */

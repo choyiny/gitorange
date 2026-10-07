@@ -6,6 +6,7 @@ import {
   type AgentView,
 } from '../agents/accounts';
 import { inviteAgent, removeAgent } from '../agents/membership';
+import { latestLessons, type LessonView } from '../learn/view';
 import { publishChange } from '../live/publish';
 import { McpToolError } from './errors';
 import { repoFor, repositoryProp, str, text } from './pull-tools';
@@ -22,7 +23,7 @@ const handleProp = {
     'The agent\'s handle, e.g. "securityagent" (from gitorange_list_agents).',
 };
 
-function agentJson(ctx: ToolContext, v: AgentView) {
+function agentJson(ctx: ToolContext, v: AgentView, lessons?: LessonView[]) {
   const a = serializeAgent(v);
   return {
     handle: a.username,
@@ -34,6 +35,19 @@ function agentJson(ctx: ToolContext, v: AgentView) {
     repository: a.repository,
     repository_url: a.repository ? `${ctx.baseURL}/${a.repository}` : null,
     config_error: a.configError,
+    // What it learned lately from change requests people dismissed (where the user can read the pull request).
+    ...(lessons
+      ? {
+          lessons: lessons.map((l) => ({
+            pull_request: `${l.repository}#${l.number}`,
+            status: l.status,
+            commit: l.commitSha,
+            summary: l.summary,
+            error: l.error,
+            finished_at: l.finishedAt,
+          })),
+        }
+      : {}),
   };
 }
 
@@ -58,15 +72,25 @@ const listAgentsTool: ToolModule = {
     description:
       'List the reviewer agents on this server: each one reviews pull requests in the repositories that invite ' +
       "it, when its trigger question is likely to apply to the change. Returns each agent's handle, name, bio, " +
-      'trigger and its own repository, where its AGENT.md and knowledge/ live.',
+      'trigger and its own repository, where its AGENT.md and knowledge/ live, and its latest lessons: what it ' +
+      'learned from change requests people dismissed (status, commit, summary).',
     annotations: { readOnlyHint: true, title: 'List reviewer agents' },
     inputSchema: { type: 'object', properties: {} },
   },
   handler: async (_args, ctx) => {
     const agents = await listAgents(ctx.db, ctx.user);
+    const lessons = await latestLessons(
+      ctx.db,
+      agents.map((v) => v.agent.userId),
+      ctx.user
+    );
     return {
       content: [
-        json(agents.map((v) => agentJson(ctx, v))),
+        json(
+          agents.map((v) =>
+            agentJson(ctx, v, lessons.get(v.agent.userId) ?? [])
+          )
+        ),
         ...(agents.length
           ? []
           : [text('No agents yet. A site admin creates them.')]),

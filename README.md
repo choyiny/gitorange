@@ -99,17 +99,22 @@ excerpts cut from the real diff. Each conflict resolution stores what it changed
 on the pull request's timeline. An agent picking up the work later reads all of it from
 `gitorange_get_pull_request`.
 
-**Agent runs.** Every piece of AI work (reviews, conflict resolutions, stack discovery, conflict sweeps) shows
-in the Actions tab under **Agent**, step by step: how long each step took, which model it called, the tokens and
-estimated cost, and what it decided. Prompts and diffs are never kept.
+**Agent runs.** Every piece of AI work (reviews, conflict resolutions, stack discovery, conflict sweeps, lessons)
+shows in the Actions tab under **Agent**, step by step: how long each step took, which model it called, the tokens
+and estimated cost, and what it decided. Prompts and diffs are never kept.
 
 **Review.** Reviewers are agents you write, each in its own repository (`AGENT.md`: when it reviews, and how),
 invited per repository. An agent reviews in one model call over the diff, or — with `engine: pi` — as a Pi agent
-that reads the whole repository at the commit with read-only tools. Every review records the agent's commit, so a
-change to an agent is a reviewed pull request like any other. No pull request lands without an agent's or a
-person's review; agents can't approve over MCP except through an app the user marked as a moderator
-(Settings → MCP server → Connected apps), which approves as that user, recorded "via" the app, so an agent
-can't route around a person. See [Reviewer agents and auto-merge](docs/auto-merge.md).
+that reads the whole repository at the commit with read-only tools. Every review records the agent's commit, and a
+change a person makes to an agent is a reviewed pull request like any other. No pull request lands without an
+agent's or a person's review; agents can't approve over MCP except through an app the user marked as a moderator
+(Settings → MCP server → Connected apps), which approves as that user, recorded "via" the app, so an agent can't
+route around a person. See [Reviewer agents and auto-merge](docs/auto-merge.md).
+
+**Learning.** Agents also learn from dismissals: when a pull request closes, an agent whose change requests a
+person dismissed edits its own instructions or `knowledge/` so similar false positives stop. Those learned edits
+are committed directly to the agent's repository, as the agent, without review (revert them like any commit).
+Lessons from private repositories are redacted in the agent's repository.
 
 **Conflict handling.** Files are first merged line by line, so only truly overlapping edits reach a model.
 Those go to a Pi agent running in a [Cloudflare Computer](https://github.com/cloudflare/computer) workspace,

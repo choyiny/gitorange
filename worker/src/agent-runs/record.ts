@@ -1,5 +1,5 @@
 /**
- * Records every MERGE_RESOLUTION Workflow (review, conflict resolution, stack discovery, sweep) as
+ * Records every MERGE_RESOLUTION Workflow (review, conflict resolution, stack discovery, sweep, lesson) as
  * an agent run with steps, for the Actions tab. Applied once, at the Workflow entrypoint, around the
  * step runner the executors receive.
  *
@@ -11,6 +11,7 @@
 import { landTargetOf } from '../lib/land-target';
 import { and, eq, inArray, isNull, or, sql } from 'drizzle-orm';
 import {
+  agentLessons,
   agentRuns,
   agentSteps,
   mergeResolutions,
@@ -50,7 +51,7 @@ export interface AgentRunInfo {
   title: string;
 }
 
-/** What a Workflow payload is about, for the run's row; null when its records are gone. */
+/** What a Workflow payload is about (a review, a resolution, stacking, a sweep, a lesson), for the run's row; null when its records are gone. */
 export async function describeRun(
   db: DrizzleDB,
   payload: MergeResolutionParams
@@ -140,6 +141,28 @@ export async function describeRun(
         }
       : null;
   }
+  if (payload.learn) {
+    const row = await db
+      .select({
+        handle: users.username,
+        number: pullRequests.number,
+        pullRequestId: pullRequests.id,
+        repositoryId: pullRequests.repositoryId,
+      })
+      .from(agentLessons)
+      .innerJoin(pullRequests, eq(pullRequests.id, agentLessons.pullRequestId))
+      .innerJoin(users, eq(users.id, agentLessons.agentId))
+      .where(eq(agentLessons.id, payload.learn.lessonId))
+      .get();
+    return row
+      ? {
+          kind: 'learning',
+          repositoryId: row.repositoryId,
+          pullRequestId: row.pullRequestId,
+          title: `@${row.handle ?? 'agent'} learns from #${row.number}`,
+        }
+      : null;
+  }
   if (payload.sweep)
     return {
       kind: 'sweep',
@@ -215,6 +238,30 @@ function reviewDecision(r: any): string | null {
   return 'Nothing to review: removed from the repository, or already reviewed';
 }
 
+/** A lesson's start or end (learn/run.ts LearnStart, learn/finish.ts LearnOutcome) in a line. */
+function learnDecision(r: any): string | null {
+  switch (r?.verdict) {
+    case 'started':
+      return 'Started learning';
+    case 'waiting':
+      return "Waiting: another of the agent's lessons is running";
+    case 'skipped':
+      return 'Nothing to do: already learned, or another run has it';
+    case 'dropped':
+      return 'Dropped: the agent was deleted';
+    case 'committed':
+      return typeof r.sha === 'string'
+        ? `Committed ${r.sha.slice(0, 7)}`
+        : null;
+    case 'nothing':
+      return 'Nothing to learn';
+    case 'failed':
+      return typeof r.error === 'string' ? r.error : 'Failed';
+    default:
+      return null;
+  }
+}
+
 /**
  * A decision summary from a step's result, where the result is the decision. Tolerant of shapes:
  * anything unexpected gives no summary.
@@ -278,6 +325,17 @@ export function decisionFor(name: string, result: unknown): string | null {
             .map(([h, p]) => `@${h} ${Number(p).toFixed(2)}`)
             .join(', ') || 'Clef gave no answers'
         : null;
+    case 'lesson':
+      return typeof r?.handle === 'string'
+        ? `@${r.handle}`
+        : 'The lesson is gone';
+    case 'learn':
+      return learnDecision(r);
+    case 'learn-check':
+      if (r?.state === 'running') return `Running: ${piSpend(r)}`;
+      return r?.state === 'finished' ? learnDecision(r.outcome) : null;
+    case 'next':
+      return typeof r === 'string' ? "Started the agent's next lesson" : null;
     default:
       return null;
   }
@@ -335,6 +393,20 @@ async function outcomeError(
       .get();
     return row?.status === 'failed'
       ? (row.error ?? 'The resolution failed.')
+      : null;
+  }
+  if (payload.learn) {
+    const row = await db
+      .select({
+        status: agentLessons.status,
+        error: agentLessons.error,
+        runId: agentLessons.runId,
+      })
+      .from(agentLessons)
+      .where(eq(agentLessons.id, payload.learn.lessonId))
+      .get();
+    return row?.status === 'failed' && row.runId === runId
+      ? (row.error ?? 'The lesson failed.')
       : null;
   }
   // Stack discovery and sweeps: a failed step (a pair that could not be checked) fails the run.

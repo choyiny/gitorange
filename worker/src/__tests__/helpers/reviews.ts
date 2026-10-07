@@ -16,6 +16,7 @@ import type {
   PiLimits,
   PiReviewerApi,
   PiStartRequest,
+  PiStartResult,
   PiStatus,
 } from '../../review/pi-contract';
 import { agentRepo, newAgent } from './agents';
@@ -196,17 +197,28 @@ export type FakePiAnswer =
   | { state: 'unanswered'; reason: string }
   | { state: 'missing' };
 
+/** What fakePi's objects are started with: a review's request, or (fakeLearner) a lesson's. */
+type FakePiRequest = { model: string; limits: PiLimits };
+
+/** A fake object's start, status and stop, for any request type `R`. */
+export type FakePiApi<R extends FakePiRequest = PiStartRequest> = {
+  start(request: R): Promise<PiStartResult>;
+  status(): Promise<PiStatus>;
+  stop(): Promise<void>;
+};
+
 /**
  * A scripted AgentReviewer per DO name: `answer(n, request)` is what its n-th status() reports (1-based). Each check
  * adds `turnsPerCheck` model calls (2), twice as many tool calls, 1,000 input and 100 output tokens per call.
  * Records every start (by name) and every stop; a stopped object reports `missing`. Its start returns the request's
  * model and limits (what a real DO runs with), or `effective` where given; `failStart` makes start throw after the
- * object exists (as a start step that timed out after the DO began).
+ * object exists (as a start step that timed out after the DO began). `R`: the request type (a lesson's for
+ * fakeLearner).
  */
-export function fakePi(
+export function fakePi<R extends FakePiRequest = PiStartRequest>(
   answer: (
     n: number,
-    request: PiStartRequest
+    request: R
   ) => FakePiAnswer | Promise<FakePiAnswer> = () => ({
     state: 'done',
     text: JSON.stringify(APPROVE),
@@ -221,7 +233,7 @@ export function fakePi(
   const objects = new Map<
     string,
     {
-      request: PiStartRequest;
+      request: R;
       startedAt: number;
       checks: number;
       stopped: boolean;
@@ -229,7 +241,7 @@ export function fakePi(
   >();
   const starts: string[] = [];
   const stopped: string[] = [];
-  const api = (name: string): PiReviewerApi => ({
+  const api = (name: string): FakePiApi<R> => ({
     async start(request) {
       starts.push(name);
       const o = objects.get(name) ?? {

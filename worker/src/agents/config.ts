@@ -79,6 +79,15 @@ export function parseAgentConfig(source: string): AgentConfig {
   return { ...parsed.data, instructions };
 }
 
+/**
+ * AGENT.md's front matter exactly as written: from the start of the file through the closing `---` line (and its line
+ * break), a leading byte-order mark included. Null without one. A learned edit must leave it byte-for-byte unchanged.
+ */
+export function agentFrontMatter(source: string): string | null {
+  const match = FRONTMATTER.exec(source.replace(/^﻿/, ''));
+  return match ? source.slice(0, source.length - match[2].length) : null;
+}
+
 /** AGENT.md at a commit, parsed; never throws for a missing or invalid file. */
 export async function readAgentConfig(
   git: GitService,

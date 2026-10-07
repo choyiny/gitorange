@@ -8,6 +8,7 @@ import {
   GitMergeIcon,
   GitPullRequestIcon,
   HubotIcon,
+  LightBulbIcon,
   SparkleFillIcon,
   StopwatchIcon,
   SyncIcon,
@@ -43,6 +44,7 @@ export const AGENT_KINDS: {
     icon: GitPullRequestIcon,
   },
   { kind: 'sweep', label: 'Sweep', icon: SyncIcon },
+  { kind: 'learning', label: 'Learning', icon: LightBulbIcon },
 ];
 
 export const agentKindLabel = (k: AgentRunKind) =>

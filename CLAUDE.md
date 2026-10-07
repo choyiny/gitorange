@@ -71,6 +71,13 @@ and better-auth. Git storage is **Cloudflare Artifacts**: one Artifacts repo per
   gate → checks → review. Auto-merge is on iff the repository invites ≥ 1 agent. `.orangeignore` and lockfiles stay
   out of model calls. Tests drive `executeHeadReview`/`executeReviewerRetry` with fake `AgentReviewModels`
   (`helpers/reviews.ts`). `GET /api/approvals` (`review/inbox.ts`) groups findings by agent.
+- Agent learning (`worker/src/learn/`): when a PR closes (`landPull`, the close route) `queueLessons` writes one
+  `agent_lessons` row per agent whose `change_requested` findings a person dismissed (`approved_at` set), unique per
+  (agent, PR). A `learn` payload on `MERGE_RESOLUTION` (`learn/run.ts`) claims it (one `learning` lesson per agent;
+  writes fenced on `run_id`), runs `AgentReviewer` in learn mode (`learn:<lesson id>:<attempt>`; agent repo at
+  `/agent`, write/edit only `AGENT.md`'s body and `knowledge/**`), validates (`learn/validate.ts`) and commits as the
+  agent (`GitService.commitFiles`, CAS + one retry), then starts the agent's next lesson. Limits `review.learn_*`;
+  daily `recoverLessons`. Tests drive `executeLearn` with `fakeLearner` (`helpers/lessons.ts`).
 - Agent runs (`worker/src/agent-runs/`): every `MERGE_RESOLUTION` Workflow is recorded as `agent_runs` + `agent_steps` (Actions
   tab → Agent) by one wrapper at the entrypoint (`recordAgentRun`): ids are the instance id and `<run>:<step name>` (replay-safe),
   writes never throw. Model calls land on their step via an `AsyncLocalStorage` context read by `recordAiUsage`

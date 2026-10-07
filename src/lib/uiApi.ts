@@ -404,6 +404,22 @@ export type Team = {
   name: string;
   createdAt: string;
 };
+export type LessonStatus =
+  'pending' | 'learning' | 'committed' | 'nothing' | 'failed';
+/** What an agent learned from one pull request's dismissed change requests. */
+export type Lesson = {
+  id: string;
+  repository: string;
+  number: number;
+  title: string;
+  findings: string[];
+  status: LessonStatus;
+  commitSha: string | null;
+  summary: string | null;
+  error: string | null;
+  createdAt: string;
+  finishedAt: string | null;
+};
 export type Namespace = {
   kind: 'user' | 'team';
   /** `email` is a member's account email (null for the team and agents). */
@@ -422,6 +438,7 @@ export type Namespace = {
           status: ReviewerStatus;
           createdAt: string;
         }[];
+        lessons: Lesson[];
       })
     | null;
 };
@@ -494,7 +511,7 @@ export type WorkflowJob = {
 };
 /** AI processing recorded as a run (Actions tab → Agent). */
 export type AgentRunKind =
-  'review' | 'conflict_resolution' | 'stack_discovery' | 'sweep';
+  'review' | 'conflict_resolution' | 'stack_discovery' | 'sweep' | 'learning';
 export type AgentRunStatus = 'running' | 'succeeded' | 'failed';
 export type AgentRun = {
   id: string;
@@ -618,6 +635,7 @@ export type RepoInsights = {
     passRate: number | null;
     medianTimeToGreen: Median;
   };
+  learning: { handle: string; dismissed: number; lessonsCommitted: number }[];
 };
 
 export type UsageLineStatus = 'measured' | 'unavailable' | 'not-configured';

@@ -8,6 +8,7 @@ import {
   closeOpenSteps,
 } from '../agent-runs/record';
 import { stopStaleReviews } from '../review/head';
+import { recoverLessons } from '../learn/recover';
 
 /** Runs deleted per batch, and batches per invocation (a backlog clears over several days). */
 const BATCH = 100;
@@ -24,6 +25,10 @@ export type RetentionStatus = {
   /** Reviews of a commit, and single agents' reviews, left in progress over 2 h (their Workflow died), stopped. */
   stoppedReviews?: number;
   stoppedReviewers?: number;
+  /** Lessons (agents learning from dismissed change requests): dropped, requeued, and started again. */
+  lessonsDropped?: number;
+  lessonsRequeued?: number;
+  lessonsStarted?: number;
   /** More finished runs were past the cutoff than one invocation deletes. */
   more: boolean;
 };
@@ -107,7 +112,8 @@ export async function closeStaleAgentRuns(
 /**
  * Deletes Actions runs that finished more than `actions.retention_days` ago (Site admin, default
  * 90): their step logs in R2, then the runs, whose jobs and steps cascade. Runs that are queued or
- * still running are never touched. Called daily by the Cron Trigger; records what it did.
+ * still running are never touched. Also stops stale reviews and recovers lessons (learn/recover.ts).
+ * Called daily by the Cron Trigger; records what it did.
  */
 export async function runActionsRetention(
   env: CloudflareBindings,
@@ -163,6 +169,10 @@ export async function runActionsRetention(
     console.error('[review] could not stop stale reviews', e);
     return { reviews: 0, reviewers: 0 };
   });
+  const lessons = await recoverLessons(env, db, now).catch((e: unknown) => {
+    console.error('[learn] could not recover lessons', e);
+    return null;
+  });
   const status: RetentionStatus = {
     at: now.toISOString(),
     retentionDays: days,
@@ -171,6 +181,9 @@ export async function runActionsRetention(
     closedAgentRuns: closedAgent,
     stoppedReviews: stopped.reviews,
     stoppedReviewers: stopped.reviewers,
+    lessonsDropped: lessons?.dropped,
+    lessonsRequeued: lessons?.requeued,
+    lessonsStarted: lessons?.started,
     more,
   };
   await db

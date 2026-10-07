@@ -10,6 +10,7 @@ export type AiFeature =
   | 'review-trigger'
   | 'review-agent'
   | 'review-agent-pi'
+  | 'review-agent-learn'
   | 'merge-resolution'
   | 'stack-decide'
   | 'stack-explain'

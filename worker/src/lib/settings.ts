@@ -35,6 +35,12 @@ const modelId = z
  */
 export const PI_MAX_MINUTES = 60;
 
+/**
+ * The longest a lesson (an agent learning from dismissed change requests) may run. With PI_START_SLACK_MS,
+ * PI_RECHECK_MS and PI_EXPIRE_SLACK_MS it ends well before LEARN_STALE_MS (learn/recover.ts) could requeue it.
+ */
+export const LEARN_MAX_MINUTES = 30;
+
 const whole = (min: number, max: number) => z.number().int().min(min).max(max);
 
 export const SETTINGS = {
@@ -117,6 +123,37 @@ export const SETTINGS = {
     group: 'Reviews',
     schema: whole(100_000, 50_000_000),
     default: () => 4_000_000,
+  } satisfies Definition<number>,
+  'review.learn_minutes': {
+    label: 'Learning time limit (minutes)',
+    description: `How long one lesson (an agent learning from change requests people dismissed) may run before it fails; the daily sweep tries a failed lesson once more. From 2 to ${LEARN_MAX_MINUTES} minutes.`,
+    group: 'Reviews',
+    schema: whole(2, LEARN_MAX_MINUTES),
+    default: () => 10,
+  } satisfies Definition<number>,
+  'review.learn_max_tool_calls': {
+    label: 'Learning tool calls',
+    description:
+      'File reads, searches and edits one lesson may make; past them it is told to finish. From 5 to 200.',
+    group: 'Reviews',
+    schema: whole(5, 200),
+    default: () => 30,
+  } satisfies Definition<number>,
+  'review.learn_max_model_calls': {
+    label: 'Learning model calls',
+    description:
+      'Model calls one lesson may make before it is stopped and fails. From 5 to 200.',
+    group: 'Reviews',
+    schema: whole(5, 200),
+    default: () => 30,
+  } satisfies Definition<number>,
+  'review.learn_max_input_tokens': {
+    label: 'Learning input tokens',
+    description:
+      'Input tokens, summed over the whole lesson, before it is stopped and fails. From 100,000 to 10,000,000.',
+    group: 'Reviews',
+    schema: whole(100_000, 10_000_000),
+    default: () => 1_000_000,
   } satisfies Definition<number>,
   'actions.retention_days': {
     label: 'Keep Actions runs for',

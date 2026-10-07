@@ -57,6 +57,7 @@ import { ensureHeadReview, retryHeadReview } from '../review/head';
 import { stackTreeView, stackViewFor } from '../stack/view';
 import { ensureStacking, retryFailedPairs } from '../stack/discover';
 import { dismissEdge, onPullClosed, startReconcile } from '../stack/retarget';
+import { queueLessons } from '../learn/lessons';
 import { PULL_STATES, type PullState } from '../pulls/state';
 import { pullStates, pullStateFor } from '../pulls/signals';
 import { eventsFor } from '../pulls/events';
@@ -867,9 +868,12 @@ pullsRouter.openapi(updatePullRoute, async (c) => {
     .update(pullRequests)
     .set(patch)
     .where(eq(pullRequests.id, pr.id));
-  if (patch.state === 'closed')
+  if (patch.state === 'closed') {
     // Children stacked on its branch go back to the land target; a reconcile restacks them.
     c.executionCtx.waitUntil(onPullClosed(c.env, c.get('db'), pr, 'closed'));
+    // The agents whose change requests on it were dismissed learn from them.
+    c.executionCtx.waitUntil(queueLessons(c.env, c.get('db'), pr));
+  }
   if (patch.state === 'open') {
     // A reopened PR may conflict with everything that landed while it was closed.
     const shas = await landShas(c.get('git'), pr);

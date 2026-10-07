@@ -9,7 +9,7 @@ export const INSIGHT_PERIODS = [7, 30, 90, 365] as const;
 /**
  * How pull requests fared in one repository over the last `days` days: how many were opened and
  * merged, how many GitOrange merged on its own, how often the auto-merge review needed a person,
- * AI conflict resolution, and CI on pull requests. Events count in the period they happened in
+ * AI conflict resolution, CI on pull requests, and what agents learned. Events count in the period they happened in
  * (merged → merged_at, a flag → when it was raised); "now" fields are a snapshot.
  *
  * Every number is an aggregate computed in D1 (medians with window functions), so the cost does
@@ -90,6 +90,8 @@ export type RepoInsights = {
     /** Median seconds from a pull request being opened to its first successful run. */
     medianTimeToGreen: number | null;
   };
+  /** Per agent: its change requests people dismissed in the period, and the lessons it committed from them. */
+  learning: { handle: string; dismissed: number; lessonsCommitted: number }[];
 };
 
 const n = (v: unknown) => Number(v ?? 0);
@@ -134,6 +136,7 @@ export async function repoInsights(
     resRows,
     ciRows,
     medRows,
+    learnRows,
   ] = await Promise.all([
     db.all<Row>(sql`
         SELECT
@@ -253,6 +256,23 @@ export async function repoInsights(
         SELECT metric, AVG(x) AS median FROM ranked
         WHERE rn IN ((cnt + 1) / 2, (cnt + 2) / 2)
         GROUP BY metric`),
+    db.all<{ handle: string; dismissed: number; committed: number }>(sql`
+        SELECT u.username AS handle, SUM(x.dismissed) AS dismissed, SUM(x.committed) AS committed
+        FROM (
+          SELECT f.agent_id AS agent_id, 1 AS dismissed, 0 AS committed
+          FROM pr_review_flags f
+          JOIN pr_classifications c ON c.id = f.classification_id
+          JOIN pull_requests p ON p.id = c.pull_request_id
+          WHERE p.repository_id = ${repoId} AND f.source = 'agent' AND f.kind = 'change_requested'
+            AND f.approved_at >= ${since}
+          UNION ALL
+          SELECT l.agent_id, 0, 1
+          FROM agent_lessons l
+          WHERE l.repository_id = ${repoId} AND l.status = 'committed' AND l.finished_at >= ${since}
+        ) x
+        JOIN users u ON u.id = x.agent_id
+        GROUP BY u.username
+        ORDER BY dismissed DESC, committed DESC, u.username`),
   ]);
 
   const p = pullsRows[0] ?? {};
@@ -328,5 +348,10 @@ export async function repoInsights(
       passRate: ratio(ciOk, ciOk + ciFailed),
       medianTimeToGreen: med('green'),
     },
+    learning: learnRows.map((r) => ({
+      handle: r.handle,
+      dismissed: n(r.dismissed),
+      lessonsCommitted: n(r.committed),
+    })),
   };
 }

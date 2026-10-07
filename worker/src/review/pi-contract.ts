@@ -291,6 +291,8 @@ export type PiMeta = {
   maxModelCalls: number;
   maxInputTokens: number;
   notify: PiStartRequest['notify'];
+  /** What this object runs: a review (absent, from before learn mode) or a lesson (worker/src/learn/). */
+  mode?: 'review' | 'learn';
 };
 
 /**
@@ -424,7 +426,7 @@ export function fenceToolOutput(text: string, suffix: string): string {
 }
 
 /** An absolute path with `.` and `..` resolved; null when `..` climbs above the root. */
-function normalize(path: string): string | null {
+export function normalizePath(path: string): string | null {
   const parts: string[] = [];
   for (const seg of path.split('/')) {
     if (!seg || seg === '.') continue;
@@ -449,7 +451,7 @@ export function piToolBlock(
   const raw = args.path;
   if (typeof raw !== 'string' || !raw.startsWith('/'))
     return `Pass an absolute path: ${REPO_ROOT}/... or ${REVIEW_ROOT}/...`;
-  const path = normalize(raw);
+  const path = normalizePath(raw);
   const inside =
     path !== null &&
     [REPO_ROOT, REVIEW_ROOT].some(

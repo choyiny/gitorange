@@ -214,9 +214,13 @@ function permissionsOf(
   if (!needsCollaboration(repo, user))
     return { read: true, write: true, admin: true };
   if (collaborator) return { read: true, write: true, admin: false };
-  const read = repo.teamId !== null || repo.visibility === 'internal';
-  return { read, write: false, admin: false };
+  return { read: readableByMembers(repo), write: false, admin: false };
 }
+
+/** Whether every member can read `repo`: team repositories and internal ones (not a private personal one). */
+export const readableByMembers = (
+  repo: Pick<Repository, 'teamId' | 'visibility'>
+) => repo.teamId !== null || repo.visibility === 'internal';
 
 /** SQL filter for listings; mirrors permissionsFor's read rule. */
 export function visibleTo(user: SessionUser): SQL | undefined {

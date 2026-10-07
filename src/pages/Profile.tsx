@@ -10,6 +10,7 @@ import { api, qk, type Namespace } from '@/lib/uiApi';
 import { ApiError } from '@/lib/api';
 import { useCurrentUser } from '@/lib/auth';
 import { timeAgo } from '@/lib/format';
+import { dismissedText, LESSON_STATUS, lessonNote } from '@/lib/lessons';
 import { Header } from '@/components/Header';
 import { Avatar } from '@/components/Avatar';
 import { REVIEWER_STATUS } from '@/components/ReviewersBox';
@@ -209,6 +210,44 @@ function AgentAbout({ agent }: { agent: NonNullable<Namespace['agent']> }) {
                 <span className="color-fg-muted">· {timeAgo(r.createdAt)}</span>
               </li>
             ))}
+          </ul>
+        </>
+      )}
+      {agent.lessons.length > 0 && (
+        <>
+          <div className="f6 text-bold mt-3 mb-1">Learning</div>
+          <ul className="list-style-none f6">
+            {agent.lessons.map((l) => {
+              const note = lessonNote(l);
+              const sha = note?.kind === 'commit' ? note.sha : null;
+              return (
+                <li key={l.id} className="mb-2">
+                  <Link to={`/${l.repository}/pull/${l.number}`}>
+                    {l.repository}#{l.number}
+                  </Link>{' '}
+                  <span className={LESSON_STATUS[l.status].className}>
+                    {LESSON_STATUS[l.status].label}
+                  </span>{' '}
+                  <span className="color-fg-muted">
+                    · {timeAgo(l.finishedAt ?? l.createdAt)}
+                  </span>
+                  <div className="color-fg-muted wb-break-word">
+                    {dismissedText(l.findings)}
+                  </div>
+                  {sha &&
+                    (agent.repository ? (
+                      <Link to={`/${agent.repository}/commit/${sha}`}>
+                        <code>{sha.slice(0, 7)}</code>
+                      </Link>
+                    ) : (
+                      <code>{sha.slice(0, 7)}</code>
+                    ))}
+                  {note?.kind === 'text' && (
+                    <div className="wb-break-word">{note.text}</div>
+                  )}
+                </li>
+              );
+            })}
           </ul>
         </>
       )}

@@ -17,9 +17,17 @@ import { workersAiStackModels } from '../stack/models';
 import { recordAgentRun } from '../agent-runs/record';
 import { settleAfterPayload } from '../pulls/settle';
 import { executeReconcile, type ReconcileParams } from '../stack/reconcile';
+import type { LearnerApi } from '../learn/contract';
+import { executeLearn } from '../learn/run';
 
 type PayloadKey =
-  'resolutionId' | 'sweep' | 'stack' | 'reconcile' | 'headReview' | 'reviewer';
+  | 'resolutionId'
+  | 'sweep'
+  | 'stack'
+  | 'reconcile'
+  | 'headReview'
+  | 'reviewer'
+  | 'learn';
 /** Exactly one payload key is set. */
 type Only<K extends PayloadKey, V> = { [P in K]: V } & {
   [P in Exclude<PayloadKey, K>]?: undefined;
@@ -33,11 +41,13 @@ export type MergeResolutionParams =
   /** Review one head commit with the repository's agents. */
   | Only<'headReview', { id: string }>
   /** Retry one agent's failed review (pr_reviewers.id). */
-  | Only<'reviewer', { id: string }>;
+  | Only<'reviewer', { id: string }>
+  /** Learn from one lesson: an agent's dismissed change requests on a closed pull request (agent_lessons.id). */
+  | Only<'learn', { lessonId: string }>;
 
 /**
- * MERGE_RESOLUTION: runs an AI resolution attempt, an auto-merge review, a conflict sweep, stacking discovery, or a
- * stack reconcile.
+ * MERGE_RESOLUTION: runs an AI resolution attempt, an auto-merge review, a conflict sweep, stacking discovery, a
+ * stack reconcile, or a lesson.
  */
 export class MergeResolutionWorkflow extends WorkflowEntrypoint<
   CloudflareBindings,
@@ -135,6 +145,20 @@ export class MergeResolutionWorkflow extends WorkflowEntrypoint<
           ),
         },
         p.reconcile
+      );
+    } else if (p.learn) {
+      const binding = (this.env as Partial<CloudflareBindings>).AGENT_REVIEWER;
+      await executeLearn(
+        {
+          env: this.env,
+          db,
+          step: runner,
+          learner: binding
+            ? (name: string) => binding.getByName(name) as unknown as LearnerApi
+            : undefined,
+          instanceId: event.instanceId,
+        },
+        p.learn.lessonId
       );
     } else {
       await executeResolution(

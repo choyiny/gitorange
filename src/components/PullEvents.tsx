@@ -5,12 +5,14 @@ import {
   CheckIcon,
   DotFillIcon,
   GitBranchIcon,
+  LightBulbIcon,
   ShieldCheckIcon,
   XIcon,
 } from '@primer/octicons-react';
 import type { PullEvent, PullReason } from '@/lib/uiApi';
 import { blocking, reasonText } from '@/lib/pullState';
 import { timeAgo } from '@/lib/format';
+import { learnedPhrase, learnedText } from '@/lib/lessons';
 import { PullStateLabel } from './PullStateLabel';
 
 const num = (v: unknown) => (typeof v === 'number' ? v : null);
@@ -155,6 +157,26 @@ export function PullEventItem({
         {e.actor ? <strong>{e.actor.username}</strong> : 'A former user'}{' '}
         withdrew their approval of{' '}
         <code>{(str(d.head_sha) ?? '').slice(0, 7)}</code>
+        {when}
+      </Row>
+    );
+  }
+  if (e.kind === 'learned') {
+    const sha = str(d.sha) ?? '';
+    const handle = str(d.handle) ?? 'agent';
+    const repository = str(d.repository);
+    const findings = num(d.findings) ?? 0;
+    const short = <code>{sha.slice(0, 7)}</code>;
+    return (
+      <Row icon={<LightBulbIcon />}>
+        <span title={learnedText(handle, findings, sha)}>
+          <strong>@{handle}</strong> {learnedPhrase(findings)} ·{' '}
+          {repository && sha ? (
+            <Link to={`/${repository}/commit/${sha}`}>{short}</Link>
+          ) : (
+            short
+          )}
+        </span>
         {when}
       </Row>
     );

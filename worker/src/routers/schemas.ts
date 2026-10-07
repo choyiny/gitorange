@@ -1,4 +1,5 @@
 import { z } from '@hono/zod-openapi';
+import { lessonStatuses } from '../db/app.schema';
 import { PULL_STATES, REASON_KINDS } from '../pulls/state';
 
 export const publicUserSchema = z
@@ -121,3 +122,20 @@ export const prEventSchema = z
     createdAt: z.string(),
   })
   .openapi('PullEvent');
+
+/** What an agent learned from one pull request's dismissed change requests (learn/view.ts LessonView). */
+export const lessonSchema = z
+  .object({
+    id: z.string(),
+    repository: z.string(),
+    number: z.number(),
+    title: z.string(),
+    findings: z.array(z.string()),
+    status: z.enum(lessonStatuses),
+    commitSha: z.string().nullable(),
+    summary: z.string().nullable(),
+    error: z.string().nullable(),
+    createdAt: z.string(),
+    finishedAt: z.string().nullable(),
+  })
+  .openapi('AgentLesson');

@@ -1,4 +1,5 @@
 import { DurableObject } from 'cloudflare:workers';
+import { and, eq } from 'drizzle-orm';
 import { drizzle } from 'drizzle-orm/d1';
 import { Workspace, type DurableObjectStorageLike } from '@cloudflare/computer';
 import { createPiTools } from '@cloudflare/computer/tools/pi-ai';
@@ -14,8 +15,29 @@ import {
 import { PiHarness } from 'agents/harness/pi';
 import { Lifecycle } from 'agents/lifecycle';
 import { createAI } from 'agents/models/pi-ai';
-import { prReviewers } from '../db/app.schema';
+import { AGENT_PATH } from '../agents/config';
+import { agentLessons, prReviewers } from '../db/app.schema';
 import { schema } from '../db/schema';
+import { makeBlob } from '../git/objects';
+import {
+  LEARN_ROOT,
+  LEARN_TOOLS,
+  learnAnswerProblem,
+  learnedChanges,
+  learnEditProblem,
+  learnNudge,
+  learnStartMeta,
+  learnSystemPrompt,
+  learnToolBlock,
+  learnToolBudgetSpent,
+  learnUserPrompt,
+  learnWriteTarget,
+  type LearnedFiles,
+  type LearnerApi,
+  type LearnStartRequest,
+} from '../learn/contract';
+import { lessonAttempt } from '../learn/lessons';
+import { KNOWLEDGE_DIR } from '../learn/validate';
 import { aiGateway } from '../lib/ai-gateway';
 import { gitForName } from '../lib/repos';
 import { checkoutHead, notCheckedOutText } from './checkout';
@@ -79,6 +101,55 @@ const abortedOrAfter = (signal: AbortSignal | undefined, ms: number) =>
 
 const dirOf = (abs: string) => abs.split('/').slice(0, -1).join('/') || '/';
 
+/**
+ * Which workspace tools a run gets and how they are guarded: a review's read-only set, or a lesson's read set plus
+ * write and edit, each write checked after it ran (`written`) and undone with the problem as its answer.
+ */
+type ToolMode = {
+  names: readonly string[];
+  readonly: boolean;
+  block: (name: string, args: Record<string, unknown>) => string | null;
+  budgetSpent: (maxToolCalls: number) => string;
+  /** Tools that must not run twice on replay (an edit applied again would fail or apply twice). */
+  unsafe?: readonly string[];
+  written?: {
+    root: string;
+    /** The file a call writes, relative to `root`; null when it writes nothing. */
+    target: (name: string, args: Record<string, unknown>) => string | null;
+    /** Why what it wrote must be undone (file text before and after; null: absent), or null. */
+    problem: (
+      target: string,
+      before: string | null,
+      after: string | null
+    ) => string | null;
+  };
+};
+
+const REVIEW_TOOLS: ToolMode = {
+  names: PI_TOOLS,
+  readonly: true,
+  block: piToolBlock,
+  budgetSpent: piToolBudgetSpent,
+};
+
+const LEARN_TOOL_MODE: ToolMode = {
+  names: LEARN_TOOLS,
+  readonly: false,
+  block: learnToolBlock,
+  budgetSpent: learnToolBudgetSpent,
+  unsafe: ['edit'],
+  written: {
+    root: LEARN_ROOT,
+    target: learnWriteTarget,
+    problem: learnEditProblem,
+  },
+};
+
+/** A Workspace error for a path that isn't there. */
+const isMissing = (e: unknown) =>
+  e instanceof Error &&
+  ['ENOENT', 'ENOTDIR'].includes(String((e as { code?: unknown }).code));
+
 /** A final answer's text (pi's assistant message: text, thinking and tool-call parts). */
 function answerText(message: { content: readonly unknown[] }): string {
   return message.content
@@ -102,10 +173,13 @@ function aiSettings(env: CloudflareBindings) {
  * as untrusted. Only the final answer's text and counts ever leave this object; `stop` (or the `expire` job,
  * PI_EXPIRE_SLACK_MS after the wall clock ends) deletes everything it stored, the transcript included, leaving only a
  * tombstone (`stopped`) that makes a late start do nothing, itself deleted PI_TOMBSTONE_MS later.
+ *
+ * In learn mode (`startLearning`, instance `learn:<lesson id>:<attempt>`) it checks out an agent's repository under
+ * /agent instead and Pi may edit AGENT.md's instructions and knowledge/ (learn/contract.ts).
  */
 export class AgentReviewer
   extends DurableObject<CloudflareBindings>
-  implements PiReviewerApi
+  implements PiReviewerApi, LearnerApi
 {
   readonly ai = createAI(aiSettings(this.env));
   readonly workspace = new Workspace({
@@ -146,6 +220,8 @@ export class AgentReviewer
     () => this.ctx.storage.get<number>('toolCalls'),
     (n) => this.ctx.storage.put('toolCalls', n)
   );
+  /** Learn mode's writes run one at a time, so each one's before/after check sees only its own change. */
+  private writes: Promise<unknown> = Promise.resolve();
 
   constructor(ctx: DurableObjectState, env: CloudflareBindings) {
     super(ctx, env);
@@ -169,66 +245,115 @@ export class AgentReviewer
     return (await this.ctx.storage.get<PiUsage>('usage')) ?? PI_NO_USAGE;
   }
 
-  /** The Workspace's read-only file tools as pi-durable tools: guarded, budgeted, every text result fenced. */
-  private tools(meta: PiMeta): ToolRegistration[] {
+  /**
+   * The Workspace's file tools as pi-durable tools, for a review (read-only) or a lesson (`mode`): guarded, budgeted,
+   * every text result fenced. A write that `mode.written` finds a problem with is undone and refused.
+   */
+  private tools(meta: PiMeta, mode: ToolMode): ToolRegistration[] {
     const { tools, execute } = createPiTools({
       workspace: this.workspace,
-      readonly: true,
+      readonly: mode.readonly,
+    });
+    const refuse = (text: string) => ({
+      content: [{ type: 'text' as const, text }],
+      isError: true,
     });
     return tools
-      .filter((t) => (PI_TOOLS as readonly string[]).includes(t.name))
+      .filter((t) => mode.names.includes(t.name))
       .map((tool): ToolRegistration => ({
         name: tool.name,
         description: tool.description,
         parameters: tool.parameters as never,
-        replay: 'safe',
+        replay: mode.unsafe?.includes(tool.name) ? 'unsafe' : 'safe',
         execute: async (args, api, context) => {
-          const blocked = piToolBlock(
-            tool.name,
-            (args ?? {}) as Record<string, unknown>
-          );
-          if (blocked)
-            return {
-              content: [{ type: 'text', text: blocked }],
-              isError: true,
-            };
+          const a = (args ?? {}) as Record<string, unknown>;
+          const blocked = mode.block(tool.name, a);
+          if (blocked) return refuse(blocked);
           if (!(await this.toolCalls.take(meta.maxToolCalls)))
-            return {
-              content: [
-                { type: 'text', text: piToolBudgetSpent(meta.maxToolCalls) },
-              ],
-              isError: true,
-            };
-          const { content, isError } = await execute(
-            { id: api.callId, name: tool.name, arguments: args },
-            { abortSignal: context.abortSignal }
-          );
+            return refuse(mode.budgetSpent(meta.maxToolCalls));
+          const run = () =>
+            execute(
+              { id: api.callId, name: tool.name, arguments: args },
+              { abortSignal: context.abortSignal }
+            );
+          const target = mode.written?.target(tool.name, a) ?? null;
+          const result =
+            mode.written && target !== null
+              ? await this.checkedWrite(mode.written, target, run)
+              : await run();
+          if ('refused' in result) return refuse(result.refused);
           // Text only (the file tools return no images), and all of it fenced.
           return {
-            content: content.flatMap((c) =>
+            content: result.content.flatMap((c) =>
               c.type === 'text'
                 ? [{ ...c, text: fenceToolOutput(c.text, meta.suffix) }]
                 : []
             ),
-            isError,
+            isError: result.isError,
           };
         },
       }));
   }
 
+  /** Runs one write (after the writes before it), then undoes it if `written.problem` objects. */
+  private checkedWrite<T extends { isError: boolean }>(
+    written: NonNullable<ToolMode['written']>,
+    target: string,
+    run: () => Promise<T>
+  ): Promise<T | { refused: string }> {
+    const abs = `${written.root}/${target}`;
+    const next = this.writes.then(async () => {
+      const before = await this.readText(abs);
+      const result = await run();
+      if (result.isError) return result;
+      const problem = written.problem(target, before, await this.readText(abs));
+      if (!problem) return result;
+      if (before === null) await this.workspace.fs.rm(abs, { force: true });
+      else await this.workspace.fs.writeFile(abs, before);
+      return { refused: problem };
+    });
+    this.writes = next.catch(() => undefined);
+    return next;
+  }
+
+  /** A regular file's text; null when nothing (or a directory) is there. */
+  private async readText(abs: string): Promise<string | null> {
+    try {
+      const stat = await this.workspace.fs.lstat(abs);
+      if (!stat.isFile) return null;
+      return await this.workspace.fs.readFile(abs, 'utf8');
+    } catch (e) {
+      if (isMissing(e)) return null;
+      throw e;
+    }
+  }
+
+  /**
+   * Learn mode's tools: read, ls, find and grep over /agent, write and edit for /agent/AGENT.md and
+   * /agent/knowledge/** (learnToolBlock). A write or edit that changed AGENT.md's front matter or left a file over
+   * 64 KB is undone and refused. Public for tests.
+   */
+  learnTools(meta: PiMeta): ToolRegistration[] {
+    return this.tools(meta, LEARN_TOOL_MODE);
+  }
+
   private install(meta: PiMeta) {
     if (this.installed) return;
     this.installed = true;
+    const learning = meta.mode === 'learn';
     this.registry.install({
-      name: 'reviewer',
+      name: learning ? 'learner' : 'reviewer',
       sections: [
         {
           key: 'preamble',
-          render: () => piSystemPrompt(meta.handle, meta.maxToolCalls),
+          render: () =>
+            learning
+              ? learnSystemPrompt(meta.handle, meta.maxToolCalls)
+              : piSystemPrompt(meta.handle, meta.maxToolCalls),
           tag: false,
         },
       ],
-      tools: this.tools(meta),
+      tools: learning ? this.learnTools(meta) : this.tools(meta, REVIEW_TOOLS),
       hooks: [
         // This object caps its own spend: every response is counted, and the request that would pass the limits
         // aborts the run instead. pi swallows a hook's error unless the invocation is aborted, so the abort comes
@@ -285,20 +410,22 @@ export class AgentReviewer
             return undefined;
           },
         }),
-        // An answer that doesn't meet the contract goes back with what is wrong (bounded); a usable one settles the
-        // run, and the Workflow hears about it.
+        // An answer that doesn't meet the contract (a review's JSON, a lesson's summary) goes back with what is
+        // wrong (bounded); a usable one settles the run, and the Workflow hears about it.
         hook(GenerationTask, {
           onYield: async (answer) => {
-            const problem = piAnswerProblem(
-              answerText(answer),
-              meta.changedPaths
-            );
+            const text = answerText(answer);
+            const problem = learning
+              ? learnAnswerProblem(text)
+              : piAnswerProblem(text, meta.changedPaths);
             if (problem) {
               const nudges =
                 (await this.ctx.storage.get<number>('nudges')) ?? 0;
               if (nudges < PI_MAX_NUDGES) {
                 await this.ctx.storage.put('nudges', nudges + 1);
-                return { continue: piNudge(problem) };
+                return {
+                  continue: learning ? learnNudge(problem) : piNudge(problem),
+                };
               }
             }
             this.ctx.waitUntil(this.notifySettled());
@@ -352,12 +479,57 @@ export class AgentReviewer
     return row !== undefined;
   }
 
-  private async startOnce(request: PiStartRequest): Promise<PiStartResult> {
+  private startOnce(request: PiStartRequest): Promise<PiStartResult> {
+    return this.launch({
+      wanted: () => this.stillWanted(request),
+      meta: (draft) => piStartMeta(request, draft, Date.now(), randomHex),
+      checkout: async (meta) => {
+        const gate = this.gate;
+        const git = gitForName(this.env, request.repository.artifactsName);
+        const checkout = await checkoutHead(
+          git,
+          request.headSha,
+          {
+            first: meta.changedPaths,
+            ignored: ignoreMatcher(request.ignoreText),
+          },
+          async (path, text) => {
+            gate.check();
+            const abs = `${REPO_ROOT}/${path}`;
+            await this.workspace.fs.mkdir(dirOf(abs), { recursive: true });
+            await this.workspace.fs.writeFile(abs, text);
+          }
+        );
+        gate.check();
+        await this.workspace.fs.mkdir(REVIEW_ROOT, { recursive: true });
+        await this.workspace.fs.writeFile(
+          NOT_CHECKED_OUT_PATH,
+          notCheckedOutText(checkout)
+        );
+        return piUserPrompt(request.input, meta.suffix, {
+          headSha: request.headSha,
+          files: checkout.files,
+          skipped: checkout.skipped.length + (checkout.truncated ? 1 : 0),
+        });
+      },
+    });
+  }
+
+  /**
+   * What a review's and a lesson's start share: the tombstone and `wanted` checks, joining an earlier start, the
+   * draft/meta, the expiry job and the one operation. `checkout` fills the workspace and returns the first prompt.
+   */
+  private async launch(run: {
+    wanted: () => Promise<boolean>;
+    /** The run's meta: an earlier start's draft, else a fresh one. */
+    meta: (draft: PiMeta | undefined) => PiMeta;
+    checkout: (meta: PiMeta) => Promise<string>;
+  }): Promise<PiStartResult> {
     const gate = this.gate;
     // Stopped before, maybe by an instance since evicted: a late start (a retried or replayed step) does nothing.
     if ((await this.stopped()) !== undefined) return PI_START_STOPPED;
     // Cancelled, superseded or retried since the Workflow read the row: stop whatever ran, start nothing.
-    if (!(await this.stillWanted(request))) {
+    if (!(await run.wanted())) {
       gate.stop();
       await this.halt();
       return PI_START_STOPPED;
@@ -367,35 +539,10 @@ export class AgentReviewer
     if (existing) return piStartResult(existing);
     // Stored before the checkout: the tag and the clock are chosen once (a start that died after submitting sent a
     // prompt naming this tag, and its clock started then), and a stop during the checkout finds something to wipe.
-    const meta = piStartMeta(
-      request,
-      await this.draft(),
-      Date.now(),
-      randomHex
-    );
+    const meta = run.meta(await this.draft());
     gate.check();
     await this.ctx.storage.put('draft', meta);
-    const git = gitForName(this.env, request.repository.artifactsName);
-    const checkout = await checkoutHead(
-      git,
-      request.headSha,
-      {
-        first: meta.changedPaths,
-        ignored: ignoreMatcher(request.ignoreText),
-      },
-      async (path, text) => {
-        gate.check();
-        const abs = `${REPO_ROOT}/${path}`;
-        await this.workspace.fs.mkdir(dirOf(abs), { recursive: true });
-        await this.workspace.fs.writeFile(abs, text);
-      }
-    );
-    gate.check();
-    await this.workspace.fs.mkdir(REVIEW_ROOT, { recursive: true });
-    await this.workspace.fs.writeFile(
-      NOT_CHECKED_OUT_PATH,
-      notCheckedOutText(checkout)
-    );
+    const prompt = await run.checkout(meta);
     gate.check();
     this.install(meta);
     await this.harness.session().setModel(this.ai(meta.model as never));
@@ -408,19 +555,108 @@ export class AgentReviewer
     });
     // The same operation id: a start retried after this line joins the same run.
     gate.check();
-    await this.harness.submit(
-      piUserPrompt(request.input, meta.suffix, {
-        headSha: request.headSha,
-        files: checkout.files,
-        skipped: checkout.skipped.length + (checkout.truncated ? 1 : 0),
-      }),
-      { operationId: PI_OPERATION }
-    );
+    await this.harness.submit(prompt, { operationId: PI_OPERATION });
     // Last: a start that died before this line checks out and submits again (both idempotent).
     gate.check();
     await this.ctx.storage.put('meta', meta);
     this.ctx.waitUntil(this.notifySettled());
     return piStartResult(meta);
+  }
+
+  startLearning(request: LearnStartRequest): Promise<PiStartResult> {
+    if (this.gate.stopped) return Promise.resolve(PI_START_STOPPED);
+    return this.gate.run(() => this.startLearningOnce(request));
+  }
+
+  /** The lesson is still learning under the run (and attempt) that sent this request. */
+  private async lessonWanted(request: LearnStartRequest): Promise<boolean> {
+    const row = await drizzle(this.env.DB, { schema })
+      .select({ id: agentLessons.id })
+      .from(agentLessons)
+      .where(
+        and(
+          lessonAttempt(request.lessonId, request.runId),
+          eq(agentLessons.attempts, request.attempt)
+        )
+      )
+      .get();
+    return row !== undefined;
+  }
+
+  /**
+   * A lesson's start: the agent's repository at `baseSha` goes to /agent (nothing ignored), and the blob SHA of every
+   * learnable file written is kept (`baseline`) for learned().
+   */
+  private startLearningOnce(
+    request: LearnStartRequest
+  ): Promise<PiStartResult> {
+    return this.launch({
+      wanted: () => this.lessonWanted(request),
+      meta: (draft) => learnStartMeta(request, draft, Date.now(), randomHex),
+      checkout: async (meta) => {
+        const gate = this.gate;
+        const git = gitForName(this.env, request.agentRepository.artifactsName);
+        const baseline: Record<string, string> = {};
+        const checkout = await checkoutHead(
+          git,
+          request.baseSha,
+          { first: [AGENT_PATH], ignored: () => false },
+          async (path, text) => {
+            gate.check();
+            const abs = `${LEARN_ROOT}/${path}`;
+            await this.workspace.fs.mkdir(dirOf(abs), { recursive: true });
+            await this.workspace.fs.writeFile(abs, text);
+            if (path === AGENT_PATH || path.startsWith(`${KNOWLEDGE_DIR}/`))
+              baseline[path] = (await makeBlob(text)).sha;
+          }
+        );
+        gate.check();
+        await this.ctx.storage.put('baseline', baseline);
+        return learnUserPrompt(request.input, meta.suffix, {
+          baseSha: request.baseSha,
+          files: checkout.files,
+          skipped: checkout.skipped.length + (checkout.truncated ? 1 : 0),
+        });
+      },
+    });
+  }
+
+  private async filesUnder(dir: string): Promise<string[]> {
+    let entries;
+    try {
+      entries = await this.workspace.fs.readdir(dir);
+    } catch (e) {
+      if (isMissing(e)) return [];
+      throw e;
+    }
+    const out: string[] = [];
+    for (const entry of entries) {
+      const abs = `${dir}/${entry.name}`;
+      if (entry.isDirectory) out.push(...(await this.filesUnder(abs)));
+      else if (entry.isFile) out.push(abs);
+    }
+    return out;
+  }
+
+  /** Learn mode: AGENT.md and knowledge/ files that differ from the checkout (never the transcript). */
+  async learned(): Promise<LearnedFiles> {
+    const meta = await this.meta();
+    if (meta?.mode !== 'learn') return { files: {} };
+    const baseline =
+      (await this.ctx.storage.get<Record<string, string>>('baseline')) ?? {};
+    const current: Record<string, { sha: string; text: string }> = {};
+    const add = async (abs: string) => {
+      const text = await this.readText(abs);
+      if (text !== null)
+        current[abs.slice(LEARN_ROOT.length + 1)] = {
+          sha: (await makeBlob(text)).sha,
+          text,
+        };
+    };
+    await add(`${LEARN_ROOT}/${AGENT_PATH}`);
+    for (const abs of await this.filesUnder(`${LEARN_ROOT}/${KNOWLEDGE_DIR}`))
+      await add(abs);
+    return { files: learnedChanges(baseline, current) };
   }
 
   async status(): Promise<PiStatus> {

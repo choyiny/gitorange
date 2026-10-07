@@ -138,7 +138,8 @@ function MergeSplit({ data }: { data: Insights }) {
 }
 
 function Report({ data, base }: { data: Insights; base: string }) {
-  const { pulls, reviews, flags, resolutions, ci, timeToMerge } = data;
+  const { pulls, reviews, flags, resolutions, ci, timeToMerge, learning } =
+    data;
   const ciFinished = ci.succeeded + ci.failed;
   return (
     <>
@@ -265,6 +266,46 @@ function Report({ data, base }: { data: Insights; base: string }) {
           ) : (
             <div className="Box-row color-fg-muted">
               No flags raised in this period.
+            </div>
+          )}
+        </Section>
+
+        <Section title="Agents learning">
+          {learning.length ? (
+            <>
+              <div
+                className="Box-row py-2 d-flex f6 color-fg-muted"
+                style={{ gap: 12 }}
+              >
+                <span className="flex-1">Agent</span>
+                <span style={{ width: 72 }} className="text-right">
+                  Dismissed
+                </span>
+                <span style={{ width: 64 }} className="text-right">
+                  Lessons
+                </span>
+              </div>
+              {learning.map((a) => (
+                <div
+                  key={a.handle}
+                  className="Box-row py-2 d-flex flex-items-baseline"
+                  style={{ gap: 12 }}
+                >
+                  <span className="flex-1 min-width-0">
+                    <Link to={`/${a.handle}`}>@{a.handle}</Link>
+                  </span>
+                  <span style={{ width: 72 }} className="text-right text-bold">
+                    {a.dismissed}
+                  </span>
+                  <span style={{ width: 64 }} className="text-right">
+                    {a.lessonsCommitted}
+                  </span>
+                </div>
+              ))}
+            </>
+          ) : (
+            <div className="Box-row color-fg-muted">
+              No change requests were dismissed in this period.
             </div>
           )}
         </Section>

@@ -528,6 +528,74 @@ export const mcpModerators = sqliteTable(
   ]
 );
 
+// ── Agent learning ───────────────────────────────────────────────────────────
+
+export const lessonStatuses = [
+  'pending',
+  'learning',
+  'committed',
+  'nothing',
+  'failed',
+] as const;
+export type LessonStatus = (typeof lessonStatuses)[number];
+
+// One lesson per (agent, pull request): the agent's change requests on that pull request that a person dismissed,
+// learned from once the pull request closed (merged or not). Written at close, before its run starts, so a second
+// close or a retried step never learns twice. A run claims it (pending → learning) with its MERGE_RESOLUTION instance
+// id in run_id, which fences every write of that run; at most one lesson of an agent is learning at a time.
+export const agentLessons = sqliteTable(
+  'agent_lessons',
+  {
+    id: text('id').primaryKey(),
+    agentId: text('agent_id')
+      .notNull()
+      .references(() => agents.userId, { onDelete: 'cascade' }),
+    pullRequestId: text('pull_request_id')
+      .notNull()
+      .references(() => pullRequests.id, { onDelete: 'cascade' }),
+    // The pull request's repository: the agent run's repository, and Insights.
+    repositoryId: text('repository_id')
+      .notNull()
+      .references(() => repositories.id, { onDelete: 'cascade' }),
+    // pr_review_flags ids: the agent's change_requested findings a person dismissed, oldest first.
+    findingIds: text('finding_ids', { mode: 'json' })
+      .$type<string[]>()
+      .notNull(),
+    status: text('status', { enum: lessonStatuses }).notNull(),
+    // The MERGE_RESOLUTION instance that claimed it; null while pending.
+    runId: text('run_id'),
+    // Runs started (each claim adds one); names the learner object `learn:<id>:<attempts>`.
+    attempts: integer('attempts').notNull().default(0),
+    // Failed only: the daily sweep may try once more (a model, tool or limit failure; never a rejected edit).
+    retryable: integer('retryable', { mode: 'boolean' })
+      .notNull()
+      .default(false),
+    // The agent repository's default-branch commit the run learned from.
+    baseSha: text('base_sha'),
+    commitSha: text('commit_sha'),
+    // The learner's 2–4 line summary (committed, or why there was nothing to learn).
+    summary: text('summary'),
+    error: text('error'),
+    createdAt: integer('created_at', { mode: 'timestamp' }).notNull(),
+    startedAt: integer('started_at', { mode: 'timestamp' }),
+    finishedAt: integer('finished_at', { mode: 'timestamp' }),
+  },
+  (t) => [
+    uniqueIndex('agent_lessons_agent_pr_uq').on(t.agentId, t.pullRequestId),
+    // At most one lesson of an agent learning at a time (the claim checks first; this makes it a rule).
+    uniqueIndex('agent_lessons_one_learning_uq')
+      .on(t.agentId)
+      .where(sql`status = 'learning'`),
+    // The profile's Learning section, and an agent's next pending lesson.
+    index('agent_lessons_agent_created_idx').on(t.agentId, t.createdAt),
+    // The daily sweep.
+    index('agent_lessons_status_idx').on(t.status),
+    // Insights: lessons committed in a repository.
+    index('agent_lessons_repo_finished_idx').on(t.repositoryId, t.finishedAt),
+  ]
+);
+export type AgentLesson = typeof agentLessons.$inferSelect;
+
 // ── Stacking ─────────────────────────────────────────────────────────────────
 
 export type EdgeKind =
@@ -620,7 +688,9 @@ export type PrEventKind =
   | 'dismissed'
   // A person approved a head commit (Decision 22), or withdrew that approval.
   | 'approved'
-  | 'withdrawn';
+  | 'withdrawn'
+  // An agent committed what it learned from this pull request's dismissed change requests.
+  | 'learned';
 
 export const prEvents = sqliteTable(
   'pr_events',
@@ -643,6 +713,7 @@ export const prEvents = sqliteTable(
         'dismissed',
         'approved',
         'withdrawn',
+        'learned',
       ],
     }).notNull(),
     // state_changed: the state it changed to.
@@ -830,6 +901,7 @@ export const agentRunKinds = [
   'conflict_resolution',
   'stack_discovery',
   'sweep',
+  'learning',
 ] as const;
 export type AgentRunKind = (typeof agentRunKinds)[number];
 export const agentRunStatuses = ['running', 'succeeded', 'failed'] as const;

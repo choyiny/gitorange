@@ -8,7 +8,13 @@ import { getTeam, teamNamespace, userNamespace, visibleTo } from '../lib/repos';
 import type { AppEnv } from '../variables';
 import { serializeRepo } from './repos-router';
 import { recentReviews } from '../review/reviewers';
-import { agentSchema, publicUserSchema, repoSchema } from './schemas';
+import { recentLessons } from '../learn/view';
+import {
+  agentSchema,
+  lessonSchema,
+  publicUserSchema,
+  repoSchema,
+} from './schemas';
 import {
   agentByUserId,
   invitedRepositories,
@@ -149,6 +155,8 @@ const namespaceRoute = createRoute({
                 createdAt: z.string(),
               })
             ),
+            /** What it learned from change requests people dismissed, newest first, where the viewer can see them. */
+            lessons: z.array(lessonSchema),
           })
           .nullable(),
       }),
@@ -219,6 +227,7 @@ namespacesRouter.openapi(namespaceRoute, async (c) => {
           (r) => serializeRepo(r.repo, r.namespace)
         ),
         recentReviews: await recentReviews(db, agentRow.userId, viewer),
+        lessons: await recentLessons(db, agentRow.userId, viewer),
       }
     : null;
   return c.json(

@@ -39,7 +39,7 @@ import {
 export const piTimeUp = (limits: PiLimits) =>
   `The Pi review ran out of time (${limits.wallClockMs / 60_000} minutes).`;
 /** How every budget message begins, the DO's (piLimitReached) and the Workflow's. */
-const PI_BUDGET_PREFIX = 'The Pi review used up its budget';
+export const PI_BUDGET_PREFIX = 'The Pi review used up its budget';
 export const piBudgetSpent = (limits: PiLimits) =>
   `${PI_BUDGET_PREFIX} (${limits.maxModelCalls} model calls or ${limits.maxInputTokens.toLocaleString('en-US')} input tokens).`;
 /**
@@ -115,7 +115,7 @@ async function endReviewer(
 }
 
 /** A check reads D1 and asks the DO: short, retried. */
-const PI_CHECK_RETRIES: WorkflowStepConfig = {
+export const PI_CHECK_RETRIES: WorkflowStepConfig = {
   retries: { limit: 3, delay: '10 seconds', backoff: 'exponential' },
   timeout: '2 minutes',
 };
@@ -205,9 +205,7 @@ export async function startPiReview(
   };
 }
 
-export type PiCheck =
-  | { state: 'running'; turns: number; toolCalls: number; durationMs: number }
-  | { state: 'finished'; outcome: ReviewOutcome };
+export type PiCheck = AwaitedCheck<ReviewOutcome>;
 
 /** A Pi check that found the review still running changed nothing on screen: pingingSteps' `quiet`. */
 export const quietPiCheck = (name: string, result: unknown) =>
@@ -404,11 +402,46 @@ export async function checkPiReview(
   );
 }
 
+/** A check of a running Pi run (a review or a lesson): still running, with its spend, or finished with `outcome`. */
+export type AwaitedCheck<O> =
+  | { state: 'running'; turns: number; toolCalls: number; durationMs: number }
+  | { state: 'finished'; outcome: O };
+
 /**
- * Waits for a started Pi review to end: the DO's event, or PI_RECHECK, then a check, until a check ends it. A check
- * past the wall clock ends it; so does the bound on checks, `piChecks(limits)` (which covers the wall clock when no
- * event comes early) plus PI_EXTRA_CHECKS.
+ * Waits for a started Pi run (a review, or a lesson) to end: its object's event `type`, or PI_RECHECK, then a check
+ * step, until a check ends it. Steps are named `<wait>:<i>` and `<check>:<i>`. A check past the wall clock ends it;
+ * so does the bound on checks, `piChecks(limits)` (which covers the wall clock when no event comes early) plus
+ * PI_EXTRA_CHECKS: `run(last)` is told when it is the last.
  */
+export async function awaitChecks<O>(
+  step: StepRunner,
+  o: {
+    wait: string;
+    check: string;
+    type: string;
+    limits: PiLimits;
+    run: (last: boolean) => Promise<AwaitedCheck<O>>;
+  }
+): Promise<O> {
+  for (let i = 1; ; i++) {
+    const wait = `${o.wait}:${i}`;
+    if (!step.waitForEvent) await step.sleep(wait, PI_RECHECK_MS);
+    else
+      try {
+        await step.waitForEvent(wait, { type: o.type, timeout: PI_RECHECK });
+      } catch (e) {
+        // Timed out: check anyway. Any other failure (no event support): wait the interval out instead, so checks
+        // never run back to back and the last one never ends a run early.
+        if (!isWaitTimeout(e)) await step.sleep(`${wait}:sleep`, PI_RECHECK_MS);
+      }
+    const check = await step.do(`${o.check}:${i}`, PI_CHECK_RETRIES, () =>
+      o.run(i >= piChecks(o.limits) + PI_EXTRA_CHECKS)
+    );
+    if (check.state === 'finished') return check.outcome;
+  }
+}
+
+/** Waits for a started Pi review to end (awaitChecks: `pi-wait:<handle>:<i>`, `pi:<handle>:<i>`). */
 export async function awaitPiReview(
   deps: PiDeps,
   step: StepRunner,
@@ -416,26 +449,11 @@ export async function awaitPiReview(
   started: PiStarted
 ): Promise<ReviewOutcome> {
   const { handle, reviewerId } = ctx.reviewer;
-  const type = piEventType(reviewerId, started.generation);
-  for (let i = 1; ; i++) {
-    const wait = `pi-wait:${handle}:${i}`;
-    if (!step.waitForEvent) await step.sleep(wait, PI_RECHECK_MS);
-    else
-      try {
-        await step.waitForEvent(wait, { type, timeout: PI_RECHECK });
-      } catch (e) {
-        // Timed out: check anyway. Any other failure (no event support): wait the interval out instead, so checks
-        // never run back to back and the last one never ends a review early.
-        if (!isWaitTimeout(e)) await step.sleep(`${wait}:sleep`, PI_RECHECK_MS);
-      }
-    const check = await step.do(`pi:${handle}:${i}`, PI_CHECK_RETRIES, () =>
-      checkPiReview(
-        deps,
-        ctx,
-        started,
-        i >= piChecks(started.limits) + PI_EXTRA_CHECKS
-      )
-    );
-    if (check.state === 'finished') return check.outcome;
-  }
+  return awaitChecks(step, {
+    wait: `pi-wait:${handle}`,
+    check: `pi:${handle}`,
+    type: piEventType(reviewerId, started.generation),
+    limits: started.limits,
+    run: (last) => checkPiReview(deps, ctx, started, last),
+  });
 }

@@ -1,5 +1,6 @@
 import { and, eq, ne, or } from 'drizzle-orm';
 import { settleStates } from '../pulls/settle';
+import { queueLessons } from '../learn/lessons';
 import { publishChange } from '../live/publish';
 import type { DrizzleDB } from '../db/middleware';
 import {
@@ -296,6 +297,8 @@ export async function landPull(opts: {
   // Auto-merges happen in the background.
   opts.after(publishChange(env, pr.repositoryId, { approvals: true }));
   opts.after(settleStates(env, db, pr.repositoryId));
+  // The agents whose change requests on it were dismissed learn from them (worker/src/learn/).
+  opts.after(queueLessons(env, db, pr));
   // Children stacked on its branch go back to the land target; a reconcile restacks them. Only then is the
   // branch free to delete.
   opts.after(

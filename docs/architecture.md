@@ -9,20 +9,21 @@ GitOrange is one Cloudflare Worker backed by D1, Artifacts, and R2, with Actions
 
 The diagram's source is [`diagrams/architecture.html`](diagrams/architecture.html) (light) and [`diagrams/architecture-dark.html`](diagrams/architecture-dark.html) (dark); the PNGs are 2× screenshots of them.
 
-| Concern                                                                                   | Where it lives                                                                                                                                                                                                       |
-| ----------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Git objects and refs (branches, commits, files)                                           | **Cloudflare Artifacts** — one Artifacts repo per GitOrange repository                                                                                                                                               |
-| Users, sessions, invitations, access tokens, repository metadata, pull requests, comments | **D1**                                                                                                                                                                                                               |
-| Invitation emails                                                                         | **Cloudflare Email Sending**                                                                                                                                                                                         |
-| Git LFS file contents                                                                     | **R2**, one object per repository and oid; D1's `lfs_objects` records which objects each repository has                                                                                                              |
-| Actions runs, jobs, and steps                                                             | **D1** (`workflow_runs`, `workflow_jobs`, `workflow_steps`); step logs in **R2**; jobs run in **Cloudflare Containers**                                                                                              |
-| OAuth clients, consents, tokens, and signing keys for the MCP server                      | **D1**, in better-auth's generated tables (`oauth_*`, `jwkss`)                                                                                                                                                       |
-| Reviews                                                                                   | **D1** (`pr_classifications` per head commit, `pr_reviewers`, `pr_review_flags`, `pr_approvals`); runs on **Workflows** and **Workers AI** (GLM-5.3-flash, Clef, GLM-5.3)                                            |
-| AI merge resolutions                                                                      | **D1** (`merge_resolutions`); resolved commits on `refs/resolutions/*` in **Artifacts**; transcripts in **R2**; runs on **Workflows**, **Durable Objects** (Cloudflare Computer + Pi Durable), and **Workers AI**    |
-| Pi reviews (`engine: pi`)                                                                 | **D1** (`pr_reviewers`, `pr_review_flags`, `ai_usage`); one `AgentReviewer` **Durable Object** per attempt (Cloudflare Computer workspace + Pi Durable), deleted when the review ends; **Workers AI**; nothing in R2 |
-| Reviewer agents                                                                           | **D1** (`agents`, `repository_agents`); each agent's `AGENT.md`, `avatar.png` and `knowledge/` in its own **Artifacts** repository                                                                                   |
-| Live updates                                                                              | One **Durable Object** (`LiveHub`, hibernating WebSockets); stores nothing                                                                                                                                           |
-| Web interface                                                                             | React SPA in `src/`, served from the same Worker via the `ASSETS` binding                                                                                                                                            |
+| Concern                                                                                   | Where it lives                                                                                                                                                                                                                |
+| ----------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Git objects and refs (branches, commits, files)                                           | **Cloudflare Artifacts** — one Artifacts repo per GitOrange repository                                                                                                                                                        |
+| Users, sessions, invitations, access tokens, repository metadata, pull requests, comments | **D1**                                                                                                                                                                                                                        |
+| Invitation emails                                                                         | **Cloudflare Email Sending**                                                                                                                                                                                                  |
+| Git LFS file contents                                                                     | **R2**, one object per repository and oid; D1's `lfs_objects` records which objects each repository has                                                                                                                       |
+| Actions runs, jobs, and steps                                                             | **D1** (`workflow_runs`, `workflow_jobs`, `workflow_steps`); step logs in **R2**; jobs run in **Cloudflare Containers**                                                                                                       |
+| OAuth clients, consents, tokens, and signing keys for the MCP server                      | **D1**, in better-auth's generated tables (`oauth_*`, `jwkss`)                                                                                                                                                                |
+| Reviews                                                                                   | **D1** (`pr_classifications` per head commit, `pr_reviewers`, `pr_review_flags`, `pr_approvals`); runs on **Workflows** and **Workers AI** (GLM-5.3-flash, Clef, GLM-5.3)                                                     |
+| AI merge resolutions                                                                      | **D1** (`merge_resolutions`); resolved commits on `refs/resolutions/*` in **Artifacts**; transcripts in **R2**; runs on **Workflows**, **Durable Objects** (Cloudflare Computer + Pi Durable), and **Workers AI**             |
+| Pi reviews (`engine: pi`)                                                                 | **D1** (`pr_reviewers`, `pr_review_flags`, `ai_usage`); one `AgentReviewer` **Durable Object** per attempt (Cloudflare Computer workspace + Pi Durable), deleted when the review ends; **Workers AI**; nothing in R2          |
+| Reviewer agents                                                                           | **D1** (`agents`, `repository_agents`); each agent's `AGENT.md`, `avatar.png` and `knowledge/` in its own **Artifacts** repository                                                                                            |
+| Agent learning                                                                            | **D1** (`agent_lessons`, the `learned` event in `pr_events`, `ai_usage`); the `AgentReviewer` **Durable Object** in learn mode, one per lesson attempt; each learned edit is a commit in the agent's **Artifacts** repository |
+| Live updates                                                                              | One **Durable Object** (`LiveHub`, hibernating WebSockets); stores nothing                                                                                                                                                    |
+| Web interface                                                                             | React SPA in `src/`, served from the same Worker via the `ASSETS` binding                                                                                                                                                     |
 
 Nothing about git content is copied into D1. The repository page, history, and diffs are read from Artifacts on each request.
 
@@ -208,6 +209,28 @@ fails (including its start step) stops the object and records what it spent. The
 text and counts, never the transcript, and deletes all its storage when the Workflow stops it, or by itself 15
 minutes after its wall clock ends. Without the `AGENT_REVIEWER` binding, `engine: pi` agents review as a single
 pass, noted on the review.
+
+Agents learn from dismissals ([`worker/src/learn/`](../worker/src/learn/)). When a pull request closes (`landPull`, or
+the close route), `queueLessons` writes one `agent_lessons` row per agent whose `change_requested` findings on any of
+its commits a person dismissed (`approved_at` set), unique per (agent, pull request), so a reopen and second close
+learn nothing new. A `learn` payload on `MERGE_RESOLUTION` ([`learn/run.ts`](../worker/src/learn/run.ts)) claims the
+lesson (`pending → learning`; at most one learning lesson per agent, enforced by the claim and a partial unique index;
+every later write fenced on the claiming instance's `run_id`) and starts the `AgentReviewer` in learn mode, named
+`learn:<lesson id>:<attempt>` (a stopped object is tombstoned, so a retry needs a new name). It checks the agent
+repository out at its tip under `/agent`, with read, ls, find and grep over `/agent` and write and edit only for
+`/agent/AGENT.md` and `/agent/knowledge/**`; an edit that changes `AGENT.md`'s front matter or leaves a file over
+64 KB is undone. The dismissed findings (title, recorded detail with its diff excerpts, files, commit, who dismissed
+them) are fenced as untrusted. Limits: `review.learn_minutes` (10, 2–30), `review.learn_max_tool_calls` (30),
+`review.learn_max_model_calls` (30), `review.learn_max_input_tokens` (1,000,000); model `ai.review_pi_model`. On an
+answer the Worker reads the changed files back (`learned()`), validates them
+([`learn/validate.ts`](../worker/src/learn/validate.ts): only `AGENT.md` and `knowledge/**`, text, 64 KB a file,
+20 KB of changed lines in all, `AGENT.md` parses with byte-identical front matter) and commits them as the agent with
+`GitService.commitFiles` (compare-and-swap from the base; when the branch moved, once more from the new tip only if
+none of the edited files moved with it). The push refreshes `agents.config_sha`, so the next review reads it; the
+pull request's timeline gets a `learned` event. A model, tool or limit failure is retried once by the daily
+`recoverLessons` (which also requeues lessons stuck learning for 2 hours and drops those of deleted agents); a
+rejected edit is not. The profile lists lessons, `gitorange_list_agents` returns the latest three, Insights counts
+dismissals and lessons per agent, and the Actions tab records each lesson as a `learning` run.
 
 ## Access model
 

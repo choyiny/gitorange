@@ -75,6 +75,13 @@ const insightsSchema = z
       passRate: share,
       medianTimeToGreen: seconds,
     }),
+    learning: z.array(
+      z.object({
+        handle: z.string(),
+        dismissed: z.number(),
+        lessonsCommitted: z.number(),
+      })
+    ),
   })
   .openapi('RepoInsights');
 

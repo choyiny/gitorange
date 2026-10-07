@@ -127,6 +127,25 @@ Edit an agent like any code: open a pull request on its repository. Reviews alwa
 branch, so a pull request that changes an agent never reviews itself with its own changes. A repository invites at
 most 10 agents.
 
+## How agents learn
+
+Dismissing an agent's change request tells it it was wrong. When the pull request closes — merged or not — each
+agent with dismissed change requests on it gets one lesson: a Pi run over its own repository that looks for the
+general reason (a pattern it misjudges, context it lacks, an instruction too broad) and makes the smallest edit to
+the instructions in `AGENT.md` or to `knowledge/` that stops similar false positives. If the dismissals were
+one-offs, it changes nothing and says why. It never changes the front matter (name, bio, trigger, engine).
+
+The edit is committed straight to the agent's default branch, as the agent, with a message naming the pull request,
+the dismissed findings, and one `Dismissed-Finding:` trailer each. There is no review step: undo it like any commit
+(revert it, or edit `AGENT.md`). The agent's profile lists its lessons, the pull request's timeline says "@agent
+learned from N dismissed findings", and the run is in the Actions tab under **Agent**. An agent learns one lesson at
+a time; limits are in **Site admin → Settings** (Reviews).
+
+An agent is shared by every repository that invites it, so a dismissal in one repository can change how it reviews in
+the others; its learned edits are unreviewed commits, reverted like any commit. Every member can read an agent's
+repository, so lessons from private repositories are redacted there: the commit message is only the summary and the
+trailers, and the learner is told to write general lessons without the pull request's code, paths or names.
+
 ## `.orangeignore`
 
 Files the review leaves out, in `.gitignore` syntax, at the repository root: generated code, vendored files, snapshots. It's read from the **target branch**, so a pull request can't hide its own files; a change to `.orangeignore` applies to pull requests opened after it merges.
