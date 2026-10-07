@@ -239,20 +239,17 @@ export function Flag({
             <div className="mt-2 review-flag-detail">
               <Markdown source={f.detail} />
             </div>
+          ) : investigating ? (
+            <div
+              className="f6 color-fg-muted mt-1 d-flex flex-items-center"
+              style={{ gap: 6 }}
+            >
+              <Spinner size={12} /> Looking into this…
+            </div>
           ) : (
-            f.source !== 'limit' &&
-            (investigating ? (
-              <div
-                className="f6 color-fg-muted mt-1 d-flex flex-items-center"
-                style={{ gap: 6 }}
-              >
-                <Spinner size={12} /> Looking into this…
-              </div>
-            ) : (
-              <div className="f6 color-fg-muted mt-1">
-                No further detail: the review model didn&apos;t answer.
-              </div>
-            ))
+            <div className="f6 color-fg-muted mt-1">
+              No further detail: the review model didn&apos;t answer.
+            </div>
           )}
           {changes && (
             <div className="flash flash-error mt-2 f6">

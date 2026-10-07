@@ -331,8 +331,7 @@ export const instanceSettings = sqliteTable('instance_settings', {
 
 // ── Reviews ──────────────────────────────────────────────────────────────────
 // One review per PR head commit (id `<pull request id>-<head sha>`): its one-liners and status; its agents are
-// pr_reviewers rows, their findings pr_review_flags. Rows with other ids are review.yml reviews from before reviewer
-// agents (history).
+// pr_reviewers rows, their findings pr_review_flags.
 
 export type FileSummary = {
   path: string;
@@ -365,18 +364,9 @@ export const prClassifications = sqliteTable(
       .notNull()
       .references(() => pullRequests.id, { onDelete: 'cascade' }),
     headSha: text('head_sha').notNull(),
-    // summarizing → triggering (Clef) → reviewing (agents) → done | failed. classifying/investigating: review.yml
-    // reviews before reviewer agents (historical rows only).
+    // summarizing → triggering (Clef) → reviewing (agents) → done | failed.
     status: text('status', {
-      enum: [
-        'summarizing',
-        'triggering',
-        'reviewing',
-        'done',
-        'failed',
-        'classifying',
-        'investigating',
-      ],
+      enum: ['summarizing', 'triggering', 'reviewing', 'done', 'failed'],
     }).notNull(),
     summaryModel: text('summary_model').notNull(),
     classifierModel: text('classifier_model').notNull(),
@@ -387,8 +377,7 @@ export const prClassifications = sqliteTable(
     finishedAt: integer('finished_at', { mode: 'timestamp' }),
   },
   (t) => [
-    // Not unique: historical review.yml rows may share a (pull request, head); the head review's id
-    // `<pull request id>-<head sha>` keeps one review per head.
+    // The id `<pull request id>-<head sha>` keeps one review per head.
     index('pr_classifications_pr_head_idx').on(t.pullRequestId, t.headSha),
   ]
 );
@@ -400,9 +389,9 @@ export const prReviewFlags = sqliteTable(
     classificationId: text('classification_id')
       .notNull()
       .references(() => prClassifications.id, { onDelete: 'cascade' }),
-    // agent: a reviewer agent's finding. question/limit: review.yml flags (historical).
-    source: text('source', { enum: ['question', 'limit', 'agent'] }).notNull(),
-    // The question id, or the limit's name.
+    // Always 'agent'; dropped in the next migration (the old code still writes it while both are deployed).
+    source: text('source', { enum: ['agent'] }).notNull(),
+    // `<agent id>:<index>`: the agent's findings in the order it gave them.
     key: text('key').notNull(),
     value: text('value', { mode: 'json' }).$type<unknown>(),
     paths: text('paths', { mode: 'json' }).$type<string[]>().notNull(),
@@ -430,7 +419,7 @@ export const prReviewFlags = sqliteTable(
       onDelete: 'set null',
     }),
     // needs_person: a person approves it. change_requested: the PR's agent changes it (a person may dismiss it,
-    // which sets approved_*). Historical review.yml flags are needs_person.
+    // which sets approved_*).
     kind: text('kind', { enum: ['needs_person', 'change_requested'] })
       .notNull()
       .default('needs_person'),

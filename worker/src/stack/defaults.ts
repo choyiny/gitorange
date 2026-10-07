@@ -1,4 +1,4 @@
-/** Stacking's tuning: built in (it was review.yml's `stacking:` section). */
+/** Stacking's tuning, built in. */
 export const STACKING_DEFAULTS = {
   /** Check a pull request against this many open ones; beyond it, only those sharing a file. */
   max_open: 20,

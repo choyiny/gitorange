@@ -312,19 +312,12 @@ function Report({ data, base }: { data: Insights; base: string }) {
 function flag(rows: Insights['flags']['byKind']) {
   return rows.map((f) => (
     <div
-      key={`${f.source}:${f.key}`}
+      key={f.key}
       className="Box-row py-2 d-flex flex-items-baseline"
       style={{ gap: 12 }}
     >
       <span className="flex-1 min-width-0" style={{ overflowWrap: 'anywhere' }}>
-        {f.source === 'agent' ? (
-          <Link to={`/${f.key}`}>{f.title}</Link>
-        ) : (
-          f.title
-        )}
-        {f.source !== 'agent' && f.title !== f.key && (
-          <div className="f6 color-fg-muted text-mono">{f.key}</div>
-        )}
+        <Link to={`/${f.key}`}>{f.title}</Link>
       </span>
       <span style={{ width: 56 }} className="text-right text-bold">
         {f.raised}

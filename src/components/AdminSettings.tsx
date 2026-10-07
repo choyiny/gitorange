@@ -159,8 +159,8 @@ function SettingRow({
 }
 
 /**
- * Instance settings in Site admin: values that used to need a wrangler var and a deploy. Each
- * shows its default (from the deploy's config, or built in) and can be reset to it.
+ * Instance settings in Site admin: values a site admin changes without a deploy. Each shows its
+ * default (from the deploy's config, or built in) and can be reset to it.
  */
 export function AdminSettings() {
   const qc = useQueryClient();

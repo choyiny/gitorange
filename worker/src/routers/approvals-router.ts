@@ -44,7 +44,6 @@ const itemSchema = z.object({
       flags: z.array(
         z.object({
           id: z.string(),
-          source: z.enum(['question', 'limit', 'agent']),
           kind: z.enum(['needs_person', 'change_requested']),
           title: z.string(),
           paths: z.array(z.string()),

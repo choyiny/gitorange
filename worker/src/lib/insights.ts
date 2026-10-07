@@ -2,7 +2,6 @@ import { and, eq, sql } from 'drizzle-orm';
 import type { DrizzleDB } from '../db/middleware';
 import { pullRequests, type Repository } from '../db/app.schema';
 import { NO_MODEL } from '../merge/resolution';
-import { flagTitleOf } from '../review/gate';
 import { branchTips } from '../review/inbox';
 
 export const INSIGHT_PERIODS = [7, 30, 90, 365] as const;
@@ -62,9 +61,8 @@ export type RepoInsights = {
     /** Findings for a person still waiting on one (the Approvals rule), right now. */
     pendingNow: number;
     pendingPullsNow: number;
-    /** By agent, or by retired review.yml question or limit. */
+    /** By agent: `key` is its username, `title` its @-mention. */
     byKind: {
-      source: 'question' | 'limit' | 'agent';
       key: string;
       title: string;
       raised: number;
@@ -167,20 +165,19 @@ export async function repoInsights(
         JOIN pull_requests p ON p.id = c.pull_request_id
         WHERE p.repository_id = ${repoId} AND c.created_at >= ${since}`),
     db.all<{
-      source: 'question' | 'limit' | 'agent';
       key: string;
       raised: number;
       approved: number;
     }>(sql`
-        SELECT f.source AS source, COALESCE(u.username, f.key) AS key, COUNT(*) AS raised,
+        SELECT COALESCE(u.username, f.key) AS key, COUNT(*) AS raised,
           SUM(f.approved_at IS NOT NULL) AS approved
         FROM pr_review_flags f
         JOIN pr_classifications c ON c.id = f.classification_id
         JOIN pull_requests p ON p.id = c.pull_request_id
-        LEFT JOIN users u ON f.source = 'agent' AND u.id = f.agent_id
+        LEFT JOIN users u ON u.id = f.agent_id
         WHERE p.repository_id = ${repoId} AND f.created_at >= ${since}
-        GROUP BY f.source, COALESCE(u.username, f.key)
-        ORDER BY raised DESC, f.source, key`),
+        GROUP BY COALESCE(u.username, f.key)
+        ORDER BY raised DESC, key`),
     // Same rule as the Approvals inbox: findings for a person on the review of an open pull request's branch tip,
     // from an agent that is still invited and has them outstanding (flagged or changes requested).
     db.all<Row>(sql`
@@ -192,13 +189,13 @@ export async function repoInsights(
           AND rv.agent_id = f.agent_id AND rv.requested = 1
           AND rv.status IN ('flagged', 'changes_requested')
         WHERE p.repository_id = ${repoId} AND p.state = 'open' AND f.approved_at IS NULL
-          AND f.source = 'agent' AND f.kind = 'needs_person'
+          AND f.kind = 'needs_person'
           AND EXISTS (SELECT 1 FROM repository_agents ra
                       WHERE ra.repository_id = p.repository_id AND ra.agent_id = f.agent_id)
           AND (c.id IN (SELECT value FROM json_each(${headReviews}))
                OR (${newestFallback} = 1
                    AND c.id = (SELECT c2.id FROM pr_classifications c2
-                               WHERE c2.pull_request_id = p.id AND c2.id = p.id || '-' || c2.head_sha
+                               WHERE c2.pull_request_id = p.id
                                ORDER BY c2.created_at DESC LIMIT 1)))`),
     db.all<Row>(sql`
         SELECT
@@ -308,12 +305,8 @@ export async function repoInsights(
       pendingNow: n(pending.flags),
       pendingPullsNow: n(pending.pulls),
       byKind: flagRows.map((f) => ({
-        source: f.source,
         key: f.key,
-        title:
-          f.source === 'agent'
-            ? `@${f.key}`
-            : flagTitleOf({ source: f.source, key: f.key, value: null }),
+        title: `@${f.key}`,
         raised: n(f.raised),
         approved: n(f.approved),
       })),

@@ -100,8 +100,7 @@ the header shows how many): agents' findings for a person, grouped by agent, fai
 that need a person's approval, and conflicts AI couldn't resolve. Pages update live as reviews progress. `GET
 /api/approvals?limit=&cursor=` returns one page as `{ items, count, nextCursor }`, where `count` covers every page.
 
-`.gitorange/review.yml`, which used to configure review, is ignored. Commits reviewed under it before reviewer
-agents keep their flags as history.
+An old `.gitorange/review.yml` does nothing: invite reviewer agents instead.
 
 ## Writing an agent
 

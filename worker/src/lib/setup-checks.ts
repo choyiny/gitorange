@@ -765,8 +765,8 @@ function variableChecks(ctx: Ctx): SetupCheck[] {
 
   for (const [v, use, example] of [
     ['RESOLVER_MODEL', 'AI conflict resolution', '@cf/zai-org/glm-5.3'],
-    ['SUMMARY_MODEL', 'auto-merge file summaries', '@cf/zai-org/glm-5.3-flash'],
-    ['REVIEW_MODEL', 'auto-merge flag investigations', '@cf/zai-org/glm-5.3'],
+    ['SUMMARY_MODEL', 'review file summaries', '@cf/zai-org/glm-5.3-flash'],
+    ['REVIEW_MODEL', 'agent reviews and stacking', '@cf/zai-org/glm-5.3'],
   ] as const) {
     const value = (env[v] ?? '').trim();
     const ok = /^@cf\/[^/\s]+\/[^/\s]+$/.test(value);

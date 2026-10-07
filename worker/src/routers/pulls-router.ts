@@ -540,7 +540,6 @@ function serializeResolution(
 const reviewFlagSchema = z
   .object({
     id: z.string(),
-    source: z.enum(['question', 'limit', 'agent']),
     kind: z.enum(['needs_person', 'change_requested']),
     title: z.string(),
     paths: z.array(z.string()),
@@ -562,15 +561,7 @@ const reviewSchema = z
     headSha: z.string(),
     agentsInvited: z.boolean(),
     status: z
-      .enum([
-        'summarizing',
-        'triggering',
-        'reviewing',
-        'done',
-        'failed',
-        'classifying',
-        'investigating',
-      ])
+      .enum(['summarizing', 'triggering', 'reviewing', 'done', 'failed'])
       .nullable(),
     errorMessage: z.string().nullable(),
     summaryModel: z.string().nullable(),
@@ -604,10 +595,6 @@ const reviewSchema = z
         flags: z.array(reviewFlagSchema),
       })
     ),
-    /** A review.yml review of this commit from before reviewer agents (history). */
-    legacy: z
-      .object({ createdAt: z.string(), flags: z.array(reviewFlagSchema) })
-      .nullable(),
     /** Requested agents' reviews of this pull request's earlier head commits, newest first (at most 50); history. */
     earlier: z.array(
       z.object({

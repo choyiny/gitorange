@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { drizzle } from 'drizzle-orm/d1';
 import { eq } from 'drizzle-orm';
 import { schema } from '../db/schema';
-import { prClassifications, pullRequests } from '../db/app.schema';
+import { pullRequests } from '../db/app.schema';
 import {
   executeHeadReview,
   executeReviewerRetry,
@@ -257,40 +257,6 @@ describe('the reviewer Workflow', () => {
     expect(usage.results).toEqual([
       { classification_id: headReviewId(pr.id, head) },
     ]);
-  });
-  it('stops a review.yml review a Workflow started before reviewer agents', async () => {
-    const { t, admin, repo } = await appRepo();
-    const { head } = await openPull(t, admin, repo, CHANGE);
-    const { db, pr } = await pullOne(t);
-    await db.insert(prClassifications).values({
-      id: 'legacy',
-      pullRequestId: pr.id,
-      headSha: head,
-      status: 'summarizing',
-      summaryModel: 'm',
-      classifierModel: 'clef',
-      createdAt: new Date(),
-    });
-    const workflow = Object.assign(
-      Object.create(MergeResolutionWorkflow.prototype),
-      { env: t.env }
-    ) as MergeResolutionWorkflow;
-    await workflow.run(
-      {
-        payload: { classificationId: 'legacy' },
-        instanceId: 'review-legacy',
-        timestamp: new Date(),
-      } as never,
-      step as never
-    );
-    expect(
-      await t.env.DB.prepare(
-        "SELECT status, error_message AS error FROM pr_classifications WHERE id = 'legacy'"
-      ).first()
-    ).toEqual({
-      status: 'failed',
-      error: 'Reviews moved to reviewer agents.',
-    });
   });
 });
 

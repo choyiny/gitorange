@@ -131,32 +131,44 @@ async function seed(t: TestEnv, cookie: string, name = 'app') {
     c5a: 5,
     c5b: 5,
   };
+  // The admin's user row stands in for an agent; lintbot is a second one, no longer invited.
+  const bot = `${repo.id}-lintbot`;
+  await db.insert(users).values({
+    id: bot,
+    name: 'Lint bot',
+    email: `${bot}@test.local`,
+    username: 'lintbot',
+  });
   const flag = (
     key: string,
     classification: string,
-    source: 'question' | 'limit',
-    flagKey: string,
+    agentId: string,
+    index: number,
     ago: number,
     approvedAfter?: number
   ) => ({
     id: `${repo.id}-${key}`,
     classificationId: `${id(reviewPull[classification])}-${classification}`,
-    source,
-    key: flagKey,
+    source: 'agent' as const,
+    key: `${agentId}:${index}`,
+    value: { title: key },
+    agentId,
+    kind: 'needs_person' as const,
     paths: [],
     createdAt: at(ago),
     ...(approvedAfter !== undefined
       ? { approvedById: admin.id, approvedAt: at(ago - approvedAfter) }
       : {}),
   });
-  // The admin's user row stands in for an agent.
-  await db.insert(agents).values({
-    userId: admin.id,
-    name: 'Stand-in',
-    triggerAsk: 'Anything?',
-    triggerAbove: 0.5,
-    createdAt: at(30 * DAY),
-  });
+  await db.insert(agents).values(
+    [admin.id, bot].map((userId) => ({
+      userId,
+      name: 'Stand-in',
+      triggerAsk: 'Anything?',
+      triggerAbove: 0.5,
+      createdAt: at(30 * DAY),
+    }))
+  );
   await db
     .insert(repositoryAgents)
     .values({ repositoryId: repo.id, agentId: admin.id, createdAt: at(DAY) });
@@ -172,17 +184,12 @@ async function seed(t: TestEnv, cookie: string, name = 'app') {
   // #5's branch is at its newer reviewed commit.
   t.fake.repos.get(repo.artifactsName)!.refs.set('refs/heads/f5', 'c5b');
   await db.insert(prReviewFlags).values([
-    flag('f1', 'c2', 'question', 'security', 5 * DAY, HOUR),
-    flag('f2', 'c2', 'limit', 'max_files', 5 * DAY, 3 * HOUR),
-    flag('f3', 'c5a', 'question', 'security', 2 * DAY),
-    flag('f4', 'c5b', 'question', 'security', DAY),
-    {
-      ...flag('f5', 'c5b', 'question', `${admin.id}:t`, DAY),
-      source: 'agent' as const,
-      agentId: admin.id,
-      kind: 'needs_person' as const,
-      value: { title: 'T' },
-    },
+    flag('f1', 'c2', admin.id, 0, 5 * DAY, HOUR),
+    flag('f2', 'c2', bot, 0, 5 * DAY, 3 * HOUR),
+    flag('f3', 'c5a', admin.id, 0, 2 * DAY),
+    // lintbot isn't invited and has no reviewer row: its finding doesn't wait for anyone.
+    flag('f4', 'c5b', bot, 0, DAY),
+    flag('f5', 'c5b', admin.id, 0, DAY),
   ]);
   const resolution = (
     key: string,
@@ -290,27 +297,8 @@ describe('repository insights', () => {
       pendingNow: 1,
       pendingPullsNow: 1,
       byKind: [
-        {
-          source: 'question',
-          key: 'security',
-          title: 'security', // a retired question: its id
-          raised: 3,
-          approved: 1,
-        },
-        {
-          source: 'agent',
-          key: 'octocat',
-          title: '@octocat',
-          raised: 1,
-          approved: 0,
-        },
-        {
-          source: 'limit',
-          key: 'max_files',
-          title: 'Too many files to review automatically',
-          raised: 1,
-          approved: 1,
-        },
+        { key: 'octocat', title: '@octocat', raised: 3, approved: 1 },
+        { key: 'lintbot', title: '@lintbot', raised: 2, approved: 1 },
       ],
     });
     expect(body.resolutions).toEqual({
@@ -409,7 +397,7 @@ describe('repository insights', () => {
     expect(out.pulls.auto_merged).toBe(1);
     expect(out.pulls.auto_merge_share).toBe(1);
     expect(out.flags.pending_now).toBe(1);
-    expect(out.flags.by_kind[0].key).toBe('security');
+    expect(out.flags.by_kind[0].key).toBe('octocat');
     expect(out.web_url).toBe('http://test.local/octocat/app/insights?days=7');
     await expect(
       tool.handler({ repository: 'octocat/app', days: 3 }, ctx)

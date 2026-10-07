@@ -8,7 +8,7 @@ import {
 
 /**
  * The review of one pull request commit. Deterministic, so racing triggers insert one row and a branch that
- * returns to a reviewed commit finds its review; review.yml reviews (random ids) never collide with it.
+ * returns to a reviewed commit finds its review.
  */
 export const headReviewId = (pullRequestId: string, headSha: string) =>
   `${pullRequestId}-${headSha}`;

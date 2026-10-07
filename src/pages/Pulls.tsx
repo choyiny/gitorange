@@ -21,8 +21,7 @@ import { PrStateIcon } from './PrIcons';
 function storedView(): 'list' | 'graph' {
   try {
     const v = localStorage.getItem('gitorange.pulls.view');
-    // 'tree' was the Tree view this graph replaced.
-    return v === 'graph' || v === 'tree' ? 'graph' : 'list';
+    return v === 'graph' ? 'graph' : 'list';
   } catch {
     return 'list';
   }

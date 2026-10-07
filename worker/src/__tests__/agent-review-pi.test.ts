@@ -170,7 +170,6 @@ describe('engine: pi', () => {
     const [first, second] = await flags(t);
     expect(first).toMatchObject({
       agent: 'secagent',
-      source: 'agent',
       kind: 'needs_person',
       agent_sha: agentSha,
     });

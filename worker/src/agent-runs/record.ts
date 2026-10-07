@@ -97,29 +97,6 @@ export async function describeRun(
         }
       : null;
   }
-  if (payload.classificationId) {
-    const row = await db
-      .select({
-        headSha: prClassifications.headSha,
-        pullRequestId: pullRequests.id,
-        repositoryId: pullRequests.repositoryId,
-      })
-      .from(prClassifications)
-      .innerJoin(
-        pullRequests,
-        eq(pullRequests.id, prClassifications.pullRequestId)
-      )
-      .where(eq(prClassifications.id, payload.classificationId))
-      .get();
-    return row
-      ? {
-          kind: 'review',
-          repositoryId: row.repositoryId,
-          pullRequestId: row.pullRequestId,
-          title: `Review of ${row.headSha.slice(0, 7)}`,
-        }
-      : null;
-  }
   if (payload.resolutionId) {
     const row = await db
       .select({
@@ -345,19 +322,6 @@ async function outcomeError(
       .get();
     return failed
       ? `@${failed.handle}'s review failed: ${failed.error ?? 'unknown error'}`
-      : null;
-  }
-  if (payload.classificationId) {
-    const row = await db
-      .select({
-        status: prClassifications.status,
-        error: prClassifications.errorMessage,
-      })
-      .from(prClassifications)
-      .where(eq(prClassifications.id, payload.classificationId))
-      .get();
-    return row?.status === 'failed'
-      ? (row.error ?? 'The review failed.')
       : null;
   }
   if (payload.resolutionId) {

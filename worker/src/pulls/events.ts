@@ -7,12 +7,7 @@ import {
   type PullRequest,
 } from '../db/app.schema';
 import { chunks } from '../stack/view';
-import {
-  REASON_KINDS,
-  type PullState,
-  type PullStateName,
-  type Reason,
-} from './state';
+import type { PullState, PullStateName, Reason } from './state';
 
 type PrRef = Pick<PullRequest, 'id' | 'repositoryId'>;
 
@@ -171,10 +166,7 @@ export async function latestStates(
       if (e.state)
         out.set(e.pullRequestId, {
           state: e.state as PullStateName,
-          // Reasons of retired kinds (review.yml's) recorded before they went are dropped.
-          reasons: (
-            (e.data as { reasons?: Reason[] } | null)?.reasons ?? []
-          ).filter((r) => (REASON_KINDS as string[]).includes(r.kind)),
+          reasons: (e.data as { reasons?: Reason[] } | null)?.reasons ?? [],
         });
   return out;
 }

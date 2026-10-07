@@ -59,7 +59,6 @@ export async function settleStates(
 
 type Payload = {
   resolutionId?: string;
-  classificationId?: string;
   sweep?: { repositoryId: string };
   stack?: { pullRequestId: string };
   reconcile?: { repositoryId: string; landTarget: string };
@@ -96,14 +95,6 @@ export async function repositoryForPayload(
         .select({ id: prReviewers.pullRequestId })
         .from(prReviewers)
         .where(eq(prReviewers.id, p.reviewer.id))
-        .get()
-    )?.id;
-  if (!prId && p.classificationId)
-    prId = (
-      await db
-        .select({ id: prClassifications.pullRequestId })
-        .from(prClassifications)
-        .where(eq(prClassifications.id, p.classificationId))
         .get()
     )?.id;
   if (!prId && p.resolutionId)

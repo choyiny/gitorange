@@ -7,7 +7,6 @@ import {
   ChevronDownIcon,
   ChevronRightIcon,
   FileDiffIcon,
-  HistoryIcon,
   ShieldCheckIcon,
   SkipIcon,
   XCircleIcon,
@@ -251,39 +250,6 @@ export function AgentReview({
               ))}
             <AgentRunLink repo={repo} number={n} kind="review" />
           </div>
-        </div>
-      </div>
-    </div>
-  );
-}
-
-/** Findings from the retired `.gitorange/review.yml` review, read-only, where they happened. */
-export function LegacyReview({ d }: { d: PullDetail }) {
-  const legacy = d.review!.legacy!;
-  return (
-    <div className="d-flex mb-3" style={{ gap: 16 }}>
-      <div
-        className="d-none d-md-flex flex-items-center flex-justify-center circle color-bg-done-emphasis color-fg-on-emphasis flex-shrink-0"
-        style={{ width: 40, height: 40 }}
-      >
-        <HistoryIcon size={20} />
-      </div>
-      <div
-        className="timeline-comment comment-arrow flex-1"
-        style={{ minWidth: 0 }}
-      >
-        <div className="timeline-comment-header flex-wrap">
-          <span>
-            Reviewed by <code>.gitorange/review.yml</code> (retired)
-          </span>
-          <span title={fullDate(legacy.createdAt)}>
-            {timeAgo(legacy.createdAt)}
-          </span>
-        </div>
-        <div className="p-2 p-sm-3">
-          {legacy.flags.map((f) => (
-            <ReadOnlyFlag key={f.id} f={f} />
-          ))}
         </div>
       </div>
     </div>

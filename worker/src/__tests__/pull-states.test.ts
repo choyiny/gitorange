@@ -826,7 +826,7 @@ describe('recording state changes', () => {
       await repositoryForPayload(s.db, { stack: { pullRequestId: s.pr.id } })
     ).toEqual({ repositoryId: s.repoId, branch: 'main' });
     expect(
-      await repositoryForPayload(s.db, { classificationId: 'nope' })
+      await repositoryForPayload(s.db, { headReview: { id: 'nope' } })
     ).toBeNull();
   });
 });
@@ -843,7 +843,7 @@ describe('settling after a MERGE_RESOLUTION Workflow', () => {
           : Reflect.get(target, key),
     }) as DrizzleDB;
     await expect(
-      settleAfterPayload(s.t.env, broken, { classificationId: 'c' })
+      settleAfterPayload(s.t.env, broken, { headReview: { id: 'c' } })
     ).resolves.toBe(0);
   });
 
@@ -1287,37 +1287,6 @@ describe('review reasons', () => {
     );
     expect(states.get(prs[0].id)?.reasons).toContainEqual({
       kind: 'needs_approval',
-    });
-  });
-
-  it('reads recorded states without retired reason kinds', async () => {
-    const { t, admin, repo } = await appRepo();
-    await openPull(t, admin, repo, { 'src/b.ts': 'b\n' });
-    const pr = (await t.env.DB.prepare(
-      'SELECT id, repository_id AS r FROM pull_requests'
-    ).first<{
-      id: string;
-      r: string;
-    }>())!;
-    await t.env.DB.prepare(
-      `INSERT INTO pr_events (id, repository_id, pull_request_id, kind, state, data, computed_at, created_at)
-       VALUES ('e-old', ?, ?, 'state_changed', 'human_review', ?, 99999999999999, 99999999999999)`
-    )
-      .bind(
-        pr.r,
-        pr.id,
-        JSON.stringify({
-          reasons: [
-            { kind: 'flags_pending', count: 1 },
-            { kind: 'needs_approval' },
-          ],
-        })
-      )
-      .run();
-    const db = drizzle(t.env.DB, { schema });
-    expect((await latestStates(db, [pr.id])).get(pr.id)).toEqual({
-      state: 'human_review',
-      reasons: [{ kind: 'needs_approval' }],
     });
   });
 });

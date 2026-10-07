@@ -2,7 +2,6 @@ import { and, asc, desc, eq, inArray, ne } from 'drizzle-orm';
 import type { DrizzleDB } from '../db/middleware';
 import {
   agents,
-  prClassifications,
   prReviewers,
   prReviewFlags,
   repositories,
@@ -26,7 +25,6 @@ export const EARLIER_REVIEWS_MAX = 50;
 export function flagJson(f: PrReviewFlag, people: Map<string, PublicUser>) {
   return {
     id: f.id,
-    source: f.source,
     kind: f.kind,
     title: flagTitleOf(f),
     paths: f.paths,
@@ -47,9 +45,8 @@ export type FlagJson = ReturnType<typeof flagJson>;
 
 /**
  * The review of a pull request's head commit, for its page and MCP: every invited agent's row (requested or
- * not), their findings, who approved, the verdict and auto-merge. A commit reviewed under review.yml before
- * reviewer agents shows that review's flags as `legacy`. `earlier`: requested agents' reviews of the pull request's
- * previous head commits, read-only history (MCP leaves them out).
+ * not), their findings, who approved, the verdict and auto-merge. `earlier`: requested agents' reviews of the
+ * pull request's previous head commits, read-only history (MCP leaves them out).
  */
 export async function reviewersView(
   env: CloudflareBindings,
@@ -61,20 +58,6 @@ export async function reviewersView(
   if (!shas) return null;
   const open = pr.state === 'open';
   const review = await headReviewFor(db, pr.id, shas.head);
-  const legacy = review
-    ? undefined
-    : await db
-        .select()
-        .from(prClassifications)
-        .where(
-          and(
-            eq(prClassifications.pullRequestId, pr.id),
-            eq(prClassifications.headSha, shas.head)
-          )
-        )
-        .orderBy(desc(prClassifications.createdAt))
-        .limit(1)
-        .get();
   const rows = await db
     .select({
       r: prReviewers,
@@ -103,12 +86,11 @@ export async function reviewersView(
     )
     .orderBy(asc(users.username))
     .all();
-  const reviewId = review?.id ?? legacy?.id;
-  const flags = reviewId
+  const flags = review
     ? await db
         .select()
         .from(prReviewFlags)
-        .where(eq(prReviewFlags.classificationId, reviewId))
+        .where(eq(prReviewFlags.classificationId, review.id))
         // `<agent id>:<index>`: an agent's findings in the order it gave them (they share a created_at second).
         .orderBy(asc(prReviewFlags.key))
         .all()
@@ -143,12 +125,7 @@ export async function reviewersView(
       ...(await db
         .select()
         .from(prReviewFlags)
-        .where(
-          and(
-            inArray(prReviewFlags.classificationId, part),
-            eq(prReviewFlags.source, 'agent')
-          )
-        )
+        .where(inArray(prReviewFlags.classificationId, part))
         .orderBy(asc(prReviewFlags.key))
         .all())
     );
@@ -190,12 +167,6 @@ export async function reviewersView(
         .filter((f) => f.agentId === r.agentId)
         .map((f) => flagJson(f, people)),
     })),
-    legacy: legacy
-      ? {
-          createdAt: legacy.createdAt.toISOString(),
-          flags: flags.map((f) => flagJson(f, people)),
-        }
-      : null,
     earlier: earlierRows.map(({ r, handle, name, image }) => ({
       id: r.id,
       headSha: r.headSha,

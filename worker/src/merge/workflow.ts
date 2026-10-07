@@ -7,11 +7,7 @@ import { drizzle } from 'drizzle-orm/d1';
 import { schema } from '../db/schema';
 import { executeSweep, type SweepParams } from './auto';
 import { executeResolution, type StepRunner } from './resolution';
-import {
-  executeHeadReview,
-  executeReviewerRetry,
-  stopLegacyReview,
-} from '../review/head';
+import { executeHeadReview, executeReviewerRetry } from '../review/head';
 import { headReviewId } from '../review/keys';
 import { workersAiAgentModels } from '../review/models';
 import type { PiReviewerApi } from '../review/pi-contract';
@@ -23,13 +19,7 @@ import { settleAfterPayload } from '../pulls/settle';
 import { executeReconcile, type ReconcileParams } from '../stack/reconcile';
 
 type PayloadKey =
-  | 'resolutionId'
-  | 'sweep'
-  | 'classificationId'
-  | 'stack'
-  | 'reconcile'
-  | 'headReview'
-  | 'reviewer';
+  'resolutionId' | 'sweep' | 'stack' | 'reconcile' | 'headReview' | 'reviewer';
 /** Exactly one payload key is set. */
 type Only<K extends PayloadKey, V> = { [P in K]: V } & {
   [P in Exclude<PayloadKey, K>]?: undefined;
@@ -38,8 +28,6 @@ type Only<K extends PayloadKey, V> = { [P in K]: V } & {
 export type MergeResolutionParams =
   | Only<'resolutionId', string>
   | Only<'sweep', SweepParams>
-  /** A review.yml review started before reviewer agents (stopped on arrival). */
-  | Only<'classificationId', string>
   | Only<'stack', StackParams>
   | Only<'reconcile', ReconcileParams>
   /** Review one head commit with the repository's agents. */
@@ -110,8 +98,6 @@ export class MergeResolutionWorkflow extends WorkflowEntrypoint<
       };
       if (p.headReview) await executeHeadReview(deps, p.headReview.id);
       else await executeReviewerRetry(deps, p.reviewer!.id);
-    } else if (p.classificationId) {
-      await stopLegacyReview(db, p.classificationId);
     } else if (p.stack) {
       const ids = await getSettings(db, this.env, ['ai.review_model']);
       const pr = p.stack.pullRequestId;

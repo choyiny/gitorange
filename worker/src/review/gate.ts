@@ -210,21 +210,10 @@ export function reviewReasonText(r: ReviewReason): string {
   }
 }
 
-/** A flag's heading: an agent finding's title, or a retired review.yml flag's question id or limit. */
-export function flagTitleOf(f: {
-  source: string;
-  key: string;
-  value: unknown;
-}): string {
-  if (f.source === 'agent') {
-    const title = (f.value as { title?: unknown } | null)?.title;
-    return typeof title === 'string' && title ? title : 'Finding';
-  }
-  if (f.source === 'limit')
-    return f.key === 'max_files'
-      ? 'Too many files to review automatically'
-      : 'Files that could not be summarized';
-  return f.key;
+/** A finding's heading: the title its agent gave it. */
+export function flagTitleOf(f: { value: unknown }): string {
+  const title = (f.value as { title?: unknown } | null)?.title;
+  return typeof title === 'string' && title ? title : 'Finding';
 }
 
 /**
@@ -263,20 +252,13 @@ export async function reviewInputs(
         classificationId: prReviewFlags.classificationId,
         agentId: prReviewFlags.agentId,
         kind: prReviewFlags.kind,
-        source: prReviewFlags.source,
-        key: prReviewFlags.key,
         value: prReviewFlags.value,
         detail: prReviewFlags.detail,
         approvedAt: prReviewFlags.approvedAt,
         changesRequestedAt: prReviewFlags.changesRequestedAt,
       })
       .from(prReviewFlags)
-      .where(
-        and(
-          inArray(prReviewFlags.classificationId, part),
-          eq(prReviewFlags.source, 'agent')
-        )
-      )
+      .where(inArray(prReviewFlags.classificationId, part))
       .all())
       flags.push({
         id: f.id,

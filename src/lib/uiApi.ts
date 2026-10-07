@@ -238,8 +238,6 @@ export type PullDetail = {
 };
 export type ReviewFlag = {
   id: string;
-  /** agent: a reviewer agent's finding; question/limit: a retired review.yml flag (history). */
-  source: 'question' | 'limit' | 'agent';
   /** needs_person: a person approves it; change_requested: the PR's agent changes it (a person may dismiss it). */
   kind: 'needs_person' | 'change_requested';
   title: string;
@@ -355,15 +353,7 @@ export type ApprovalsPage = {
 export type PullReview = {
   headSha: string;
   agentsInvited: boolean;
-  status:
-    | 'summarizing'
-    | 'triggering'
-    | 'reviewing'
-    | 'done'
-    | 'failed'
-    | 'classifying'
-    | 'investigating'
-    | null;
+  status: 'summarizing' | 'triggering' | 'reviewing' | 'done' | 'failed' | null;
   errorMessage: string | null;
   summaryModel: string | null;
   files: {
@@ -376,7 +366,6 @@ export type PullReview = {
   createdAt: string | null;
   durationMs: number | null;
   reviewers: Reviewer[];
-  legacy: { createdAt: string; flags: ReviewFlag[] } | null;
   /** Requested agents' reviews of earlier head commits, newest first (at most 50): history that no longer counts. */
   earlier: EarlierReview[];
   verdict: { satisfied: boolean; reasons: PullReason[] } | null;
@@ -606,7 +595,6 @@ export type RepoInsights = {
     pendingNow: number;
     pendingPullsNow: number;
     byKind: {
-      source: 'question' | 'limit' | 'agent';
       key: string;
       title: string;
       raised: number;

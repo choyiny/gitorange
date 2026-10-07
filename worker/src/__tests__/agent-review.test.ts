@@ -223,39 +223,6 @@ describe('who reviews a pull request commit', () => {
       )
     ).toHaveLength(2);
   });
-
-  it('ignores .gitorange/review.yml', async () => {
-    const { t, admin, repo } = await appRepo();
-    const reviewYml =
-      'human_review:\n  questions:\n    anything:\n      ask: Anything at all?\n      above: 0\n';
-    await openPull(
-      t,
-      admin,
-      repo,
-      { 'src/b.ts': 'b\n' },
-      {
-        base: { ...BASE, '.gitorange/review.yml': reviewYml },
-      }
-    );
-    // No agents: nothing reviews it, and a person approves.
-    expect(
-      t.actions.resolutions.filter(
-        (r) => (r.params as { headReview?: unknown }).headReview
-      )
-    ).toEqual([]);
-    const d = (await (
-      await call(t, '/api/repos/octocat/app/pulls/1', { cookie: admin })
-    ).json()) as {
-      pullState: { reasons: { kind: string }[] };
-    };
-    expect(d.pullState.reasons).toEqual([{ kind: 'needs_approval' }]);
-    // With an agent, Clef is asked the agent's question only.
-    await invitedAgent(t, admin, 'secagent', AGENT_MD({ ask: 'Auth?' }));
-    await startReview(t);
-    const { models, calls } = agentModels();
-    await runReviews(t, models);
-    expect(calls.triggered[0].questions).toEqual({ secagent: 'Auth?' });
-  });
 });
 
 describe("an agent's review", () => {
@@ -280,7 +247,6 @@ describe("an agent's review", () => {
     const [person, change] = await flags(t);
     expect(person).toMatchObject({
       agent: 'secagent',
-      source: 'agent',
       kind: 'needs_person',
       agent_sha: shas.secagent,
     });
@@ -748,7 +714,6 @@ type View = {
         approvedAt: string | null;
       }[];
     }[];
-    legacy: { flags: { title: string }[] } | null;
     verdict: { satisfied: boolean; reasons: { kind: string }[] } | null;
     autoMerge: { state: string };
   };
@@ -848,27 +813,6 @@ describe('the pull request page', () => {
     expect(review.verdict!.reasons.map((r) => r.kind)).toEqual([
       'agent_flagged',
     ]);
-  });
-
-  it("shows an old commit's review.yml review as history", async () => {
-    const { t, admin, repo } = await appRepo();
-    const { head } = await openPull(t, admin, repo, SCHEMA_CHANGE);
-    const pr = (await t.env.DB.prepare('SELECT id FROM pull_requests').first<{
-      id: string;
-    }>())!.id;
-    await t.env.DB.prepare(
-      `INSERT INTO pr_classifications (id, pull_request_id, head_sha, status, summary_model, classifier_model, created_at)
-       VALUES ('legacy', ?, ?, 'done', 's', 'c', 0)`
-    )
-      .bind(pr, head)
-      .run();
-    await t.env.DB.prepare(
-      `INSERT INTO pr_review_flags (id, classification_id, source, key, paths, created_at)
-       VALUES ('lf', 'legacy', 'question', 'data_model', '[]', 0)`
-    ).run();
-    const { review } = await view(t, admin);
-    expect(review.reviewers).toEqual([]);
-    expect(review.legacy!.flags).toMatchObject([{ title: 'data_model' }]);
   });
 
   it('starts the review of a head that has none when the page is viewed', async () => {

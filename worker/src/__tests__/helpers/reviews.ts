@@ -342,7 +342,6 @@ export async function reviewers(t: TestEnv, number = 1) {
 export type FlagRow = {
   id: string;
   agent: string | null;
-  source: string;
   kind: string;
   key: string;
   value: string | null;
@@ -356,7 +355,7 @@ export type FlagRow = {
 export async function flags(t: TestEnv) {
   return (
     await t.env.DB.prepare(
-      `SELECT f.id, u.username AS agent, f.source, f.kind, f.key, f.value, f.paths, f.detail, f.agent_sha,
+      `SELECT f.id, u.username AS agent, f.kind, f.key, f.value, f.paths, f.detail, f.agent_sha,
               f.approved_at
          FROM pr_review_flags f LEFT JOIN users u ON u.id = f.agent_id
         ORDER BY f.key`

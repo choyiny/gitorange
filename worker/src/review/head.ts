@@ -951,23 +951,6 @@ async function reviewHead(
   });
 }
 
-/** A review.yml review a Workflow started before reviewer agents: stopped on arrival; nothing reads review.yml. */
-export async function stopLegacyReview(db: DrizzleDB, id: string) {
-  await db
-    .update(prClassifications)
-    .set({
-      status: 'failed',
-      errorMessage: 'Reviews moved to reviewer agents.',
-      finishedAt: new Date(),
-    })
-    .where(
-      and(
-        eq(prClassifications.id, id),
-        notInArray(prClassifications.status, ['done', 'failed'])
-      )
-    );
-}
-
 /** Retries a failed review of a commit as a whole (it never got to its agents): forget it, start again. */
 export async function retryHeadReview(
   env: CloudflareBindings,

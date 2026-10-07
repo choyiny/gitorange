@@ -51,7 +51,6 @@ const insightsSchema = z
       pendingPullsNow: z.number(),
       byKind: z.array(
         z.object({
-          source: z.enum(['question', 'limit', 'agent']),
           key: z.string(),
           title: z.string(),
           raised: z.number(),

@@ -147,12 +147,7 @@ export async function approvalsFor(
       ...(await db
         .select()
         .from(prClassifications)
-        .where(
-          and(
-            inArray(prClassifications.pullRequestId, part),
-            sql`${prClassifications.id} = ${prClassifications.pullRequestId} || '-' || ${prClassifications.headSha}`
-          )
-        )
+        .where(inArray(prClassifications.pullRequestId, part))
         .orderBy(desc(prClassifications.createdAt))
         .all())
     );
@@ -240,7 +235,6 @@ export async function approvalsFor(
       .where(
         and(
           inArray(prReviewFlags.classificationId, part),
-          eq(prReviewFlags.source, 'agent'),
           eq(prReviewFlags.kind, 'needs_person'),
           isNull(prReviewFlags.approvedAt)
         )

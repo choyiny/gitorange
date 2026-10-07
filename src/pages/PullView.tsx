@@ -27,7 +27,6 @@ import {
   anchoredReviewer,
   earlierEntries,
   reviewEntries,
-  slotOf,
   timelineSlots,
 } from '@/lib/reviewTimeline';
 import { fullDate, timeAgo } from '@/lib/format';
@@ -42,7 +41,6 @@ import { AutoMergeStatus } from '@/components/AutoMergeReview';
 import {
   AgentReview,
   EarlierReview,
-  LegacyReview,
   PersonApprovals,
   ReviewersSidebar,
 } from '@/components/ReviewersBox';
@@ -353,13 +351,8 @@ function Conversation({
   );
   // "Review the flags" jumps to the first review with a finding for a person, else to the sidebar.
   const anchored = anchoredReviewer(slots);
-  const legacy =
-    d.review?.legacy && d.review.legacy.flags.length > 0
-      ? slotOf(d.comments, d.review.legacy.createdAt)
-      : -1;
   const slot = (i: number) => (
     <>
-      {i === legacy && <LegacyReview d={d} />}
       {slots[i].map((x) =>
         x.kind === 'event' ? (
           <PullEventItem
