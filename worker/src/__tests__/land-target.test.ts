@@ -143,7 +143,7 @@ const detail = async (
     await call(s.t, `/api/repos/octocat/app/pulls/${n}`, { cookie: s.admin })
   ).json()) as {
     pull: { baseRef: string; landTarget: string };
-    conflicts: string[];
+    rebase: { status: string; onto: string; files: string[] } | null;
     review: { autoMerge: { state: string; reasons: string[] } } | null;
     pullState: { reasons: { kind: string }[] } | null;
   };
@@ -221,60 +221,24 @@ describe('readers of the land target', () => {
     ).toEqual({ n: 1 });
   });
 
-  it('plans the merge, sweeps conflicts, and lists AI resolution against the land target', async () => {
+  it('rebases a stacked PR onto its parent’s branch, not the land target', async () => {
     const s = await stackedByHand({ conflict: true });
     const d = await detail(s, 2);
-    expect(d.conflicts).toEqual(['a.txt']); // with main; there are none with parent
-    expect(d.review!.autoMerge.reasons).toContain(
-      'Resolving conflicts with AI'
-    );
-    const list = (await (
-      await call(s.t, '/api/repos/octocat/app/pulls', { cookie: s.admin })
-    ).json()) as {
-      pulls: { number: number; aiResolution: string | null }[];
-    };
-    expect(list.pulls.find((p) => p.number === 2)!.aiResolution).toMatch(
-      /running|queued/
-    );
-    // main moves again: the sweep for main reaches #2 (its base_ref is parent) and re-resolves against main.
-    await commitPaths(
-      s.repo,
-      'main',
-      { ...s.base, 'a.txt': 'main 2\n' },
-      'Main again'
-    );
-    await executeSweep(
-      { env: s.t.env, db: s.db, step },
-      { repositoryId: s.repoId, branches: ['main'] }
-    );
-    expect(
-      await s.t.env.DB.prepare(
-        'SELECT COUNT(*) AS n FROM merge_resolutions WHERE pull_request_id = ? AND base_sha = ?'
-      )
-        .bind(s.pr2, s.repo.refs.get('refs/heads/main')!)
-        .first()
-    ).toEqual({ n: 1 });
-    // Starting one by hand also measures against main.
-    const started = await call(
-      s.t,
-      '/api/repos/octocat/app/pulls/2/resolutions',
-      { cookie: s.admin, method: 'POST' }
-    );
-    expect(started.status).toBe(201);
-    expect(((await started.json()) as { baseSha: string }).baseSha).toBe(
-      s.repo.refs.get('refs/heads/main')
-    );
+    // #2 already contains its parent, so it is up to date with base_ref even though main moved.
+    expect(d.rebase).toMatchObject({ status: 'up_to_date', onto: 'parent' });
   });
 
   it('sweeps many moved branches in chunks and still reaches a PR by its land target', async () => {
-    const s = await stackedByHand({ conflict: true });
+    const s = await stackedByHand();
+    await s.t.env.DB.prepare(
+      "UPDATE pull_requests SET base_ref = 'main' WHERE number = 2"
+    ).run();
     await commitPaths(
       s.repo,
       'main',
-      { ...s.base, 'a.txt': 'main 2\n' },
+      { ...s.base, 'z.txt': 'z\n' },
       'Main again'
     );
-    // 40 moved branches bind more than D1's 100 parameters in one statement; main is in the second chunk.
     const branches = Array.from({ length: 40 }, (_, i) =>
       i === 35 ? 'main' : `other-${i}`
     );
@@ -283,19 +247,20 @@ describe('readers of the land target', () => {
       { repositoryId: s.repoId, branches }
     );
     expect(
-      await s.t.env.DB.prepare(
-        'SELECT COUNT(*) AS n FROM merge_resolutions WHERE pull_request_id = ? AND base_sha = ?'
+      s.t.actions.resolutions.filter(
+        (r) =>
+          (r.params as { rebase?: { pullRequestId: string } }).rebase
+            ?.pullRequestId === s.pr2
       )
-        .bind(s.pr2, s.repo.refs.get('refs/heads/main')!)
-        .first()
-    ).toEqual({ n: 1 });
+    ).toHaveLength(1);
   });
 
-  it('plans the merge against the land target when the base_ref branch is gone', async () => {
+  it('rebases onto the land target when the base_ref branch is gone', async () => {
     const s = await stackedByHand({ conflict: true });
     s.repo.refs.delete('refs/heads/parent');
     const d = await detail(s, 2);
-    expect(d.conflicts).toEqual(['a.txt']);
+    expect(d.rebase).toMatchObject({ onto: 'main' });
+    expect(d.rebase!.status).not.toBe('up_to_date');
   });
 
   it('lands into the land target, never the parent branch', async () => {
@@ -309,9 +274,10 @@ describe('readers of the land target', () => {
     });
     expect(res.status).toBe(200);
     expect(s.repo.refs.get('refs/heads/parent')).toBe(parentTip);
-    const landed = s.repo.parseCommit(s.repo.refs.get('refs/heads/main')!)!;
-    expect(landed.parents).toEqual([mainTip]);
-    expect(landed.message).toBe('Child (#2)');
+    const childHead = s.repo.refs.get('refs/heads/child')!;
+    expect(s.repo.refs.get('refs/heads/main')).toBe(childHead); // a fast-forward to the child's head
+    expect(s.repo.parseCommit(childHead)!.parents).toEqual([parentTip]);
+    expect(s.repo.parseCommit(parentTip!)!.parents).toEqual([mainTip]);
   });
 
   it('groups the stack tree by land target', async () => {

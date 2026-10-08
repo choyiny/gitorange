@@ -3,13 +3,11 @@ import { AlertIcon, SparkleFillIcon } from '@primer/octicons-react';
 import type { Pull } from '@/lib/uiApi';
 
 const AI_LABEL: Record<NonNullable<Pull['aiResolution']>, string> = {
-  queued: 'Waiting to resolve conflicts with AI…',
-  running: 'Resolving conflicts with AI…',
-  proposed: 'Conflicts resolved by AI',
-  failed: 'Conflicts need a person',
+  running: 'Resolving a rebase conflict with AI…',
+  failed: 'Rebase conflict needs the author',
 };
 
-/** AI conflict resolution next to a listed PR's title: spinner while it runs, like checks. */
+/** AI resolving a rebase conflict next to a listed PR's title: spinner while it runs, like checks. */
 export function AiResolutionBadge({ state }: { state: Pull['aiResolution'] }) {
   if (!state) return null;
   const label = AI_LABEL[state];
@@ -26,15 +24,13 @@ export function AiResolutionBadge({ state }: { state: Pull['aiResolution'] }) {
           <AlertIcon size={14} />
         </span>
       ) : (
-        <span
-          className={`d-inline-flex ${state === 'proposed' ? 'color-fg-done' : 'color-fg-attention'}`}
-        >
+        <span className="d-inline-flex color-fg-attention">
           <SparkleFillIcon size={14} />
         </span>
       )}
-      {(state === 'queued' || state === 'running') && (
+      {state === 'running' && (
         <span
-          className={`run-spinner ${state === 'queued' ? 'color-fg-muted' : 'color-fg-attention'}`}
+          className="run-spinner color-fg-attention"
           style={{ width: 12, height: 12 }}
         />
       )}

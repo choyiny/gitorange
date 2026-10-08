@@ -360,9 +360,10 @@ describe('retargeting', () => {
       branch: 'one',
       why: '#2 lands after #1 so #3 can build on both.',
     });
-    expect(st[2]!.state).toBe('agent_followup');
+    // GitOrange rebases it (rebase_onto waits on GitOrange): the agent's flag for a person decides.
+    expect(st[2]!.state).toBe('human_review');
     expect(st[3]!.reasons.map((r) => r.kind)).not.toContain('rebase_onto'); // #2 isn't on #1 yet
-    // #2's agent rebases onto #1 (GitOrange never does): now #3 is asked to rebase onto #2.
+    // #2's agent rebases onto #1 (as GitOrange's rebase run would): now #3 is asked to rebase onto #2.
     repo.refs.set('refs/heads/two', repo.refs.get('refs/heads/one')!);
     await pushTo(t, repo, 'two', { ...files, 'a.txt': 'a\n', 'b.txt': 'b\n' });
     await drain(t, models);
@@ -383,7 +384,8 @@ describe('retargeting', () => {
     ).json()) as {
       pullState: { state: string; reasons: { kind: string; pr?: number }[] };
     };
-    expect(detail.pullState.state).toBe('agent_followup');
+    // Not the agent's move: GitOrange rebases it; the agent's flag for a person decides.
+    expect(detail.pullState.state).toBe('human_review');
     expect(detail.pullState.reasons).toContainEqual(
       expect.objectContaining({ kind: 'rebase_onto', pr: 1 })
     );

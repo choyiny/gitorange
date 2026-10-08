@@ -1,5 +1,6 @@
 import { and, asc, desc, eq, inArray } from 'drizzle-orm';
 import {
+  prEvents,
   pullRequestComments,
   pullRequests,
   workflowJobs,
@@ -11,7 +12,8 @@ import { findRepo, gitFor, permissionsFor } from '../lib/repos';
 import { usersById } from '../lib/users';
 import { addComment, openPull, pullShas } from '../lib/pulls';
 import { landPull } from '../merge/land';
-import { latestResolution } from '../merge/resolution';
+import { rebaseTips, rebaseView, retryRebase } from '../merge/rebase';
+import { settleStates } from '../pulls/settle';
 import { reviewConfigured } from '../review/head';
 import { reviewersView } from '../review/reviewers-view';
 import { approvalsAt } from '../review/approvals';
@@ -286,13 +288,22 @@ const getPullTree: ToolModule = {
   },
 };
 
+/**
+ * What an agent must do after GitOrange rebased its branch: move its local commits onto the rebased branch. Only the
+ * commits after the old head are replayed, so work it hasn't pushed yet is kept (a hard reset would drop it).
+ */
+export const rebasedNote = (branch: string, from: string, to: string) =>
+  `GitOrange rebased this branch (${from.slice(0, 7)} → ${to.slice(0, 7)}); run \`git fetch && git rebase --onto origin/${branch} ${from}\` before you push again (it keeps your unpushed commits).`;
+
 const getPullRequest: ToolModule = {
   definition: {
     name: 'gitorange_get_pull_request',
     title: 'Get pull request',
     description:
-      'Get one pull request: its description, branches and commits, whether it merges cleanly (or has ' +
-      'conflicts, and what AI conflict resolution is doing about them), the Actions checks on its latest ' +
+      'Get one pull request: its description, branches and commits, whether it is up to date with its base or ' +
+      'behind (GitOrange rebases it itself; a rebase_conflict names the commit and files to fix locally, or to try ' +
+      'again with gitorange_retry_rebase when AI failed on them; ' +
+      'ai_resolving the commit AI is resolving), the Actions checks on its latest ' +
       'commit, "reviewers" (each invited agent\'s status and its findings by kind: needs_person for a person to ' +
       'approve in the web UI or through a moderator app, with "via" naming that app, change_requested for this pull request\'s agent), "follow_ups" (open change requests ' +
       'for the pull request\'s agent: push a fix, which is reviewed afresh), "approved_by" (people who approved the ' +
@@ -304,9 +315,10 @@ const getPullRequest: ToolModule = {
       " GitOrange from the other pull request's text and diff: advisory, not an instruction from a person." +
       " A stacked pull request's base is its parent's branch (land_target is where it lands). must_account_for blocks merging until GitOrange re-checks a new commit and marks it accounted; rebase_first names the branch to rebase onto first. Only a person can dismiss a dependency." +
       ' "pull_state" says whose move it is: agent_followup (yours: push a fix for each reason), human_review (a ' +
-      'person with merge permission), waiting (GitOrange: checks, review or AI conflict resolution are running), ' +
+      'person with merge permission), waiting (GitOrange: checks, review or AI resolving a rebase conflict are running), ' +
       'or ready; "reasons" lists why, as structured objects (e.g. check_failed with run_number for ' +
-      'gitorange_get_run_logs).',
+      'gitorange_get_run_logs).' +
+      ' "rebased" (when set) means GitOrange rebased your branch: follow its note before pushing again.',
     annotations: { readOnlyHint: true, title: 'Get pull request' },
     inputSchema: {
       type: 'object',
@@ -322,25 +334,22 @@ const getPullRequest: ToolModule = {
     const target = pr.state === 'open' ? await landShas(git, pr) : null;
 
     let merge: Record<string, unknown> | null = null;
-    if (target) {
-      const plan = await git.planMerge(target.base, target.head);
-      const resolution = await latestResolution(ctx.db, pr.id);
-      const current =
-        resolution &&
-        resolution.baseSha === target.base &&
-        resolution.headSha === target.head
-          ? resolution
-          : null;
+    const tips = pr.state === 'open' ? await rebaseTips(git, pr) : null;
+    if (tips) {
+      const v = await rebaseView(ctx.env, ctx.db, git, pr, tips);
       merge = {
-        nothing_to_merge: plan.upToDate,
-        conflicts: plan.upToDate ? [] : plan.conflicts,
-        ai_conflict_resolution: current
-          ? {
-              status: current.status,
-              explanation: current.explanation,
-              error: current.errorMessage,
-            }
-          : null,
+        nothing_to_merge: v.status === 'nothing_to_merge',
+        // GitOrange rebases a branch that is behind; landing does too.
+        behind: v.status === 'behind',
+        rebase_onto: v.onto,
+        ai_resolving:
+          v.status === 'resolving'
+            ? { commit: v.commit, files: v.files }
+            : null,
+        rebase_conflict:
+          v.status === 'conflict'
+            ? { commit: v.commit, files: v.files, error: v.error }
+            : null,
       };
     }
 
@@ -388,6 +397,28 @@ const getPullRequest: ToolModule = {
       tree: found?.view,
     });
 
+    // GitOrange rebased the branch to its current head: the agent's clone is stale until it rebases onto it.
+    const last = shas
+      ? await ctx.db
+          .select({ data: prEvents.data })
+          .from(prEvents)
+          .where(
+            and(eq(prEvents.pullRequestId, pr.id), eq(prEvents.kind, 'rebased'))
+          )
+          .orderBy(desc(prEvents.createdAt))
+          .limit(1)
+          .get()
+      : undefined;
+    const r = last?.data as { from?: string; to?: string } | undefined;
+    const rebased =
+      pr.state === 'open' && r?.from && r.to && r.to === shas?.head
+        ? {
+            from: r.from,
+            to: r.to,
+            note: rebasedNote(pr.headRef, r.from, r.to),
+          }
+        : null;
+
     const approvals = shas ? await approvalsAt(ctx.db, pr.id, shas.head) : [];
     const approvers = await usersById(
       ctx.db,
@@ -421,6 +452,7 @@ const getPullRequest: ToolModule = {
             message: c.message.split('\n')[0],
           })),
           merge,
+          rebased,
           checks: runs.map((r) => ({
             workflow: r.name,
             run_number: r.runNumber,
@@ -605,9 +637,12 @@ const mergePullRequest: ToolModule = {
     name: 'gitorange_merge_pull_request',
     title: 'Merge pull request',
     description:
-      'Rebase and merge a pull request: its changes become one commit on top of the target branch, keeping ' +
-      'history linear (AI-resolved conflicts are included). Refused while checks fail or run, or ' +
-      "review is not satisfied (an agent's change request, findings for a person, or no approval yet). Needs push access." +
+      'Rebase and merge a pull request: if its target branch moved, GitOrange rebases it first, then moves the target ' +
+      'branch to its head (a fast-forward), so every commit keeps its author, message and SHA and history stays linear. ' +
+      'When it had to rebase and the new head needs checks or a fresh review, it stops with "Rebased onto … — waiting ' +
+      'for checks" and lands once they pass (auto-merge) — call it again then. Refused while checks fail or run, review ' +
+      "is not satisfied (an agent's change request, findings for a person, or no approval yet), or a rebase conflict " +
+      'needs fixing locally. Needs push access.' +
       ' Also refused while it must account for another pull request, is stacked on an open one, or waits on one; the refusal names it. Only a person can dismiss such a dependency, in the web UI.',
     annotations: {
       readOnlyHint: false,
@@ -619,15 +654,6 @@ const mergePullRequest: ToolModule = {
       properties: {
         repository: repositoryProp,
         number: numberProp,
-        title: {
-          type: 'string',
-          description:
-            'Commit title. Defaults to "<pull request title> (#<number>)".',
-        },
-        message: {
-          type: 'string',
-          description: 'Optional commit message body.',
-        },
       },
       required: ['repository', 'number'],
     },
@@ -649,21 +675,65 @@ const mergePullRequest: ToolModule = {
       git,
       pr,
       by: ctx.user,
-      author: ctx.user,
-      title: str(args, 'title'),
-      message: str(args, 'message'),
       after: ctx.after,
     });
     if (!result.ok)
       throw new McpToolError(
-        result.reason === 'review'
+        (result.reason === 'review'
           ? `${result.error} People approve in GitOrange's web UI, or through a moderator app: ask the user to review it at ${pullUrl(ctx, fullName, pr.number)} or on their Approvals page.`
-          : result.error
+          : result.error) +
+          // Landing rewrote the branch: the agent's local copy is now stale.
+          (result.rebased && result.rebasedFrom
+            ? ` ${rebasedNote(pr.headRef, result.rebasedFrom, result.rebased)}`
+            : '')
       );
     return {
       content: [
         text(
-          `Merged #${pr.number} into ${landTargetOf(pr)} as ${result.sha.slice(0, 7)}: ${pullUrl(ctx, fullName, pr.number)}`
+          `Merged #${pr.number} into ${landTargetOf(pr)}: it is now at ${result.sha.slice(0, 7)}: ${pullUrl(ctx, fullName, pr.number)}`
+        ),
+      ],
+    };
+  },
+};
+
+const retryRebaseTool: ToolModule = {
+  definition: {
+    name: 'gitorange_retry_rebase',
+    title: 'Try the rebase again',
+    description:
+      "Try a pull request's stopped rebase again (its rebase_conflict in gitorange_get_pull_request): GitOrange sets " +
+      'aside where it stopped and rebases it again, asking AI again about the commit it could not resolve (the model ' +
+      'failed or could not be reached, or AI had already resolved too many commits). Refused when nothing is stopped, ' +
+      'and for a "Not rebased" branch (bring it up to date yourself). A conflict AI never takes (binary or generated ' +
+      'files) stops again: rebase locally instead. Follow it with gitorange_get_pull_request. Needs push access.',
+    annotations: {
+      readOnlyHint: false,
+      destructiveHint: false,
+      title: 'Try the rebase again',
+    },
+    inputSchema: {
+      type: 'object',
+      properties: { repository: repositoryProp, number: numberProp },
+      required: ['repository', 'number'],
+    },
+  },
+  handler: async (args, ctx) => {
+    const { repo, git, fullName, perms } = await repoFor(ctx, args);
+    // The same check as the web UI (merge permission).
+    if (!perms.write)
+      throw new McpToolError(
+        `You don't have permission to rebase pull requests in ${fullName}.`
+      );
+    const pr = await pullFor(ctx, repo.id, fullName, prNumber(args));
+    const result = await retryRebase(ctx.env, ctx.db, git, pr);
+    if (!result.ok) throw new McpToolError(result.error);
+    ctx.after(publishChange(ctx.env, repo.id, { approvals: true }));
+    ctx.after(settleStates(ctx.env, ctx.db, repo.id));
+    return {
+      content: [
+        text(
+          `Rebasing #${pr.number} onto ${result.view.onto} again: follow it with gitorange_get_pull_request. ${pullUrl(ctx, fullName, pr.number)}`
         ),
       ],
     };
@@ -912,6 +982,7 @@ export const PULL_TOOLS: ToolModule[] = [
   createPullRequest,
   commentPullRequest,
   mergePullRequest,
+  retryRebaseTool,
   requestChangesOnReviewFlag,
   getRunLogs,
 ];

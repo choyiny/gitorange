@@ -5,11 +5,11 @@ import {
   type PrClassification,
   type PullRequest,
 } from '../db/app.schema';
-import { users } from '../db/auth.schema';
 import type { GitService } from '../git/service';
 import { findRepoById, gitFor } from '../lib/repos';
 import { landPull } from '../merge/land';
-import { latestResolution, resolutionConfigured } from '../merge/resolution';
+import { resolutionConfigured } from '../merge/resolution';
+import { rebaseTips, rebaseView } from '../merge/rebase';
 import { landTargetOf } from '../lib/land-target';
 import { stackGate } from '../stack/gate';
 import { checksAt, reviewGateFor, reviewReasonText } from './gate';
@@ -18,8 +18,8 @@ import { hasInvitedAgents } from './keys';
 /**
  * - off: no agent is invited to the repository (a person approves and merges), or the PR isn't open.
  * - disabled: turned off for this pull request.
- * - waiting: review, approvals, checks, conflict resolution or stack discovery in progress.
- * - blocked: failed checks or a failed review, or conflicts.
+ * - waiting: review, approvals, checks, AI resolving a rebase conflict, or stack discovery in progress.
+ * - blocked: failed checks or a failed review, a rebase conflict, or nothing to merge.
  * - ready: merges now.
  */
 export type AutoMergeStatus =
@@ -56,16 +56,15 @@ export async function autoMergeStatus(
   if (checks)
     (checks.kind === 'failed' ? blocked : waiting).push(checks.reason);
 
-  const plan = await git.planMerge(base, head);
-  if (plan.upToDate) blocked.push('Nothing to merge');
-  else if (plan.conflicts.length) {
-    const r = await latestResolution(db, pr.id);
-    const current = r && r.baseSha === base && r.headSha === head;
-    if (current && r.status === 'proposed') {
-      // Resolved by AI: merging lands the resolution.
-    } else if (current && (r.status === 'running' || r.status === 'queued'))
-      waiting.push('Resolving conflicts with AI');
-    else blocked.push('Merge conflicts need a person');
+  const tips = await rebaseTips(git, pr);
+  if (tips) {
+    // Behind is fine: landing rebases it first.
+    const v = await rebaseView(env, db, git, pr, tips);
+    if (v.status === 'nothing_to_merge') blocked.push('Nothing to merge');
+    else if (v.status === 'resolving')
+      waiting.push('Resolving a rebase conflict with AI');
+    else if (v.status === 'conflict')
+      blocked.push(v.error ?? 'Rebase conflict');
   }
 
   const gate = await stackGate(db, git, pr);
@@ -99,11 +98,6 @@ export async function maybeAutoMerge(
   const git = gitFor(env, found.repo);
   const status = await autoMergeStatus(env, db, git, pr);
   if (status.state !== 'ready') return false;
-  const author = await db
-    .select({ name: users.name, email: users.email })
-    .from(users)
-    .where(eq(users.id, pr.authorId))
-    .get();
   const followUps: Promise<unknown>[] = [];
   const result = await landPull({
     env,
@@ -113,7 +107,6 @@ export async function maybeAutoMerge(
     git,
     pr,
     by: null,
-    author: author ?? { name: 'GitOrange', email: 'noreply@gitorange' },
     after: (p) => void followUps.push(p),
     // Merged branches don't pile up; stacked or since-pushed ones are kept.
     deleteBranch: true,

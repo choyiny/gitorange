@@ -69,12 +69,13 @@ or runners to operate.
    checks, agents, or stack discovery are still running, the pull request is waiting.
 7. **It merges on its own** once its checks pass and its agents approved (or a person approved what they
    flagged), and its branch is deleted unless another open pull request builds on it; pull requests stacked on it
-   move onto `main`. If `main` moved and the change now conflicts, a Pi agent resolves the conflict first.
+   move onto `main`. GitOrange keeps it rebased onto `main` itself, and landing is a fast-forward: every commit keeps its author,
+   message and SHA. A commit that conflicts is resolved by a Pi agent first.
 
 ## Built for many agents at once
 
 **Concurrency.** Every merge is a compare-and-swap push onto the target branch's tip, so two agents racing to
-land never overwrite each other. The loser re-plans against the new tip. Reviews, conflict resolutions, and
+land never overwrite each other. The loser re-plans against the new tip. Reviews, rebases, and
 discovery runs are durable [Workflows](https://developers.cloudflare.com/workflows/), deduplicated by commit, so a
 retried or duplicated trigger for the same commits never does the work twice. A pull request's state history is recorded with an
 atomic compare-and-insert, so concurrent updates never record a change twice or let an older result overwrite a
@@ -116,13 +117,16 @@ person dismissed edits its own instructions or `knowledge/` so similar false pos
 are committed directly to the agent's repository, as the agent, without review (revert them like any commit).
 Lessons from private repositories are redacted in the agent's repository.
 
-**Conflict handling.** Files are first merged line by line, so only truly overlapping edits reach a model.
-Those go to a Pi agent running in a [Cloudflare Computer](https://github.com/cloudflare/computer) workspace,
-told what each side was trying to do. When the target branch moves again, a still-valid resolution is carried
-forward without another model call; attempts for commits that moved on are cancelled at once, and a burst of
-landings ends in one attempt per pull request. Conflicts in generated files (lockfiles, migration snapshots,
-anything in `.orangeignore`) are left to the pull request's author or agent to regenerate. Collisions between
-open pull requests are found before either lands.
+**Rebasing and conflicts.** GitOrange rebases every open pull request onto its base itself, replaying its
+commits and skipping the ones the base already has, so a stacked pull request rebases cleanly once its parent
+lands. Files are merged line by line, so only truly overlapping edits conflict; each conflicting commit goes to a
+Pi agent in a [Cloudflare Computer](https://github.com/cloudflare/computer) workspace, told what that commit and
+the pull request are for. A burst of landings ends in one rebase per pull request. Conflicts in generated files
+(lockfiles, migration snapshots, anything in `.orangeignore`) are left to the pull request's author or agent.
+When AI fails on a commit, anyone who can merge can Try the rebase again from the pull request page (or
+`gitorange_retry_rebase` over MCP). Collisions between open pull requests are found before either lands. After GitOrange rebases a branch, its agent
+rebases its local commits onto it (`git fetch && git rebase --onto origin/<branch> <old head>`, keeping unpushed
+work) before pushing again; the MCP server says so.
 
 ## Built for agents
 
@@ -133,7 +137,7 @@ open pull requests are found before either lands.
 - **A work queue.** `gitorange_list_pull_requests` with `state: "agent_followup"` returns the pull requests
   waiting on an agent, each with structured reasons: `check_failed` with the run number,
   `agent_changes_requested` with the requested changes, `must_account_for` with instructions,
-  `changes_requested`, `conflicts_unresolved`.
+  `changes_requested`, `rebase_conflict` with the commit and files.
 - **Everything else an agent needs:** create repositories, open and comment on pull requests, read Actions step
   logs to see why a check failed, read the stack tree (`gitorange_get_pull_tree`), and merge. Approving is for
   people in the web UI, and merging is refused until review is satisfied, so an agent can't route around a
@@ -223,8 +227,8 @@ which changes it reviews, how it judges), and invite it in a repository's **Sett
 
 - **Git over HTTPS** with personal access tokens, and **Git LFS** stored in R2 (files up to 5 GB, transferred
   directly between `git lfs` and R2).
-- **Pull requests** with Markdown comments, commits and files-changed views, and **rebase and merge** only, so
-  history stays linear.
+- **Pull requests** with Markdown comments, commits and files-changed views, and **rebase and merge** only (a fast-forward,
+  so commits keep their SHAs and history stays linear).
 - **Personal and team repositories.** Personal repositories are private by default (owner, collaborators,
   site admins) and can be made internal. Team repositories are visible to every member.
 - **Invitations** by email, single use, expiring in seven days. The first visitor creates the site admin, and
@@ -278,16 +282,13 @@ actual numbers.
 
 ## Known limitations
 
-- **Stacking retargets only in GitOrange.** A stacked pull request's base becomes its parent's branch, but
-  nothing is pushed: the author rebases onto the parent's branch themselves. A maintainer can Unstack a pull
-  request or Dismiss a dependency from the pull request page.
-- **Auto-merge tests the pull request's own commit, not the rebased result.** If the target moved since the
-  checks ran, the merged result as a whole wasn't tested. Landing one at a time on tested commits is planned.
+- **Stacking retargets the pull request.** A stacked pull request's base becomes its parent's branch and GitOrange
+  rebases it there. A maintainer can Unstack a pull request or Dismiss a dependency from the pull request page.
 - **Clef reads one-line summaries.** An agent's trigger sees the summaries, not the diff, so a summary that
   leaves something out can't request that agent; ask its trigger question in plain terms.
 - **AI resolves text conflicts only.** Binary files, a file deleted on one side but changed on the other, and
   generated files (lockfiles, migration snapshots, `.orangeignore`d paths) are left to the pull request's
-  agent to resolve or regenerate locally.
+  agent to rebase locally.
 - **No Actions secrets, no forks, no issues, and no line-level review comments yet.**
 - **Large diffs are truncated** (300 files; files over ~512 KB listed without contents), and very long
   histories are walked up to ~2,000 commits.

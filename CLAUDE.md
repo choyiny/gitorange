@@ -50,11 +50,13 @@ and better-auth. Git storage is **Cloudflare Artifacts**: one Artifacts repo per
   Moderator apps (`mcp_moderators`, `worker/src/mcp/moderators.ts`): only a connection the user marked as a moderator
   lists and calls the approve/dismiss tools; checked on every call, never cached; the tools reuse `decideFlag` /
   `approvePull` and record `via`.
-- Merging is rebase-only (squash onto the target tip). Conflicts: line-level diff3 in `GitService.mergeTrees`; text
-  conflicts are resolved automatically by AI (`worker/src/merge/`): sweep/attempt Workflow `MERGE_RESOLUTION`,
-  `MergeResolver` DO (Cloudflare Computer workspace + Pi Durable harness, model `RESOLVER_MODEL` via the `AI`
-  binding). A valid resolution (`merge_resolutions.status = 'proposed'` for the current shas) makes the PR mergeable.
-  Tests drive `executeResolution`/`executeSweep` with fake steps and a fake resolver.
+- Merging is rebase + fast-forward (spec `docs/superpowers/specs/2026-10-07-rebase-merging-design.md`, details in
+  `docs/architecture.md`). GitOrange rebases open PRs itself: engine `git/rebase.ts`, runs on `MERGE_RESOLUTION`
+  (`merge/rebase.ts`, `ensureRebase`; CAS on the old head, old head kept as `refs/pull/N/pre-rebase/<sha7>`); per-commit
+  AI conflict resolution in `merge/commit-resolution.ts`; a stop is `rebase_conflict` or "Not rebased: …" (`rebaseBlocked`: default branch, a
+  `repositories.protected_branches` glob, a head shared into another base). `review/carry.ts`
+  carries approvals/reviews on clean rebases. `landPull` (`merge/land.ts`) is a CAS fast-forward, rebasing inline first
+  when the target moved. Tests: `executeRebase` via `runRebases`/`fakeResolver` (`__tests__/helpers/rebase.ts`).
 - Reviews (`worker/src/review/`): reviewer agents invited per repository (`repository_agents`). Per head commit
   (`pr_classifications`, id `<pr id>-<head sha>`): GLM one-liner per file → one Clef call over every agent's
   `trigger.ask` (`pr_reviewers`, requested iff p ≥ above; unsure = requested) → each requested agent reviews

@@ -1,5 +1,5 @@
 /**
- * Records every MERGE_RESOLUTION Workflow (review, conflict resolution, stack discovery, sweep, lesson) as
+ * Records every MERGE_RESOLUTION Workflow (review, rebase, stack discovery, sweep, lesson) as
  * an agent run with steps, for the Actions tab. Applied once, at the Workflow entrypoint, around the
  * step runner the executors receive.
  *
@@ -9,7 +9,7 @@
  * caught and logged.
  */
 import { landTargetOf } from '../lib/land-target';
-import { and, eq, inArray, isNull, or, sql } from 'drizzle-orm';
+import { and, desc, eq, gte, inArray, isNull, or, sql } from 'drizzle-orm';
 import {
   agentLessons,
   agentRuns,
@@ -25,7 +25,7 @@ import {
 import { users } from '../db/auth.schema';
 import type { DrizzleDB } from '../db/middleware';
 import { publishChange } from '../live/publish';
-import type { StepRunner } from '../merge/resolution';
+import { NOTHING_TO_MERGE, type StepRunner } from '../merge/resolution';
 import type { MergeResolutionParams } from '../merge/workflow';
 import { clip, inAgentStep } from './context';
 
@@ -119,6 +119,26 @@ export async function describeRun(
           repositoryId: row.repositoryId,
           pullRequestId: row.pullRequestId,
           title: `Resolve conflicts with ${landTargetOf(row)}`,
+        }
+      : null;
+  }
+  if (payload.rebase) {
+    const pr = await db
+      .select({
+        id: pullRequests.id,
+        number: pullRequests.number,
+        baseRef: pullRequests.baseRef,
+        repositoryId: pullRequests.repositoryId,
+      })
+      .from(pullRequests)
+      .where(eq(pullRequests.id, payload.rebase.pullRequestId))
+      .get();
+    return pr
+      ? {
+          kind: 'rebase',
+          repositoryId: pr.repositoryId,
+          pullRequestId: pr.id,
+          title: `Rebase #${pr.number} onto ${pr.baseRef}`,
         }
       : null;
   }
@@ -291,22 +311,50 @@ export function decisionFor(name: string, result: unknown): string | null {
       return 'Unrelated';
     case 'claim':
       return r === false ? 'Already checked at these commits' : null;
-    case 'prepare':
-      if (typeof r?.error === 'string') return r.error;
-      return r?.value?.files
-        ? plural(Object.keys(r.value.files).length, 'conflicted file')
-        : null;
     case 'resolve':
-      if (!r?.status) return null;
-      return r.status === 'done'
-        ? `Resolved ${plural(Object.keys(r.files ?? {}).length, 'file')}${
-            firstLine(r.explanation) ? `: ${firstLine(r.explanation)}` : ''
+      if (r?.status === 'resolved') return 'Resolved';
+      return r?.status === 'failed'
+        ? `Not resolved: ${r.error ?? 'failed'}`
+        : null;
+    case 'fail':
+      return typeof r === 'string' ? r : null;
+    case 'tips':
+      return r && typeof r.onto === 'string'
+        ? `Onto ${r.ontoBranch} at ${String(r.onto).slice(0, 7)}, head ${String(r.head).slice(0, 7)}`
+        : 'Closed, or a branch is gone';
+    case 'replay':
+      switch (r?.kind) {
+        case 'up_to_date':
+          return 'Already up to date';
+        case 'done':
+          return 'Replays cleanly';
+        case 'empty':
+          return 'Nothing to merge: the base already has every change';
+        case 'too_many':
+          return `Too many commits (${r.count})`;
+        case 'conflict':
+          return `Commit ${String(r.commit).slice(0, 7)} conflicts in ${plural(r.paths.length, 'file')}: ${r.paths.join(', ')}`;
+        case 'gone':
+          return 'Closed, or a branch is gone';
+        default:
+          return null;
+      }
+    case 'stop':
+      return typeof r === 'string' ? r : null;
+    case 'write':
+      if (r?.kind === 'moved') return 'The branch moved: starting over';
+      if (r?.kind === 'blocked')
+        return typeof r.error === 'string' ? r.error : null;
+      return r?.kind === 'written'
+        ? `Rebased ${String(r.w.from).slice(0, 7)} → ${String(r.w.to).slice(0, 7)}${
+            r.w.skipped ? `, skipped ${plural(r.w.skipped, 'commit')}` : ''
           }`
-        : `Did not finish${r.reason ? ` (${r.reason})` : ''}`;
-    case 'commit':
-      if (typeof r?.error === 'string') return r.error;
-      return typeof r?.value === 'string'
-        ? `Proposed ${r.value.slice(0, 7)}`
+        : null;
+    case 'rebase':
+      return r === true ? 'Started a rebase' : null;
+    case 'requeue':
+      return r === true
+        ? 'The branches moved during the run: started another rebase'
         : null;
     case 'targets':
       return Array.isArray(r)
@@ -393,6 +441,37 @@ async function outcomeError(
       .get();
     return row?.status === 'failed'
       ? (row.error ?? 'The resolution failed.')
+      : null;
+  }
+  if (payload.rebase) {
+    // Where this run stopped for the agent, or AI failed: a row it wrote that failed.
+    const run = await db
+      .select({ startedAt: agentRuns.startedAt })
+      .from(agentRuns)
+      .where(eq(agentRuns.id, runId))
+      .get();
+    if (!run) return null;
+    const row = await db
+      .select({
+        status: mergeResolutions.status,
+        error: mergeResolutions.errorMessage,
+      })
+      .from(mergeResolutions)
+      .where(
+        and(
+          eq(mergeResolutions.pullRequestId, payload.rebase.pullRequestId),
+          // created_at has seconds; the run's start, milliseconds.
+          gte(
+            mergeResolutions.createdAt,
+            new Date(Math.floor(run.startedAt.getTime() / 1000) * 1000)
+          )
+        )
+      )
+      .orderBy(desc(mergeResolutions.createdAt), sql`rowid DESC`)
+      .get();
+    // Nothing to merge isn't a failure: the run found the base already has it all.
+    return row?.status === 'failed' && row.error !== NOTHING_TO_MERGE
+      ? (row.error ?? 'The rebase stopped.')
       : null;
   }
   if (payload.learn) {

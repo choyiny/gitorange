@@ -93,7 +93,7 @@ jobs:
             migrations/**
           modules: |
             stacking: Stacked pull requests: stack discovery and pair edges, the stack tree, reconcile and retargeting, stack gates on landing, and land targets (worker/src/stack/, pull_requests.land_target)
-            review: Reviewing and merging pull requests: reviews by reviewer agents (worker/src/review/: per-file one-liners, the Clef trigger, agent reviews and their findings (single pass, and engine: pi reviews in the AgentReviewer Durable Object with its read-only checkout), the review gate and person approvals, .orangeignore, auto-merge), the Approvals inbox, pull request states (worker/src/pulls/: state reasons, signals, settle, pr_events), merging and landing (worker/src/merge/, landPull), three-way tree merges and diff3 conflicts (worker/src/git/service.ts), AI conflict resolution (MergeResolver, MERGE_RESOLUTION attempts and sweeps), generated-file matching, squash commit credits, and agent runs (worker/src/agent-runs/: how the review, conflict resolution, sweep, and stack discovery Workflows record their steps, decisions, and AI usage, and agent run retention), agents learning from dismissed change requests (worker/src/learn/: lessons, the learn mode of AgentReviewer, validating and committing the learned edit)
+            review: Reviewing and merging pull requests: reviews by reviewer agents (worker/src/review/: per-file one-liners, the Clef trigger, agent reviews and their findings (single pass, and engine: pi reviews in the AgentReviewer Durable Object with its read-only checkout), the review gate and person approvals, .orangeignore, auto-merge), the Approvals inbox, pull request states (worker/src/pulls/: state reasons, signals, settle, pr_events), merging and landing (worker/src/merge/, landPull), three-way tree merges and diff3 conflicts (worker/src/git/service.ts), AI conflict resolution (MergeResolver, MERGE_RESOLUTION attempts and sweeps), generated-file matching, and agent runs (worker/src/agent-runs/: how the review, conflict resolution, sweep, and stack discovery Workflows record their steps, decisions, and AI usage, and agent run retention), agents learning from dismissed change requests (worker/src/learn/: lessons, the learn mode of AgentReviewer, validating and committing the learned edit)
             actions: GitOrange Actions (worker/src/actions/: workflow syntax and expressions, triggers, job planning and runner sizes, the executor and JobRunner containers, the job queue, the cache, log retention, the gitorange/relevance action), the Cron Triggers (worker/src/cron.ts), and git transport and storage: the git smart-HTTP endpoint (worker/src/git-http.ts), git objects, packfiles and pkt-lines (worker/src/git/), Git LFS (worker/src/lfs-http.ts, worker/src/lib/lfs.ts), and raw file serving
             core: The API outside the modules above (worker/src/routers/, worker/src/lib/, worker/src/auth/, worker/src/index.ts): repositories and pull requests, access and visibility (worker/src/lib/repos.ts), setup and invitations, teams, Site admin and instance settings, commit emails and attribution, live updates (worker/src/live/), usage and cost (worker/src/usage/), insights, the AI Gateway, API smoke tests; the MCP server (worker/src/mcp/: JSON-RPC tools) and its OAuth sign-in (better-auth OAuth provider, JWT access tokens, consent); and the web app's client-side libraries in src/lib (agent prompts, syntax highlighting, repository URLs, the stack tree and pull request state display)
 
@@ -128,6 +128,7 @@ jobs:
           worker/src/__tests__/stacking-landing.test.ts
           worker/src/__tests__/stack-tree.test.ts
           worker/src/__tests__/land-target.test.ts
+          worker/src/__tests__/stacking-rebase.test.ts
 
   test-review:
     name: Test (review and merge)
@@ -158,6 +159,7 @@ jobs:
           yarn test
           worker/src/__tests__/review.test.ts
           worker/src/__tests__/review-gate.test.ts
+          worker/src/__tests__/review-carry.test.ts
           worker/src/__tests__/review-diagram.test.ts
           worker/src/__tests__/agent-review-contract.test.ts
           worker/src/__tests__/agent-review.test.ts
@@ -175,11 +177,14 @@ jobs:
           worker/src/__tests__/pull-approvals.test.ts
           worker/src/__tests__/approvals.test.ts
           worker/src/__tests__/pull-states.test.ts
-          worker/src/__tests__/merge-resolution.test.ts
+          worker/src/__tests__/rebase-runs.test.ts
+          worker/src/__tests__/rebase-resolution.test.ts
+          worker/src/__tests__/rebase-retry.test.ts
           worker/src/__tests__/pulls-ai-resolution.test.ts
           worker/src/__tests__/git-merge.test.ts
+          worker/src/__tests__/git-rebase.test.ts
           worker/src/__tests__/merge-generated.test.ts
-          worker/src/__tests__/squash-credits.test.ts
+          worker/src/__tests__/rebase-landing.test.ts
           worker/src/__tests__/agent-runs.test.ts
 
   test-actions:
@@ -247,6 +252,7 @@ jobs:
         run: >-
           yarn test
           worker/src/__tests__/repos-pulls.test.ts
+          worker/src/__tests__/protected-branches.test.ts
           worker/src/__tests__/setup-invites.test.ts
           worker/src/__tests__/teams-visibility.test.ts
           worker/src/__tests__/admin-setup.test.ts

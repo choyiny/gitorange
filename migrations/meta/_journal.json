@@ -169,6 +169,27 @@
       "when": 1791378535687,
       "tag": "0023_windy_calypso",
       "breakpoints": true
+    },
+    {
+      "idx": 24,
+      "version": "6",
+      "when": 1791424267566,
+      "tag": "0024_rebase_merging",
+      "breakpoints": true
+    },
+    {
+      "idx": 25,
+      "version": "6",
+      "when": 1791424268228,
+      "tag": "0025_cancel_squash_resolutions",
+      "breakpoints": true
+    },
+    {
+      "idx": 26,
+      "version": "6",
+      "when": 1791467006083,
+      "tag": "0026_protected_branches",
+      "breakpoints": true
     }
   ]
 }

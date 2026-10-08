@@ -9,6 +9,7 @@ import {
   type TestEnv,
 } from './helpers/app';
 import { commitPaths } from './helpers/seed';
+import { moved, runRebases } from './helpers/rebase';
 import {
   AGENT_MD,
   agentModels,
@@ -199,6 +200,7 @@ describe('MCP server', () => {
       ['gitorange_create_pull_request', false],
       ['gitorange_comment_pull_request', false],
       ['gitorange_merge_pull_request', false],
+      ['gitorange_retry_rebase', false],
       ['gitorange_request_changes_on_review_flag', false],
       ['gitorange_get_run_logs', true],
       ['gitorange_list_agents', true],
@@ -271,6 +273,7 @@ describe('MCP server', () => {
       full_name: 'octocat/from-claude',
       empty: false,
       branches: ['main'],
+      protected_branches: [],
       latest_commit: { message: 'Initial commit' },
     });
   });
@@ -364,7 +367,7 @@ describe('MCP server', () => {
     const res = await call(t, '/api/mcp', { cookie: admin });
     const body = (await res.json()) as { serverUrl: string; tools: unknown[] };
     expect(body.serverUrl).toBe(`${ORIGIN}/mcp`);
-    expect(body.tools).toHaveLength(18);
+    expect(body.tools).toHaveLength(19);
     expect((await call(t, '/api/mcp')).status).toBe(401);
   });
 });
@@ -412,6 +415,10 @@ describe('instance name', () => {
       /act as the signed-in user, so only use them when the user explicitly asks/
     );
     expect(init.result.instructions).not.toMatch(/web UI/);
+    expect(init.result.instructions).not.toContain('reset --hard');
+    expect(init.result.instructions).toContain(
+      'rebase your local commits onto origin/<branch> (`git fetch && git rebase --onto origin/<branch> <old head>`) before you push again'
+    );
   });
 });
 
@@ -437,6 +444,89 @@ describe('MCP pull request tools', () => {
     );
     return { t, admin, token: access_token, repo };
   }
+
+  it('tells the agent to rebase its local commits onto the branch GitOrange rebased', async () => {
+    const { t, token, repo } = await repoWithBranch();
+    await tool(t, token, 'gitorange_create_pull_request', {
+      repository: 'octocat/app',
+      head: 'feature',
+      title: 'Add a',
+    });
+    const old = repo.refs.get('refs/heads/feature')!;
+    const main = repo.refs.get('refs/heads/main')!;
+    await commitPaths(
+      repo,
+      'main',
+      { 'README.md': '# app\n', 'z.txt': 'z\n' },
+      'Main moves'
+    );
+    await moved(t, 'main', main);
+    await runRebases(t);
+    const now = repo.refs.get('refs/heads/feature')!;
+    const get = async () =>
+      JSON.parse(
+        (
+          await tool(t, token, 'gitorange_get_pull_request', {
+            repository: 'octocat/app',
+            number: 1,
+          })
+        ).content[0].text
+      );
+    expect((await get()).rebased).toEqual({
+      from: old,
+      to: now,
+      note: `GitOrange rebased this branch (${old.slice(0, 7)} → ${now.slice(0, 7)}); run \`git fetch && git rebase --onto origin/feature ${old}\` before you push again (it keeps your unpushed commits).`,
+    });
+    // Once the agent pushes on top, the note goes.
+    await commitPaths(
+      repo,
+      'feature',
+      {
+        'README.md': '# app\n',
+        'z.txt': 'z\n',
+        'src/a.ts': 'export const a = 2;\n',
+      },
+      'More'
+    );
+    expect((await get()).rebased).toBeNull();
+  });
+
+  it('a merge that rebased first tells the agent how to keep its unpushed commits', async () => {
+    const { t, admin, token, repo } = await repoWithBranch();
+    await tool(t, token, 'gitorange_create_pull_request', {
+      repository: 'octocat/app',
+      head: 'feature',
+      title: 'Add a',
+    });
+    await call(t, '/api/repos/octocat/app/pulls/1/approval', {
+      cookie: admin,
+      method: 'POST',
+    });
+    await settle(t);
+    const old = repo.refs.get('refs/heads/feature')!;
+    // Main gains a pull_request workflow: the rebased head has checks to wait for, so landing stops after rebasing.
+    await commitPaths(
+      repo,
+      'main',
+      {
+        'README.md': '# app\n',
+        '.github/workflows/ci.yml':
+          'on:\n  pull_request:\n    branches: [main]\njobs:\n  test:\n    runs-on: ubuntu-latest\n    steps:\n      - run: echo ok\n',
+      },
+      'Main moves'
+    );
+    const refused = await tool(t, token, 'gitorange_merge_pull_request', {
+      repository: 'octocat/app',
+      number: 1,
+    });
+    const now = repo.refs.get('refs/heads/feature')!;
+    expect(now).not.toBe(old);
+    expect(refused.isError).toBe(true);
+    expect(refused.content[0].text).toContain(
+      `run \`git fetch && git rebase --onto origin/feature ${old}\` before you push again`
+    );
+    expect(refused.content[0].text).not.toContain('reset --hard');
+  });
 
   it('says whose move it is, and lists what needs the agent', async () => {
     const { t, admin, token, repo } = await repoWithBranch();
@@ -604,8 +694,10 @@ describe('MCP pull request tools', () => {
       commits: [{ message: 'Add a' }],
       merge: {
         nothing_to_merge: false,
-        conflicts: [],
-        ai_conflict_resolution: null,
+        behind: false,
+        rebase_onto: 'main',
+        ai_resolving: null,
+        rebase_conflict: null,
       },
       auto_merge: null, // no agent is invited
       reviewers: [],
@@ -625,10 +717,11 @@ describe('MCP pull request tools', () => {
     });
     expect(merged.isError).toBeUndefined();
     expect(merged.content[0].text).toMatch(
-      /^Merged #1 into main as [0-9a-f]{7}/
+      /^Merged #1 into main: it is now at [0-9a-f]{7}/
     );
-    const tip = repo.parseCommit(repo.refs.get('refs/heads/main')!)!;
-    expect(tip.message).toBe('Add a (#1)');
+    const tip = repo.refs.get('refs/heads/main')!;
+    expect(tip).toBe(repo.refs.get('refs/heads/feature')); // a fast-forward: the branch's own commit
+    expect(repo.parseCommit(tip)!.message).toBe('Add a');
     const after = JSON.parse(
       (
         await tool(t, token, 'gitorange_get_pull_request', {
@@ -639,7 +732,7 @@ describe('MCP pull request tools', () => {
     );
     expect(after).toMatchObject({
       state: 'merged',
-      merged: { by: 'octocat', automatically: false },
+      merged: { by: 'octocat', automatically: false, commit: tip },
     });
   });
 

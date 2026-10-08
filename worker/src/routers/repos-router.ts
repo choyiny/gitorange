@@ -1,4 +1,5 @@
 import { OpenAPIHono, createRoute, z } from '@hono/zod-openapi';
+import { rebase, REBASE_COMMITTER } from '../git/rebase';
 import { and, desc, eq, sql } from 'drizzle-orm';
 import {
   lfsObjects,
@@ -26,6 +27,10 @@ import {
 } from '../lib/repos';
 import { deleteRepositoryLogs } from '../actions/trigger';
 import { createRepository, nameTaken } from '../lib/repo-create';
+import {
+  invalidProtectedPatterns,
+  normalizeProtectedPatterns,
+} from '../lib/protected-branches';
 import {
   LFS_NOT_CONFIGURED,
   OID_RE,
@@ -68,6 +73,7 @@ export function serializeRepo(r: Repository, ns: Namespace) {
     fullName: `${ns.username}/${r.name}`,
     description: r.description,
     defaultBranch: r.defaultBranch,
+    protectedBranches: r.protectedBranches ?? [],
     createdAt: r.createdAt.toISOString(),
     updatedAt: r.updatedAt.toISOString(),
   };
@@ -227,6 +233,16 @@ const updateRepoRoute = createRoute({
             description: z.string().max(350).nullable().optional(),
             defaultBranch: z.string().min(1).optional(),
             visibility: z.enum(['private', 'internal']).optional(),
+            // Replaces the list; [] or null clears it.
+            protectedBranches: z
+              .array(z.string())
+              .nullable()
+              .optional()
+              .openapi({
+                description:
+                  'Branch name patterns GitOrange never rebases: exact names, or globs (* within one path segment, ** across segments). At most 50, each 1–100 characters without whitespace.',
+                example: ['release/*', 'develop'],
+              }),
           }),
         },
       },
@@ -269,6 +285,12 @@ reposRouter.openapi(updateRepoRoute, async (c) => {
     if (!(await c.get('git').resolve(body.defaultBranch)))
       return c.json({ error: 'Branch not found' }, 400);
     patch.defaultBranch = body.defaultBranch;
+  }
+  if (body.protectedBranches !== undefined) {
+    const patterns = (body.protectedBranches ?? []).map((p) => p.trim());
+    const invalid = invalidProtectedPatterns(patterns);
+    if (invalid) return c.json({ error: invalid }, 400);
+    patch.protectedBranches = normalizeProtectedPatterns(patterns);
   }
   await db.update(repositories).set(patch).where(eq(repositories.id, repo.id));
   return c.json(serializeRepo({ ...repo, ...patch }, c.get('namespace')), 200);
@@ -813,7 +835,8 @@ reposRouter.openapi(compareRoute, async (c) => {
 export async function compareShas(
   git: GitService,
   baseSha: string,
-  headSha: string
+  headSha: string,
+  opts: { mergeability?: boolean } = {}
 ) {
   if (baseSha === headSha) {
     return {
@@ -827,10 +850,17 @@ export async function compareShas(
     };
   }
   const mb = await git.mergeBase(baseSha, headSha);
-  const [commits, plan] = await Promise.all([
-    git.commitsBetween(baseSha, headSha),
-    git.planMerge(baseSha, headSha),
-  ]);
+  const commits = await git.commitsBetween(baseSha, headSha);
+  // Whether landing's rebase would replay it cleanly (a dry run: nothing is pushed).
+  const dry =
+    opts.mergeability === false || mb === headSha
+      ? null
+      : await rebase(git, {
+          head: headSha,
+          onto: baseSha,
+          committer: { ...REBASE_COMMITTER, timestamp: 0 },
+          ontoLabel: 'base',
+        });
   const mbCommit = mb ? await git.commit(mb) : null;
   const headCommit = await git.commit(headSha);
   const files = await git.fileDiffs(
@@ -845,8 +875,10 @@ export async function compareShas(
     baseSha,
     headSha,
     status: status as 'behind' | 'ahead' | 'diverged',
-    mergeable: !plan.upToDate && plan.conflicts.length === 0,
-    conflicts: plan.upToDate ? [] : plan.conflicts,
+    mergeable:
+      dry?.kind === 'up_to_date' ||
+      (dry?.kind === 'done' && dry.commits.length > 0),
+    conflicts: dry?.kind === 'conflict' ? dry.conflicts : [],
     commits,
     files,
   };

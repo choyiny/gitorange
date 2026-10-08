@@ -203,7 +203,7 @@ export async function repoInsights(
     db.all<Row>(sql`
         SELECT
           COUNT(*) AS attempts,
-          SUM(r.status IN ('proposed', 'applied')) AS succeeded,
+          SUM(r.status IN ('resolved', 'applied')) AS succeeded,
           SUM(r.status = 'applied') AS applied,
           SUM(r.status = 'failed') AS failed,
           SUM(r.status = 'rejected') AS rejected,

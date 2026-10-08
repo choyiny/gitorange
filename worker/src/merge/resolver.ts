@@ -70,7 +70,7 @@ Each conflict uses diff3 markers:
 ...
 =======
 ...
->>>>>>> ${labels.theirs}   (the pull request being merged)
+>>>>>>> ${labels.theirs}   (the pull request's commit being replayed onto it)
 
 Resolve every conflict so that both sides' intents survive whenever they are compatible. When they truly
 contradict, prefer the target branch's behavior for what it changed and keep the pull request's additions.
@@ -212,7 +212,7 @@ export class MergeResolver
         .map((p) => `- ${ROOT}/${p}`)
         .join('\n')}\n\n` +
       `What the target branch (${request.labels.ours}) changed and why:\n${request.oursIntent}\n\n` +
-      `What the pull request (${request.labels.theirs}) changes and why:\n${request.theirsIntent}`;
+      `What the pull request's commit (${request.labels.theirs}) changes and why:\n${request.theirsIntent}`;
     // A retried call joins the same operation instead of starting a second run.
     if (request.model)
       await this.harness.session().setModel(this.ai(request.model as never));

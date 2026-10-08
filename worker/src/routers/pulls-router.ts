@@ -6,19 +6,17 @@ import {
   pullRequestComments,
   pullRequests,
   reviewerStatuses,
-  type MergeResolution,
   type PullRequest,
 } from '../db/app.schema';
 import type { GitService } from '../git/service';
+import { NO_MODEL, SUPERSEDED } from '../merge/resolution';
 import {
-  cancelStale,
-  latestResolution,
-  resolutionConfigured,
-  startResolution,
-  NO_MODEL,
-  SUPERSEDED,
-} from '../merge/resolution';
-import { generatedConflicts } from '../merge/generated';
+  ensureRebase,
+  rebaseTips,
+  rebaseView,
+  retryRebase,
+  type RebaseView,
+} from '../merge/rebase';
 import { loadRepo, type RepoEnv } from '../lib/repos';
 import { usersById, type PublicUser } from '../lib/users';
 import {
@@ -42,7 +40,6 @@ import {
 } from './schemas';
 import { compareShas } from './repos-router';
 import { attributeCommits } from '../lib/commit-authors';
-import { ensureResolution } from '../merge/auto';
 import { landPull, pullRef } from '../merge/land';
 import { addComment, openPull, pullShas } from '../lib/pulls';
 import { reviewConfigured } from '../review/head';
@@ -175,10 +172,8 @@ const listRoute = createRoute({
         pulls: z.array(
           pullSchema.extend({
             headSha: z.string().nullable(),
-            /** Open PRs: the latest AI conflict resolution for the current base and head tips. */
-            aiResolution: z
-              .enum(['queued', 'running', 'proposed', 'failed'])
-              .nullable(),
+            /** Open PRs: AI resolving a rebase conflict at the current tips, or failed to. */
+            aiResolution: z.enum(['running', 'failed']).nullable(),
             /** Open PRs: the head commit's review in a word (agents, or a person's approval). */
             review: z
               .object({
@@ -254,10 +249,14 @@ pullsRouter.openapi(listRoute, async (c) => {
   // Latest resolution of every open PR in one query.
   const resolutions = new Map<
     string,
-    Pick<
-      MergeResolution,
-      'status' | 'baseSha' | 'headSha' | 'errorMessage' | 'model'
-    >
+    {
+      status: string;
+      baseSha: string;
+      headSha: string;
+      errorMessage: string | null;
+      model: string;
+      commitSha: string | null;
+    }
   >();
   if (openList && rows.length)
     for (const r of await db
@@ -268,6 +267,7 @@ pullsRouter.openapi(listRoute, async (c) => {
         headSha: mergeResolutions.headSha,
         errorMessage: mergeResolutions.errorMessage,
         model: mergeResolutions.model,
+        commitSha: mergeResolutions.commitSha,
       })
       .from(mergeResolutions)
       .innerJoin(
@@ -313,17 +313,23 @@ pullsRouter.openapi(listRoute, async (c) => {
   };
   const aiResolution = (pr: PullRequest) => {
     const r = resolutions.get(pr.id);
+    const onto =
+      refs.get(`refs/heads/${pr.baseRef}`) ??
+      refs.get(`refs/heads/${landTargetOf(pr)}`);
     if (
       !r ||
-      r.baseSha !== refs.get(`refs/heads/${landTargetOf(pr)}`) ||
+      r.baseSha !== onto ||
       r.headSha !== refs.get(`refs/heads/${pr.headRef}`)
     )
       return null;
-    // Conflicts AI can't resolve (NO_MODEL) were never an AI attempt.
+    // A stop AI never attempted (binary, delete/edit, generated, too many commits) isn't an AI resolution.
     if (r.model === NO_MODEL) return null;
-    if (r.status === 'rejected') return 'failed';
-    if (r.status === 'applied' || r.errorMessage === SUPERSEDED) return null;
-    return r.status;
+    // A per-commit resolution (a squash-era row, commit_sha NULL, is never resumed).
+    if ((r.status === 'running' || r.status === 'resolved') && r.commitSha)
+      return 'running' as const;
+    if (r.status === 'failed' && r.errorMessage !== SUPERSEDED)
+      return 'failed' as const;
+    return null;
   };
   return c.json(
     {
@@ -491,53 +497,6 @@ pullsRouter.openapi(createPullRoute, async (c) => {
   return c.json(serializePull(pr, await usersById(db, [author.id])), 201);
 });
 
-const resolutionSchema = z
-  .object({
-    id: z.string(),
-    status: z.enum([
-      'queued',
-      'running',
-      'proposed',
-      'applied',
-      'rejected',
-      'failed',
-    ]),
-    model: z.string(),
-    baseSha: z.string(),
-    headSha: z.string(),
-    resultSha: z.string().nullable(),
-    conflictedPaths: z.array(z.string()),
-    touchedExtraPaths: z.array(z.string()),
-    explanation: z.string().nullable(),
-    errorMessage: z.string().nullable(),
-    durationMs: z.number().nullable(),
-    /** The branches moved since this attempt; it can't be applied. */
-    stale: z.boolean(),
-    createdAt: z.string(),
-  })
-  .openapi('MergeResolution');
-
-function serializeResolution(
-  r: MergeResolution,
-  shas: { base: string; head: string } | null
-) {
-  return {
-    id: r.id,
-    status: r.status,
-    model: r.model,
-    baseSha: r.baseSha,
-    headSha: r.headSha,
-    resultSha: r.resultSha,
-    conflictedPaths: r.conflictedPaths,
-    touchedExtraPaths: r.touchedExtraPaths ?? [],
-    explanation: r.explanation,
-    errorMessage: r.errorMessage,
-    durationMs: r.durationMs,
-    stale: !shas || shas.base !== r.baseSha || shas.head !== r.headSha,
-    createdAt: r.createdAt.toISOString(),
-  };
-}
-
 const reviewFlagSchema = z
   .object({
     id: z.string(),
@@ -632,6 +591,24 @@ const commentSchema = z.object({
   updatedAt: z.string(),
 });
 
+const rebaseViewSchema = z
+  .object({
+    status: z.enum([
+      'nothing_to_merge',
+      'up_to_date',
+      'behind',
+      'resolving',
+      'conflict',
+    ]),
+    /** The branch it rebases onto: base_ref, or the land target when that branch is gone. */
+    onto: z.string(),
+    /** The commit AI is resolving, or where the rebase stopped (null: before any commit). */
+    commit: z.string().nullable(),
+    files: z.array(z.string()),
+    error: z.string().nullable(),
+  })
+  .openapi('RebaseStatus');
+
 const getPullRoute = createRoute({
   method: 'get',
   path: '/{owner}/{repo}/pulls/{number}',
@@ -646,14 +623,10 @@ const getPullRoute = createRoute({
         headSha: z.string().nullable(),
         headBranchExists: z.boolean(),
         commitCount: z.number(),
+        /** It can land: up to date with its base, or behind it (landing rebases it first). */
         mergeable: z.boolean().nullable(),
-        conflicts: z.array(z.string()),
-        /** Every conflict is a text conflict, so AI can try to resolve them. */
-        conflictsResolvable: z.boolean(),
-        /** The conflicts are resolved by a valid AI resolution, which merging will land. */
-        resolvedByAi: z.boolean(),
-        aiResolution: z.boolean(),
-        resolution: resolutionSchema.nullable(),
+        /** Where it stands against its base; null unless it is open with both branches. */
+        rebase: rebaseViewSchema.nullable(),
         /** The head commit's review by agents and people; null when the branches are gone. */
         review: reviewSchema.nullable(),
         canMerge: z.boolean(),
@@ -703,50 +676,20 @@ pullsRouter.openapi(getPullRoute, async (c) => {
     ...approvals.map((a) => a.userId),
   ]);
   let mergeable: boolean | null = null;
-  let conflicts: string[] = [];
-  let conflictsResolvable = false;
-  let resolvedByAi = false;
+  let rebase: RebaseView | null = null;
   let commitCount = 0;
-  const resolution = await latestResolution(db, pr.id);
   // Merging is measured against the land target, which base_ref (the diff's base) may not be while stacked.
   const target = pr.state === 'open' ? await landShas(git, pr) : null;
   if (shas)
     commitCount = (await git.commitsBetween(shas.base, shas.head)).length;
-  // Even when base_ref (a parent PR's branch) is gone, the land target and head decide merging.
-  if (target) {
-    const plan = await git.planMerge(target.base, target.head, {
-      collectConflictFiles: true,
-    });
-    conflicts = plan.upToDate ? [] : plan.conflicts;
-    resolvedByAi =
-      conflicts.length > 0 &&
-      resolution?.status === 'proposed' &&
-      resolution.baseSha === target.base &&
-      resolution.headSha === target.head;
-    mergeable = !plan.upToDate && (conflicts.length === 0 || resolvedByAi);
-    // Text conflicts outside generated files (those are regenerated, not merged by the model).
-    conflictsResolvable =
-      !plan.upToDate &&
-      plan.conflicts.length > 0 &&
-      plan.conflictFiles.length === plan.conflicts.length &&
-      !(await generatedConflicts(git, target.base, plan.conflicts)).length;
-    // Backstop for missed triggers: unresolved text conflicts get a resolution attempt, and an
-    // attempt for commits the branches moved past is cancelled.
-    if (conflictsResolvable && !resolvedByAi)
-      c.executionCtx.waitUntil(
-        ensureResolution(c.env, db, git, pr, target).catch((e) =>
-          console.error('[merge] auto-resolve failed', e)
-        )
-      );
-    else if (
-      (resolution?.status === 'running' || resolution?.status === 'queued') &&
-      (resolution.baseSha !== target.base || resolution.headSha !== target.head)
-    )
-      c.executionCtx.waitUntil(
-        cancelStale(c.env, db, git, pr, target).catch((e) =>
-          console.error('[merge] cancel stale failed', e)
-        )
-      );
+  const tips = pr.state === 'open' ? await rebaseTips(git, pr) : null;
+  if (tips) {
+    rebase = await rebaseView(c.env, db, git, pr, tips);
+    mergeable = rebase.status === 'up_to_date' || rebase.status === 'behind';
+    // Backstop for missed triggers, and for a run that died mid-resolution (it would show resolving forever): a
+    // pull request behind its base gets a rebase run unless a fresh one is running (ensureRebase decides).
+    if (rebase.status === 'behind' || rebase.status === 'resolving')
+      c.executionCtx.waitUntil(ensureRebase(c.env, db, git, pr));
   }
   const review = await reviewersView(c.env, db, git, pr, shas);
   // Backstop for missed triggers: a head with no review gets one where agents are invited.
@@ -780,13 +723,7 @@ pullsRouter.openapi(getPullRoute, async (c) => {
       headBranchExists: !!headLive,
       commitCount,
       mergeable,
-      conflicts,
-      conflictsResolvable,
-      aiResolution: resolutionConfigured(c.env),
-      resolvedByAi,
-      resolution: resolution
-        ? serializeResolution(resolution, target ?? shas)
-        : null,
+      rebase,
       review,
       canMerge: c.get('perms').write,
       approvals: approvals.map((a) => ({
@@ -875,18 +812,11 @@ pullsRouter.openapi(updatePullRoute, async (c) => {
     c.executionCtx.waitUntil(queueLessons(c.env, c.get('db'), pr));
   }
   if (patch.state === 'open') {
-    // A reopened PR may conflict with everything that landed while it was closed.
+    // A reopened PR rebases onto everything that landed while it was closed.
     const shas = await landShas(c.get('git'), pr);
-    if (shas)
-      c.executionCtx.waitUntil(
-        ensureResolution(
-          c.env,
-          c.get('db'),
-          c.get('git'),
-          { ...pr, state: 'open' },
-          shas
-        ).catch((e) => console.error('[merge] auto-resolve failed', e))
-      );
+    c.executionCtx.waitUntil(
+      ensureRebase(c.env, c.get('db'), c.get('git'), { ...pr, state: 'open' })
+    );
     if (shas)
       c.executionCtx.waitUntil(
         ensureHeadReview(
@@ -955,7 +885,11 @@ pullsRouter.openapi(pullFilesRoute, async (c) => {
   const shas = await pullShas(c.get('git'), pr);
   if (!shas) return c.json([], 200);
   return c.json(
-    (await compareShas(c.get('git'), shas.base, shas.head)).files,
+    (
+      await compareShas(c.get('git'), shas.base, shas.head, {
+        mergeability: false,
+      })
+    ).files,
     200
   );
 });
@@ -970,12 +904,6 @@ const mergeRoute = createRoute({
       content: {
         'application/json': {
           schema: z.object({
-            // Squash and rebase onto the base tip; `squash` is an alias.
-            method: z.enum(['rebase', 'squash']).default('rebase'),
-            title: z.string().max(256).optional(),
-            message: z.string().max(65536).optional(),
-            /** Land a proposed AI conflict resolution instead of merging the branches. */
-            resolutionId: z.string().optional(),
             /** Approve the head commit as you merge it (a recorded approval; needs merge permission). */
             approve: z.boolean().optional(),
             /** The head commit you reviewed (and, with `approve`, approve); 409 if the branch has moved since. */
@@ -986,11 +914,31 @@ const mergeRoute = createRoute({
     },
   },
   responses: {
-    ...json200Response(z.object({ sha: z.string() }), 'Merged'),
+    ...json200Response(
+      z.object({ sha: z.string() }),
+      'Merged: the target branch is now at sha'
+    ),
     ...json400Response,
     ...json403Response,
     ...json404Response,
-    ...json409Response,
+    409: {
+      content: {
+        'application/json': {
+          schema: z.object({
+            error: z.string(),
+            /** Which gate refused it. */
+            reason: z.enum(['stack', 'checks', 'review', 'rebase']).optional(),
+            /**
+             * Set when landing rebased the branch and pushed this new head first, then stopped for its checks or
+             * review: not a failure; it lands once they pass (on its own with auto-merge, else merge again).
+             */
+            rebased: z.string().optional(),
+          }),
+        },
+      },
+      description:
+        'Refused (or rebased first, and waiting for checks or review)',
+    },
   },
 });
 pullsRouter.openapi(mergeRoute, async (c) => {
@@ -1022,10 +970,6 @@ pullsRouter.openapi(mergeRoute, async (c) => {
     git: c.get('git'),
     pr,
     by: user,
-    author: user,
-    title: body.title,
-    message: body.message,
-    resolutionId: body.resolutionId,
     expectedHead: body.headSha,
     after: (work) => c.executionCtx.waitUntil(work),
   });
@@ -1041,9 +985,47 @@ pullsRouter.openapi(mergeRoute, async (c) => {
         settleStates(c.env, c.get('db'), pr.repositoryId)
       );
     }
-    return c.json({ error: result.error }, result.status);
+    if (result.status === 400) return c.json({ error: result.error }, 400);
+    return c.json(
+      {
+        error: result.error,
+        ...(result.reason ? { reason: result.reason } : {}),
+        ...(result.rebased ? { rebased: result.rebased } : {}),
+      },
+      409
+    );
   }
   return c.json({ sha: result.sha }, 200);
+});
+
+const retryRebaseRoute = createRoute({
+  method: 'post',
+  path: '/{owner}/{repo}/pulls/{number}/rebase',
+  tags: ['Pull requests'],
+  summary: 'Try a stopped rebase again',
+  description:
+    'Sets aside where the rebase stopped (rebase_conflict: AI could not resolve a commit, too many commits for AI, ' +
+    'and the like) and starts a rebase run, which asks AI again. Needs merge permission. 409 when nothing is ' +
+    'stopped, or for a branch GitOrange never rebases ("Not rebased: ...").',
+  request: { params: numberParams },
+  responses: {
+    ...json200Response(
+      rebaseViewSchema,
+      'The rebase is starting over: where the pull request now stands'
+    ),
+    ...json403Response,
+    ...json404Response,
+    ...json409Response,
+  },
+});
+pullsRouter.openapi(retryRebaseRoute, async (c) => {
+  if (!c.get('perms').write)
+    return c.json({ error: 'You do not have permission to do that' }, 403);
+  const pr = await getPull(c, c.req.valid('param').number);
+  if (!pr) return c.json({ error: 'Not Found' }, 404);
+  const result = await retryRebase(c.env, c.get('db'), c.get('git'), pr);
+  if (!result.ok) return c.json({ error: result.error }, 409);
+  return c.json(result.view, 200);
 });
 
 // ── a person's approval ──────────────────────────────────────────────────────
@@ -1430,75 +1412,6 @@ pullsRouter.openapi(autoMergeRoute, async (c) => {
         console.error('[review] auto-merge failed', e)
       )
     );
-  return c.json({ ok: true as const }, 200);
-});
-
-// ── AI conflict resolution ───────────────────────────────────────────────────
-
-const startResolutionRoute = createRoute({
-  method: 'post',
-  path: '/{owner}/{repo}/pulls/{number}/resolutions',
-  tags: ['Pull requests'],
-  request: { params: numberParams },
-  responses: {
-    ...json201Response(resolutionSchema, 'Resolution started'),
-    ...json400Response,
-    ...json403Response,
-    ...json404Response,
-    ...json409Response,
-  },
-});
-pullsRouter.openapi(startResolutionRoute, async (c) => {
-  if (!c.get('perms').write)
-    return c.json({ error: 'You do not have permission to merge' }, 403);
-  const pr = await getPull(c, c.req.valid('param').number);
-  if (!pr) return c.json({ error: 'Not Found' }, 404);
-  if (pr.state !== 'open')
-    return c.json({ error: 'Pull request is not open' }, 400);
-  const shas = await landShas(c.get('git'), pr);
-  if (!shas) return c.json({ error: 'The head branch no longer exists' }, 400);
-  const result = await startResolution(
-    c.env,
-    c.get('db'),
-    c.get('git'),
-    pr,
-    shas,
-    c.get('user')!.id
-  );
-  if (!result.ok) return c.json({ error: result.error }, result.status);
-  return c.json(serializeResolution(result.resolution, shas), 201);
-});
-
-const rejectResolutionRoute = createRoute({
-  method: 'post',
-  path: '/{owner}/{repo}/pulls/{number}/resolutions/{id}/reject',
-  tags: ['Pull requests'],
-  request: { params: numberParams.extend({ id: z.string() }) },
-  responses: {
-    ...json200Response(z.object({ ok: z.literal(true) }), 'Discarded'),
-    ...json403Response,
-    ...json404Response,
-  },
-});
-pullsRouter.openapi(rejectResolutionRoute, async (c) => {
-  if (!c.get('perms').write)
-    return c.json({ error: 'You do not have permission to merge' }, 403);
-  const { number, id } = c.req.valid('param');
-  const pr = await getPull(c, number);
-  if (!pr) return c.json({ error: 'Not Found' }, 404);
-  const updated = await c
-    .get('db')
-    .update(mergeResolutions)
-    .set({ status: 'rejected', decidedAt: new Date() })
-    .where(
-      and(
-        eq(mergeResolutions.id, id),
-        eq(mergeResolutions.pullRequestId, pr.id),
-        inArray(mergeResolutions.status, ['proposed', 'failed'])
-      )
-    )
-    .returning({ id: mergeResolutions.id });
-  if (!updated.length) return c.json({ error: 'Not Found' }, 404);
   return c.json({ ok: true as const }, 200);
 });
 

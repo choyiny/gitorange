@@ -6,7 +6,8 @@ import {
 import { drizzle } from 'drizzle-orm/d1';
 import { schema } from '../db/schema';
 import { executeSweep, type SweepParams } from './auto';
-import { executeResolution, type StepRunner } from './resolution';
+import type { StepRunner } from './resolution';
+import { executeRebase, type RebaseParams } from './rebase';
 import { executeHeadReview, executeReviewerRetry } from '../review/head';
 import { headReviewId } from '../review/keys';
 import { workersAiAgentModels } from '../review/models';
@@ -22,6 +23,7 @@ import { executeLearn } from '../learn/run';
 
 type PayloadKey =
   | 'resolutionId'
+  | 'rebase'
   | 'sweep'
   | 'stack'
   | 'reconcile'
@@ -34,7 +36,10 @@ type Only<K extends PayloadKey, V> = { [P in K]: V } & {
 };
 
 export type MergeResolutionParams =
+  /** Squash-era AI resolution: instances started before rebase merging do nothing. */
   | Only<'resolutionId', string>
+  /** Rebase one pull request onto its base (merge/rebase.ts). */
+  | Only<'rebase', RebaseParams>
   | Only<'sweep', SweepParams>
   | Only<'stack', StackParams>
   | Only<'reconcile', ReconcileParams>
@@ -45,10 +50,7 @@ export type MergeResolutionParams =
   /** Learn from one lesson: an agent's dismissed change requests on a closed pull request (agent_lessons.id). */
   | Only<'learn', { lessonId: string }>;
 
-/**
- * MERGE_RESOLUTION: runs an AI resolution attempt, an auto-merge review, a conflict sweep, stacking discovery, a
- * stack reconcile, or a lesson.
- */
+/** MERGE_RESOLUTION: runs a rebase, an agents' review, a sweep, stacking discovery, a stack reconcile, or a lesson. */
 export class MergeResolutionWorkflow extends WorkflowEntrypoint<
   CloudflareBindings,
   MergeResolutionParams
@@ -160,17 +162,22 @@ export class MergeResolutionWorkflow extends WorkflowEntrypoint<
         },
         p.learn.lessonId
       );
-    } else {
-      await executeResolution(
+    } else if (p.rebase) {
+      const resolver = (this.env as Partial<CloudflareBindings>).MERGE_RESOLVER;
+      await executeRebase(
         {
           env: this.env,
           db,
           step: runner,
-          resolver: (id) => this.env.MERGE_RESOLVER.getByName(id),
+          resolver: resolver
+            ? (id: string) => resolver.getByName(id)
+            : undefined,
+          instanceId: event.instanceId,
         },
-        p.resolutionId!
+        p.rebase
       );
     }
+    // p.resolutionId: squash-era, cancelled by migration 0025; nothing to do.
     // Whatever ran may have moved pull requests to another state: record changes for the timeline.
     await runner.do('states', async () => {
       await settleAfterPayload(this.env, db, p);

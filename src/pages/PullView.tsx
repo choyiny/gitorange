@@ -29,6 +29,11 @@ import {
   reviewEntries,
   timelineSlots,
 } from '@/lib/reviewTimeline';
+import {
+  canRetryRebase,
+  rebasedFirst,
+  rebaseHeadline,
+} from '@/lib/rebaseStatus';
 import { fullDate, timeAgo } from '@/lib/format';
 import { Avatar } from '@/components/Avatar';
 import { CommitList } from '@/components/CommitList';
@@ -36,8 +41,7 @@ import { DiffTotals, DiffView } from '@/components/DiffView';
 import { MarkdownEditor } from '@/components/CommentForm';
 import { Markdown } from '@/components/Markdown';
 import { ChecksBox } from '@/components/Checks';
-import { AiResolution } from '@/components/AiResolution';
-import { AutoMergeStatus } from '@/components/AutoMergeReview';
+import { AutoMergeStatus, useAction } from '@/components/AutoMergeReview';
 import {
   AgentReview,
   EarlierReview,
@@ -138,14 +142,13 @@ function MergeBox({
 }) {
   const pr = d.pull;
   const [confirming, setConfirming] = useState(false);
-  const [title, setTitle] = useState('');
-  const [message, setMessage] = useState('');
   const [error, setError] = useState<string | null>(null);
+  // Not an error: landing rebased the branch first and now waits for its checks (or review) on the new head.
+  const [notice, setNotice] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const open = () => {
     setError(null);
-    setTitle(`${pr.title} (#${pr.number})`);
-    setMessage('');
+    setNotice(null);
     setConfirming(true);
   };
   // Review isn't satisfied yet: merging records this person's approval of the commit shown here.
@@ -156,10 +159,9 @@ function MergeBox({
   const merge = async () => {
     setBusy(true);
     setError(null);
+    setNotice(null);
     try {
       await api.mergePull(repo.owner.username, repo.name, pr.number, {
-        title,
-        message,
         // The commit this page shows: a push since loading is refused (409), never merged or approved unseen.
         ...(d.headSha ? { headSha: d.headSha } : {}),
         ...(needsApproval ? { approve: true } : {}),
@@ -167,7 +169,11 @@ function MergeBox({
       setConfirming(false);
       onDone();
     } catch (e) {
-      setError(errorMessage(e));
+      const msg = errorMessage(e);
+      // landPull rebased and pushed the branch, then stopped: it lands once the new head's checks pass.
+      if (e instanceof ApiError && rebasedFirst(e.status, e.body))
+        setNotice(msg);
+      else setError(msg);
       if (e instanceof ApiError && e.status === 409) {
         // The branch moved: reload so the page shows the new commits, and close the confirm so the next
         // click can't approve or merge a commit nobody looked at. The error stays visible below.
@@ -178,18 +184,24 @@ function MergeBox({
       setBusy(false);
     }
   };
-  const hasConflicts = d.conflicts.length > 0;
-  const resolving =
-    hasConflicts &&
-    (d.resolution?.status === 'running' || d.resolution?.status === 'queued') &&
-    !d.resolution.stale;
-  const conflict = hasConflicts && !d.resolvedByAi;
-  const nothing = d.mergeable === false && !hasConflicts;
-  const showAi =
-    hasConflicts && d.aiResolution && (d.conflictsResolvable || d.resolvedByAi);
+  const rebase = d.rebase;
+  const conflict = rebase?.status === 'conflict';
+  const resolving = rebase?.status === 'resolving';
+  const behind = rebase?.status === 'behind';
+  // Not landable as it stands: grey instead of green.
+  const held = conflict || resolving || (!rebase && !d.headBranchExists);
+  const headline = rebase ? rebaseHeadline(rebase, pr.headRef) : null;
+  // A stopped rebase (AI failed on a commit, and the like): a person with merge permission may try it again.
+  const retry = useAction(onDone);
+  const messages = (
+    <>
+      {error && <div className="flash flash-error mb-2">{error}</div>}
+      {notice && <div className="flash mb-2">{notice}</div>}
+    </>
+  );
   const confirmBox = (
     <div className="Box-row">
-      {error && <div className="flash flash-error mb-2">{error}</div>}
+      {messages}
       {needsApproval && (
         <p className="f6 mb-2">
           Review isn&apos;t satisfied (
@@ -201,28 +213,24 @@ function MergeBox({
         </p>
       )}
       <p className="f6 color-fg-muted mb-2">
-        {d.resolvedByAi
-          ? 'The commits from this branch, with their conflicts resolved, will be squashed into one commit and added to '
-          : 'The commits from this branch will be squashed into one commit and added to '}
-        <code>{pr.baseRef}</code>, keeping its history linear.
+        {behind ? (
+          <>
+            GitOrange rebases this branch onto <code>{rebase.onto}</code> first.
+            If the rebased commits need checks, it lands once they pass.
+          </>
+        ) : (
+          <>
+            <code>{pr.baseRef}</code> moves to this branch&apos;s head: its
+            commits land as they are, keeping history linear.
+          </>
+        )}
       </p>
-      <input
-        className="form-control width-full mb-2 text-bold"
-        value={title}
-        onChange={(e) => setTitle(e.target.value)}
-        aria-label="Commit title"
-      />
-      <textarea
-        className="form-control width-full mb-2"
-        rows={3}
-        value={message}
-        onChange={(e) => setMessage(e.target.value)}
-        aria-label="Commit message"
-      />
       <div className="d-flex" style={{ gap: 8 }}>
         <button className="btn btn-primary" disabled={busy} onClick={merge}>
           {busy
-            ? 'Merging…'
+            ? behind
+              ? 'Rebasing and merging…'
+              : 'Merging…'
             : needsApproval
               ? 'Confirm approve and merge'
               : 'Confirm rebase and merge'}
@@ -236,7 +244,7 @@ function MergeBox({
   return (
     <div className="d-flex mb-3" style={{ gap: 16 }}>
       <div
-        className={`merge-box-icon d-none d-md-flex ${conflict ? 'color-bg-neutral-emphasis' : 'color-bg-success-emphasis'}`}
+        className={`merge-box-icon d-none d-md-flex ${held ? 'color-bg-neutral-emphasis' : 'color-bg-success-emphasis'}`}
       >
         <GitMergeIcon size={24} />
       </div>
@@ -244,9 +252,7 @@ function MergeBox({
         className="Box flex-1"
         style={{
           minWidth: 0,
-          borderColor: conflict
-            ? undefined
-            : 'var(--borderColor-success-emphasis)',
+          borderColor: held ? undefined : 'var(--borderColor-success-emphasis)',
         }}
       >
         {d.pullState && d.pullState.state !== 'ready' && (
@@ -258,47 +264,46 @@ function MergeBox({
           </div>
         )}
         <div className="Box-row d-flex flex-items-start" style={{ gap: 12 }}>
-          {d.mergeable === null ? (
+          {(!rebase && d.headBranchExists) || resolving ? (
             <Spinner size={16} />
-          ) : conflict ? (
+          ) : conflict || !rebase ? (
             <AlertIcon size={24} className="color-fg-attention" />
           ) : (
             <CheckIcon size={24} className="color-fg-success" />
           )}
           <div className="flex-1" style={{ minWidth: 0 }}>
             <h3 className="f5">
-              {resolving
-                ? 'Resolving conflicts with AI'
-                : conflict
-                  ? 'This branch has conflicts that must be resolved'
-                  : d.resolvedByAi
-                    ? 'Conflicts with the base branch were resolved'
-                    : nothing
-                      ? 'This branch is up to date'
-                      : 'No conflicts with base branch'}
+              {headline?.title ??
+                (d.headBranchExists
+                  ? 'Checking the branch…'
+                  : `The ${pr.headRef} branch is gone`)}
             </h3>
-            <p className="f6 color-fg-muted mb-0">
-              {d.resolvedByAi ? (
-                'The resolution below is part of this pull request; merging lands it.'
-              ) : conflict ? (
-                <>
-                  {showAi
-                    ? 'An agent resolves them automatically. You can also resolve them locally and push to '
-                    : 'Resolve conflicts locally, then push to '}
-                  <code>{pr.headRef}</code>.
-                </>
-              ) : nothing ? (
-                'There is nothing to merge.'
-              ) : (
-                'This branch can be rebased onto the base branch and merged.'
-              )}
-            </p>
-            {conflict && !d.resolvedByAi && d.conflicts.length > 0 && (
-              <FileList paths={d.conflicts} />
+            {headline && (
+              <p className="f6 color-fg-muted mb-0">{headline.detail}</p>
+            )}
+            {(conflict || resolving) && rebase.files.length > 0 && (
+              <FileList paths={rebase.files} />
+            )}
+            {d.canMerge && canRetryRebase(rebase) && (
+              <div className="mt-2">
+                {retry.error && (
+                  <div className="flash flash-error mb-2">{retry.error}</div>
+                )}
+                <button
+                  className="btn btn-sm"
+                  disabled={retry.busy}
+                  onClick={() =>
+                    retry.run(() =>
+                      api.retryRebase(repo.owner.username, repo.name, pr.number)
+                    )
+                  }
+                >
+                  {retry.busy ? 'Starting the rebase…' : 'Try the rebase again'}
+                </button>
+              </div>
             )}
           </div>
         </div>
-        {showAi && <AiResolution repo={repo} d={d} onChange={onDone} />}
         {d.review && d.review.autoMerge.state !== 'off' && (
           <AutoMergeStatus repo={repo} d={d} onChange={onDone} />
         )}
@@ -309,7 +314,7 @@ function MergeBox({
             confirmBox
           ) : (
             <div className="Box-row">
-              {error && <div className="flash flash-error mb-2">{error}</div>}
+              {messages}
               <button className="btn btn-primary" onClick={open}>
                 {needsApproval ? 'Approve and merge' : 'Rebase and merge'}
               </button>
@@ -584,12 +589,11 @@ export default function PullView() {
   const q = useQuery({
     queryKey: qk.pull(o, repo.name, num),
     queryFn: () => api.pull(o, repo.name, num),
-    // Follow AI conflict resolution while one runs or is about to start.
     refetchInterval: (query) => {
       const d = query.state.data;
       if (!d) return false;
-      const r = d.resolution && !d.resolution.stale ? d.resolution : null;
-      if (r?.status === 'running' || r?.status === 'queued') return 3000;
+      // Follow AI resolving a rebase conflict (a rebase run's push pings the page live).
+      if (d.rebase?.status === 'resolving') return 3000;
       // Follow the auto-merge review, and the merge it leads to.
       const review = d.review;
       if (
@@ -608,13 +612,7 @@ export default function PullView() {
         review?.autoMerge.state === 'waiting'
       )
         return 5000;
-      const pending =
-        d.aiResolution &&
-        d.conflictsResolvable &&
-        !d.resolvedByAi &&
-        r?.status !== 'failed' &&
-        r?.status !== 'rejected';
-      return pending ? 5000 : false;
+      return false;
     },
   });
   const commits = useQuery({

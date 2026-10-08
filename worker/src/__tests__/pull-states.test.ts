@@ -11,7 +11,6 @@ import { buildTree, type EdgeInput, type TreeNode } from '../stack/tree';
 import { drizzle } from 'drizzle-orm/d1';
 import { schema } from '../db/schema';
 import { checkVerdict } from '../review/checks';
-import { ensureResolution } from '../merge/auto';
 import { findRepoById, gitFor } from '../lib/repos';
 import type { PullRequest } from '../db/app.schema';
 import {
@@ -110,7 +109,7 @@ describe('pull request state rules', () => {
         'check_failed',
         'changes_requested',
         'checks_running',
-        'conflicts_unresolved',
+        'rebase_conflict',
         'cycle',
         'must_account_for',
         'rebase_onto',
@@ -361,81 +360,6 @@ describe('check verdict', () => {
   });
 });
 
-describe('non-text conflicts', () => {
-  it('are recorded as a failed resolution a person or agent must handle', async () => {
-    const t = makeEnv({ actions: true });
-    const admin = await bootstrapAdmin(t);
-    await call(t, '/api/repos', {
-      cookie: admin,
-      json: { name: 'app', visibility: 'internal' },
-    });
-    const repo = [...t.fake.repos.values()][0];
-    const main = await commitPaths(
-      repo,
-      'main',
-      { 'a.txt': 'a\n', 'b.txt': 'b\n' },
-      'base'
-    );
-    repo.refs.set('refs/heads/feature', main);
-    // The branch deletes a.txt while main changes it: a delete/edit conflict AI can't resolve.
-    await commitPaths(repo, 'feature', { 'b.txt': 'b\n' }, 'Delete a');
-    await commitPaths(
-      repo,
-      'main',
-      { 'a.txt': 'A\n', 'b.txt': 'b\n' },
-      'Change a'
-    );
-    await call(t, '/api/repos/octocat/app/pulls', {
-      cookie: admin,
-      json: { title: 'Delete a', body: '', base: 'main', head: 'feature' },
-    });
-    await settle(t);
-    // Opening the PR already ran ensureResolution once (openPull); calling it again must not add a row.
-    const db = drizzle(t.env.DB, { schema });
-    const row = await db.query.pullRequests.findFirst();
-    const found = await findRepoById(db, row!.repositoryId);
-    const shas = {
-      base: repo.refs.get('refs/heads/main')!,
-      head: repo.refs.get('refs/heads/feature')!,
-    };
-    expect(
-      await ensureResolution(
-        t.env,
-        db,
-        gitFor(t.env, found!.repo),
-        row as PullRequest,
-        shas
-      )
-    ).toBe(false);
-    const res = await t.env.DB.prepare(
-      'SELECT status, model, base_sha AS baseSha, error_message AS error FROM merge_resolutions'
-    ).all<{ status: string; model: string; baseSha: string; error: string }>();
-    expect(res.results).toEqual([
-      expect.objectContaining({
-        status: 'failed',
-        model: 'none',
-        baseSha: shas.base,
-      }),
-    ]);
-    expect(res.results[0].error).toMatch(
-      /can't be resolved automatically.*a\.txt/
-    );
-    // Still one row per commit pair.
-    await ensureResolution(
-      t.env,
-      db,
-      gitFor(t.env, found!.repo),
-      row as PullRequest,
-      shas
-    );
-    expect(
-      (await t.env.DB.prepare(
-        'SELECT COUNT(*) AS n FROM merge_resolutions'
-      ).first<{ n: number }>())!.n
-    ).toBe(1);
-  });
-});
-
 /** A repository with helpers to open PRs, approve their heads, and read their states. */
 async function statesRepo() {
   const t = makeEnv({ actions: true });
@@ -560,13 +484,14 @@ describe('pullStates', () => {
       at: number
     ) =>
       s.t.env.DB.prepare(
-        `INSERT INTO merge_resolutions (id, pull_request_id, base_sha, head_sha, status, model, conflicted_paths, error_message, created_at)
-         VALUES (?, ?, ?, ?, ?, 'm', '["a.txt"]', ?, ?)`
+        `INSERT INTO merge_resolutions (id, pull_request_id, base_sha, head_sha, commit_sha, status, model, conflicted_paths, error_message, created_at)
+         VALUES (?, ?, ?, ?, ?, ?, 'm', '["a.txt"]', ?, ?)`
       )
         .bind(
           crypto.randomUUID(),
           pr.id,
           base,
+          s.head('one'),
           s.head('one'),
           status,
           error,
@@ -581,7 +506,12 @@ describe('pullStates', () => {
     expect((await s.states())[1]).toEqual({
       state: 'agent_followup',
       reasons: [
-        { kind: 'conflicts_unresolved', files: ['a.txt'], error: 'Gave up.' },
+        {
+          kind: 'rebase_conflict',
+          commit: s.head('one'),
+          files: ['a.txt'],
+          error: 'Gave up.',
+        },
       ],
     });
   });
@@ -630,7 +560,7 @@ describe('pullStates', () => {
       .bind(s.repoId, ids[0].id, ids[1].id, s.head('one'), s.head('two'))
       .run();
     const st = await s.states();
-    // The agent has to account for #1 (and rebase onto it), whatever the checks are doing.
+    // The agent has to account for #1, whatever the checks are doing; GitOrange rebases it onto #1 (waiting).
     expect(st[2]).toEqual({
       state: 'agent_followup',
       reasons: [
@@ -641,13 +571,13 @@ describe('pullStates', () => {
           instructions: 'Add a setup check.',
           branch: 'one',
         },
+        { kind: 'checks_running', check: null, started: true },
         {
           kind: 'rebase_onto',
           pr: 1,
           branch: 'one',
           why: 'Needs a check.',
         },
-        { kind: 'checks_running', check: null, started: true },
         { kind: 'stacked_on', pr: 1 },
       ],
     });
@@ -824,6 +754,9 @@ describe('recording state changes', () => {
     ).toEqual({ repositoryId: s.repoId });
     expect(
       await repositoryForPayload(s.db, { stack: { pullRequestId: s.pr.id } })
+    ).toEqual({ repositoryId: s.repoId, branch: 'main' });
+    expect(
+      await repositoryForPayload(s.db, { rebase: { pullRequestId: s.pr.id } })
     ).toEqual({ repositoryId: s.repoId, branch: 'main' });
     expect(
       await repositoryForPayload(s.db, { headReview: { id: 'nope' } })
@@ -1121,6 +1054,20 @@ describe('Approvals', () => {
     expect(await listed()).toEqual([]);
     await insert('m', 200);
     expect(await listed()).toEqual([1]);
+    // A rebase conflict AI failed on (a per-commit row) is the agent's too: it shows as rebase_conflict.
+    await s.t.env.DB.prepare(
+      `INSERT INTO merge_resolutions (id, pull_request_id, base_sha, head_sha, commit_sha, status, model, conflicted_paths, error_message, created_at)
+       VALUES (?, ?, ?, ?, ?, 'failed', 'm', '["a.txt"]', 'Gave up.', 300)`
+    )
+      .bind(
+        crypto.randomUUID(),
+        pr.id,
+        s.head('main'),
+        s.head('one'),
+        s.head('one')
+      )
+      .run();
+    expect(await listed()).toEqual([]);
   });
 });
 

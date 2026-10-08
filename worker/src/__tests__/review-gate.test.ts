@@ -653,7 +653,7 @@ describe('approving', () => {
 });
 
 describe('the commit that lands', () => {
-  it('squashes the commit the gate checked, even if the branch moves after the check', async () => {
+  it('lands the commit the gate checked, even if the branch moves after the check', async () => {
     const { t, admin, repo } = await appRepo();
     const { head } = await openPull(t, admin, repo, CHANGE);
     // A person approved this commit: the gate passes for it, and only for it.
@@ -694,12 +694,10 @@ describe('the commit that lands', () => {
       git,
       pr,
       by: user,
-      author: user,
       after: () => {},
     });
-    expect(result).toMatchObject({ ok: true, headSha: head });
-    const landed = repo.parseCommit(repo.refs.get('refs/heads/main')!)!;
-    expect(landed.treeHash).toBe(repo.parseCommit(head)!.treeHash);
+    expect(result).toMatchObject({ ok: true, sha: head, headSha: head });
+    expect(repo.refs.get('refs/heads/main')).toBe(head); // not the late commit
   });
 
   it('refuses a plain merge of a head the person did not see', async () => {

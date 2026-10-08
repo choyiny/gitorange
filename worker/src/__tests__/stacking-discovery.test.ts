@@ -3,7 +3,7 @@ import { describe, expect, it } from 'vitest';
 import { drizzle } from 'drizzle-orm/d1';
 import { schema } from '../db/schema';
 import type { StepRunner } from '../merge/resolution';
-import { autoResolveConflicts } from '../merge/auto';
+import { startSweep } from '../merge/auto';
 import type { Repository } from '../db/app.schema';
 import { executeStacking, type StackParams } from '../stack/discover';
 import { executeReconcile } from '../stack/reconcile';
@@ -140,7 +140,7 @@ describe('stacking discovery', () => {
     const row = await t.env.DB.prepare(
       "SELECT id FROM repositories WHERE name = 'app'"
     ).first<{ id: string }>();
-    await autoResolveConflicts(t.env, { id: row!.id } as Repository, [
+    await startSweep(t.env, { id: row!.id } as Repository, [
       {
         ref: 'refs/heads/two',
         old: '0'.repeat(40),

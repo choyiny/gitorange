@@ -10,7 +10,7 @@ import {
 } from '../db/app.schema';
 import type { GitService } from '../git/service';
 import { queueRuns } from '../actions/trigger';
-import { ensureResolution } from '../merge/auto';
+import { ensureRebase } from '../merge/rebase';
 import { pullRef } from '../merge/land';
 import { ensureHeadReview } from '../review/head';
 import { publishChange } from '../live/publish';
@@ -18,14 +18,24 @@ import { ensureStacking } from '../stack/discover';
 import { landTargetIs, landTargetOf } from './land-target';
 
 /**
- * The commits a PR compares: live branches while open; once closed, `refs/pull/<n>/head` and
- * the merge commit's first parent.
+ * The commits a PR compares: live branches while open; once merged, the landed commits (or, for a squash-era merge,
+ * the squash commit's first parent and `refs/pull/<n>/head`); once closed, `refs/pull/<n>/head`.
  */
 export async function pullShas(
   git: GitService,
   pr: PullRequest
 ): Promise<{ base: string; head: string } | null> {
   if (pr.state === 'merged' && pr.mergeCommitSha) {
+    if (pr.landedCommits != null) {
+      // Landed by fast-forward: its commits are the first-parent run below the landed head.
+      if (pr.landedCommits === 0)
+        return { base: pr.mergeCommitSha, head: pr.mergeCommitSha };
+      const landed = await git.log(pr.mergeCommitSha, pr.landedCommits);
+      const oldest = landed.at(-1);
+      if (landed.length < pr.landedCommits || !oldest?.parents[0]) return null;
+      return { base: oldest.parents[0], head: pr.mergeCommitSha };
+    }
+    // Landed before rebase merging, as one squash commit: its first parent, and the pinned head.
     const merge = await git.commit(pr.mergeCommitSha);
     const head = (await git.resolve(pullRef(pr.number))) ?? merge?.parents[1];
     if (!merge || !head) return null;
@@ -144,12 +154,8 @@ export async function openPull(opts: {
       console.error('[review] start failed', e)
     )
   );
-  // A PR opened against a moved base may already conflict.
-  opts.after(
-    ensureResolution(env, db, git, pr, shas).catch((e) =>
-      console.error('[merge] auto-resolve failed', e)
-    )
-  );
+  // A PR opened against a moved base is rebased onto it.
+  opts.after(ensureRebase(env, db, git, pr));
   // Stack discovery: starts now where no agent reviews (nothing to wait for); otherwise the review starts it.
   opts.after(
     ensureStacking(env, db, git, pr, shas).catch((e) =>

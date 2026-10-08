@@ -161,7 +161,7 @@ describe('pull requests', () => {
     ).toBe(201);
   });
 
-  it('shows the diff and merges a diverged branch with a real merge commit', async () => {
+  it('shows the diff, rebases a diverged branch and fast-forwards onto it', async () => {
     const { t, admin, repo } = await withBranch();
     await commitFiles(
       repo,
@@ -196,12 +196,16 @@ describe('pull requests', () => {
     expect(merge.status).toBe(200);
     const { sha } = (await merge.json()) as { sha: string };
 
-    // Rebase and merge: one commit on top of the base, so history stays linear.
+    // Rebased onto main, then main moved to it: the author's own commit, history linear.
+    expect(sha).toBe(repo.refs.get('refs/heads/feature'));
     expect(repo.refs.get('refs/heads/main')).toBe(sha);
-    expect(repo.refs.get('refs/pull/1/head')).toBe(headSha);
+    expect(repo.refs.get('refs/pull/1/head')).toBe(sha);
+    expect(repo.refs.get(`refs/pull/1/pre-rebase/${headSha.slice(0, 7)}`)).toBe(
+      headSha
+    );
     const commit = repo.parseCommit(sha)!;
     expect(commit.parents).toEqual([baseBefore]);
-    expect(commit.message).toBe('Greet (#1)');
+    expect(commit.message).toBe('Add greet');
     expect(repo.parseTree(commit.treeHash)!.map((e) => e.name)).toEqual([
       'LICENSE',
       'README.md',
@@ -223,23 +227,6 @@ describe('pull requests', () => {
     expect(still).toHaveLength(2);
   });
 
-  it('squash merges into a single-parent commit', async () => {
-    const { t, admin, repo } = await withBranch();
-    await call(t, '/api/repos/octocat/app/pulls', {
-      cookie: admin,
-      json: { title: 'Greet', base: 'main', head: 'feature' },
-    });
-    const base = repo.refs.get('refs/heads/main')!;
-    const res = await call(t, '/api/repos/octocat/app/pulls/1/merge', {
-      cookie: admin,
-      json: { method: 'squash', approve: true },
-    });
-    const { sha } = (await res.json()) as { sha: string };
-    const commit = repo.parseCommit(sha)!;
-    expect(commit.parents).toEqual([base]);
-    expect(commit.message).toBe('Greet (#1)');
-  });
-
   it('reports conflicts and refuses to merge them', async () => {
     const { t, admin, repo } = await withBranch();
     await commitFiles(
@@ -256,13 +243,16 @@ describe('pull requests', () => {
       await call(t, '/api/repos/octocat/app/pulls/1', { cookie: admin })
     ).json()) as {
       mergeable: boolean;
-      conflicts: string[];
+      rebase: { status: string; files: string[] };
     };
     expect(detail.mergeable).toBe(false);
-    expect(detail.conflicts).toEqual(['README.md']);
+    expect(detail.rebase).toMatchObject({
+      status: 'conflict',
+      files: ['README.md'],
+    });
     const res = await call(t, '/api/repos/octocat/app/pulls/1/merge', {
       cookie: admin,
-      json: { method: 'rebase', approve: true },
+      json: { approve: true },
     });
     expect(res.status).toBe(409);
   });

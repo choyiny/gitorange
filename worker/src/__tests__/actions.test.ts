@@ -146,7 +146,9 @@ jobs:
 
   it('runs push workflows for the base branch after a merge', async () => {
     const s = await setup();
-    await pushFiles(s, 'main', { '.github/workflows/ci.yml': CI });
+    const main = await pushFiles(s, 'main', { '.github/workflows/ci.yml': CI });
+    // Branched from main's tip: merging fast-forwards main to the head, whose checks passed.
+    s.repo.refs.set('refs/heads/feature', main);
     await pushFiles(s, 'feature', {
       '.github/workflows/ci.yml': CI,
       'b.txt': 'b',
@@ -162,7 +164,7 @@ jobs:
     ).run();
     const merged = await call(s.t, '/api/repos/octocat/app/pulls/1/merge', {
       cookie: s.admin,
-      json: { method: 'rebase', approve: true },
+      json: { approve: true },
     });
     expect(merged.status).toBe(200);
     const { sha } = (await merged.json()) as { sha: string };

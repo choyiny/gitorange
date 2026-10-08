@@ -347,10 +347,12 @@ export async function approvalsFor(
         flags: flags.filter((f) => f.agentId === g.agentId),
       }))
       .filter((g) => g.status === 'failed' || g.flags.length);
-    // Conflicts AI can't resolve (NO_MODEL) are the agent's to resolve locally, not a person's.
+    // Conflicts AI can't resolve (NO_MODEL) are the agent's to resolve locally, not a person's; so is a rebase
+    // conflict AI failed on (a per-commit row, commit_sha set): it shows as rebase_conflict, for the agent.
     const resolutionFailed =
       resolution &&
       resolution.model !== NO_MODEL &&
+      resolution.commitSha === null &&
       (resolution.status === 'rejected' ||
         (resolution.status === 'failed' &&
           resolution.errorMessage !== SUPERSEDED))

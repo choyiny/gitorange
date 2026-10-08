@@ -1,4 +1,4 @@
-import { concat, encoder, fromHex, sha1, toHex } from './bytes';
+import { concat, decoder, encoder, fromHex, sha1, toHex } from './bytes';
 
 export type ObjectType = 'commit' | 'tree' | 'blob';
 
@@ -44,6 +44,34 @@ export function makeTree(entries: TreeEntry[]): Promise<GitObject> {
     parts.push(encoder.encode(`${mode} ${e.name}\0`), fromHex(e.hash));
   }
   return makeObject('tree', concat(parts));
+}
+
+/** The type Artifacts reports for a tree entry's mode. */
+function modeType(mode: string): ArtifactsTreeEntryType {
+  if (mode === '40000' || mode === '040000') return 'tree';
+  if (mode === '120000') return 'symlink';
+  if (mode === '160000') return 'gitlink';
+  if (mode === '100755') return 'exec';
+  return 'blob';
+}
+
+/** A tree object's entries, as `readTree` returns them (for trees made in memory and not pushed yet). */
+export function parseTree(data: Uint8Array): ArtifactsTreeEntry[] {
+  const out: ArtifactsTreeEntry[] = [];
+  let i = 0;
+  while (i < data.length) {
+    const sp = data.indexOf(0x20, i);
+    const nul = data.indexOf(0, sp);
+    const mode = decoder.decode(data.subarray(i, sp));
+    out.push({
+      mode,
+      name: decoder.decode(data.subarray(sp + 1, nul)),
+      hash: toHex(data.subarray(nul + 1, nul + 21)),
+      type: modeType(mode),
+    });
+    i = nul + 21;
+  }
+  return out;
 }
 
 export interface Signature {

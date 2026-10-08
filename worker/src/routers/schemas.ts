@@ -44,6 +44,8 @@ export const repoSchema = z
     visibility: z.enum(['private', 'internal']),
     description: z.string().nullable(),
     defaultBranch: z.string(),
+    // Branch name patterns GitOrange never rebases (exact names, or globs: * within a segment, ** across).
+    protectedBranches: z.array(z.string()),
     createdAt: z.string(),
     updatedAt: z.string(),
   })

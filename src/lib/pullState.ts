@@ -34,12 +34,14 @@ export function reasonText(r: PullReason): string {
       return has(r.flags)
         ? `changes requested on ${s(n(r.flags), 'flag')}`
         : 'changes requested on review flags';
-    case 'conflicts_unresolved':
-      return "conflicts AI couldn't resolve";
+    case 'rebase_conflict':
+      return r.commit
+        ? `commit ${String(r.commit).slice(0, 7)} conflicts in ${((r.files as string[]) ?? []).join(', ')}`
+        : String(r.error ?? 'the rebase stopped');
     case 'must_account_for':
       return `must account for #${n(r.pr)}${r.branch ? `, after rebasing onto ${String(r.branch)}` : ''}`;
     case 'rebase_onto':
-      return `rebase onto #${n(r.pr)} (${String(r.branch)})`;
+      return `GitOrange is rebasing it onto #${n(r.pr)} (${String(r.branch)})`;
     case 'cycle':
       return `depends in a circle on ${prs(r.prs)}`;
     case 'checks_running':

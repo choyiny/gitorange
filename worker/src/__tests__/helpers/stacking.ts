@@ -3,11 +3,7 @@ import { expect } from 'vitest';
 import { drizzle } from 'drizzle-orm/d1';
 import { schema } from '../../db/schema';
 import type { StepRunner } from '../../merge/resolution';
-import {
-  autoResolveConflicts,
-  executeSweep,
-  type SweepParams,
-} from '../../merge/auto';
+import { startSweep, executeSweep, type SweepParams } from '../../merge/auto';
 import type { ClassifierAnswer, Repository } from '../../db/app.schema';
 import { executeHeadReview, executeReviewerRetry } from '../../review/head';
 import type { AgentReviewModels } from '../../review/models';
@@ -270,7 +266,7 @@ export async function pushTo(
   const row = await t.env.DB.prepare(
     "SELECT id FROM repositories WHERE name = 'app'"
   ).first<{ id: string }>();
-  await autoResolveConflicts(t.env, { id: row!.id } as Repository, [
+  await startSweep(t.env, { id: row!.id } as Repository, [
     {
       ref: `refs/heads/${branch}`,
       old,

@@ -1,0 +1,1 @@
+ALTER TABLE `repositories` ADD `protected_branches` text;

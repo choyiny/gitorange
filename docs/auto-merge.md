@@ -32,11 +32,12 @@ as the conditions hold, with no merging user, and its branch is deleted unless a
 on it. A maintainer can turn it off per pull request. A repository without agents is an ordinary code host: a
 person approves and merges.
 
-Landing works the same way from every path: squashed onto the target branch's current tip, so history stays
-linear, after [AI resolves any conflicts](architecture.md#merging-and-ai-conflict-resolution).
+Landing works the same way from every path: a fast-forward of the target branch to the pull request's head, after
+GitOrange [rebased it](architecture.md#rebasing-and-merging) onto the target (resolving conflicting commits with
+AI), so every commit lands with its author and message and history stays linear.
 
-> Checks run on the pull request's own commit, not on the result rebased onto the latest target branch. If the
-> target branch moved in between, the merged result as a whole was never tested.
+> Checks run on the commit that lands. When the target moved since, landing rebases first and, if the new head
+> runs checks, waits for them.
 
 ## How a commit is reviewed
 
@@ -174,27 +175,28 @@ When several reasons apply, the most urgent state wins: `agent_followup`, then `
 
 Each reason has a `kind` and its own fields:
 
-| Reason                    | State            | Meaning                                                                                                                         |
-| ------------------------- | ---------------- | ------------------------------------------------------------------------------------------------------------------------------- |
-| `check_failed`            | `agent_followup` | An Actions check failed (`run_number`).                                                                                         |
-| `agent_changes_requested` | `agent_followup` | An agent requested changes (`agent`, and each change's `id`, `title`, `detail`). Push a fix; the new commit is reviewed afresh. |
-| `changes_requested`       | `agent_followup` | A person requested changes on this many findings.                                                                               |
-| `conflicts_unresolved`    | `agent_followup` | The AI resolution was rejected or failed; the conflicting `files` need a fix from the author.                                   |
-| `agent_flagged`           | `human_review`   | An agent's findings wait for a person (`agent`, `flags`).                                                                       |
-| `agent_review_failed`     | `human_review`   | An agent's review failed (`agent`, `error`; `agent` is null when the whole review failed): fix the agent, Retry, or remove it.  |
-| `needs_approval`          | `human_review`   | No agent was requested for this commit: a person approves it.                                                                   |
-| `cycle`                   | `human_review`   | This pull request is in a stack cycle with the listed pull requests.                                                            |
-| `checks_running`          | `waiting`        | Required checks are running, or haven't started (`started: false`).                                                             |
-| `agent_reviewing`         | `waiting`        | An agent (`agent`; null before any is requested) hasn't finished.                                                               |
-| `resolution_running`      | `waiting`        | An AI conflict resolution is queued or running.                                                                                 |
-| `stack_checking`          | `waiting`        | Stack discovery is still comparing it with other pull requests.                                                                 |
-| `must_account_for`        | none             | Another pull request changes code this one depends on (`pr`, `landed`, `instructions`).                                         |
-| `stacked_on`              | none             | This pull request builds on `pr`.                                                                                               |
-| `waits_on`                | none             | It should land after `pr`.                                                                                                      |
+| Reason                    | State            | Meaning                                                                                                                                  |
+| ------------------------- | ---------------- | ---------------------------------------------------------------------------------------------------------------------------------------- |
+| `check_failed`            | `agent_followup` | An Actions check failed (`run_number`).                                                                                                  |
+| `agent_changes_requested` | `agent_followup` | An agent requested changes (`agent`, and each change's `id`, `title`, `detail`). Push a fix; the new commit is reviewed afresh.          |
+| `changes_requested`       | `agent_followup` | A person requested changes on this many findings.                                                                                        |
+| `rebase_conflict`         | `agent_followup` | GitOrange's rebase stopped at `commit` (null: before any) on these `files` (`error` says why); rebase locally and push, or try it again. |
+| `agent_flagged`           | `human_review`   | An agent's findings wait for a person (`agent`, `flags`).                                                                                |
+| `agent_review_failed`     | `human_review`   | An agent's review failed (`agent`, `error`; `agent` is null when the whole review failed): fix the agent, Retry, or remove it.           |
+| `needs_approval`          | `human_review`   | No agent was requested for this commit: a person approves it.                                                                            |
+| `cycle`                   | `human_review`   | This pull request is in a stack cycle with the listed pull requests.                                                                     |
+| `checks_running`          | `waiting`        | Required checks are running, or haven't started (`started: false`).                                                                      |
+| `agent_reviewing`         | `waiting`        | An agent (`agent`; null before any is requested) hasn't finished.                                                                        |
+| `resolution_running`      | `waiting`        | AI is resolving a commit's rebase conflict.                                                                                              |
+| `rebase_onto`             | `waiting`        | Stacked on `pr` without its commits yet: GitOrange is rebasing it onto `branch`.                                                         |
+| `stack_checking`          | `waiting`        | Stack discovery is still comparing it with other pull requests.                                                                          |
+| `must_account_for`        | none             | Another pull request changes code this one depends on (`pr`, `landed`, `instructions`).                                                  |
+| `stacked_on`              | none             | This pull request builds on `pr`.                                                                                                        |
+| `waits_on`                | none             | It should land after `pr`.                                                                                                               |
 
 `must_account_for` is shown for information: it doesn't change the state yet.
 
-Conflict reasons (`conflicts_unresolved`, `resolution_running`) come from AI conflict resolution, including conflicts it can't take on (binary files, or a file deleted on one side and changed on the other), which are `conflicts_unresolved` too. Without AI conflict resolution configured there is no conflict reason; the merge box still shows the conflicts. Likewise, without AI review configured (the `MERGE_RESOLUTION` Workflow binding), there is no `agent_reviewing` or `stack_checking` reason, since no review or stack check will ever run.
+Rebase reasons (`rebase_conflict`, `resolution_running`) come from GitOrange's rebase runs, including conflicts AI doesn't take (binary files, a file deleted on one side and changed on the other, generated files). Without the `MERGE_RESOLUTION` Workflow binding no rebase runs in the background: the merge box shows whether landing's rebase would conflict, and there is no rebase reason. Likewise, without AI review configured (the `MERGE_RESOLUTION` Workflow binding), there is no `agent_reviewing` or `stack_checking` reason, since no review or stack check will ever run.
 
 Checks count the same way as for landing: a failed or cancelled latest run is `check_failed`, an unfinished one is `checks_running`, and no run at all is not a reason. As on the commit's checks badge, only the latest run of each workflow and event counts (a re-run replaces the run it repeats).
 
@@ -254,7 +256,7 @@ Auto-merge treats unaccounted must-account-for as blocked and the other two as w
 
 Both are recorded on the timeline with who did them. A dismissal survives new commits to either pull request, so a dependency stays dismissed, until one of the two lands: then the landed pull request's relationships count again (a must-account-for blocks until a re-check finds it accounted for).
 
-**Reasons in a pull request's state.** `must_account_for` (with the instructions and, when the prerequisite is open, the branch to rebase onto first) and `rebase_onto` call for the author's move (`agent_followup`); `cycle` calls for a person; `stack_checking` waits; `stacked_on` and `waits_on` only inform. Agents read them in `state.reasons` and in `stack` over MCP.
+**Reasons in a pull request's state.** `must_account_for` (with the instructions and, when the prerequisite is open, the branch to rebase onto first) calls for the author's move (`agent_followup`), `rebase_onto` waits on GitOrange's rebase; `cycle` calls for a person; `stack_checking` waits; `stacked_on` and `waits_on` only inform. Agents read them in `state.reasons` and in `stack` over MCP.
 
 **Cost.** Per PR head change, one Clef call per open PR into the same target and per landed candidate (up to 20 pull requests landed in the last 30 days), skipped for pairs already checked at the same commits, plus one GLM-5.3 call per related or conflicting pair. Retargeting adds one Clef call per pair of unrelated prerequisites to order, and one GLM-5.3 re-check per new commit of a PR that must account for another.
 

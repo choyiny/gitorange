@@ -35,6 +35,11 @@ export const repositories = sqliteTable(
     name: text('name').notNull(),
     description: text('description'),
     defaultBranch: text('default_branch').notNull().default('main'),
+    // Branch name patterns GitOrange never rebases (lib/protected-branches.ts); null ⇒ none. The default branch is
+    // always protected.
+    protectedBranches: text('protected_branches', { mode: 'json' }).$type<
+      string[]
+    >(),
     // Immutable Artifacts repo name (r_<id>) so renames never touch git storage.
     artifactsName: text('artifacts_name').notNull().unique(),
     nextPrNumber: integer('next_pr_number').notNull().default(1),
@@ -212,6 +217,9 @@ export const pullRequests = sqliteTable(
       .notNull()
       .default('open'),
     mergeCommitSha: text('merge_commit_sha'),
+    // How many commits a rebase landing added to the target (merge_commit_sha is the landed head). NULL: landed before
+    // rebase merging, as one squash commit.
+    landedCommits: integer('landed_commits'),
     mergedById: text('merged_by_id').references(() => users.id),
     mergedAt: integer('merged_at', { mode: 'timestamp' }),
     closedAt: integer('closed_at', { mode: 'timestamp' }),
@@ -276,21 +284,26 @@ export const lfsObjects = sqliteTable(
 );
 
 // ── AI merge-conflict resolution ─────────────────────────────────────────────
-// One AI attempt at a PR's conflicts; the result commit lives on `refs/resolutions/<id>`.
+// One AI resolution of one pull request commit whose replay conflicted during a rebase (worker/src/merge/rebase.ts), or
+// a rebase that stopped for the agent (model 'none'). Squash-era rows (one per pull request and tips, commit_sha NULL)
+// stay as history.
 
 export const mergeResolutions = sqliteTable(
   'merge_resolutions',
   {
+    // `<pr id>-<onto 12>-<head 12>-<commit 12 | all>` (resolutionId): one row per pull request, tips and commit.
     id: text('id').primaryKey(),
     pullRequestId: text('pull_request_id')
       .notNull()
       .references(() => pullRequests.id, { onDelete: 'cascade' }),
-    /** The base branch tip and PR head the resolution merges. */
+    /** The tip the rebase was onto (base_ref's), and the pull request head it rebased. */
     baseSha: text('base_sha').notNull(),
     headSha: text('head_sha').notNull(),
+    /** The pull request commit whose replay conflicted; NULL when the rebase stopped before any (too many commits). */
+    commitSha: text('commit_sha'),
+    // running → resolved (contents ready) → applied (the rebase was written), or failed. rejected: a stop set aside to try again (retryRebase), or a squash-era discard.
     status: text('status', {
-      // queued: waiting for a free slot (resolutions per repository are capped).
-      enum: ['queued', 'running', 'proposed', 'applied', 'rejected', 'failed'],
+      enum: ['running', 'resolved', 'applied', 'failed', 'rejected'],
     })
       .notNull()
       .default('running'),
@@ -298,12 +311,17 @@ export const mergeResolutions = sqliteTable(
     conflictedPaths: text('conflicted_paths', { mode: 'json' })
       .$type<string[]>()
       .notNull(),
+    /** The resolved contents of conflictedPaths (path → text), once resolved. */
+    resolvedFiles: text('resolved_files', { mode: 'json' }).$type<
+      Record<string, string>
+    >(),
     /** Files the model changed outside the conflicted ones. */
     touchedExtraPaths: text('touched_extra_paths', { mode: 'json' }).$type<
       string[]
     >(),
     explanation: text('explanation'),
     errorMessage: text('error_message'),
+    /** The rebased commit made from commit_sha with these contents, once written. */
     resultSha: text('result_sha'),
     transcriptR2Key: text('transcript_r2_key'),
     durationMs: integer('duration_ms'),
@@ -687,7 +705,9 @@ export type PrEventKind =
   | 'approved'
   | 'withdrawn'
   // An agent committed what it learned from this pull request's dismissed change requests.
-  | 'learned';
+  | 'learned'
+  // GitOrange rebased the pull request's branch onto its base.
+  | 'rebased';
 
 export const prEvents = sqliteTable(
   'pr_events',
@@ -711,6 +731,7 @@ export const prEvents = sqliteTable(
         'approved',
         'withdrawn',
         'learned',
+        'rebased',
       ],
     }).notNull(),
     // state_changed: the state it changed to.
@@ -899,6 +920,7 @@ export const agentRunKinds = [
   'stack_discovery',
   'sweep',
   'learning',
+  'rebase',
 ] as const;
 export type AgentRunKind = (typeof agentRunKinds)[number];
 export const agentRunStatuses = ['running', 'succeeded', 'failed'] as const;

@@ -21,7 +21,7 @@ import {
 } from './lib/repos';
 import { hashToken } from './lib/tokens';
 import { actionsConfigured, diffRefs, onRefsUpdated } from './actions/trigger';
-import { autoResolveConflicts } from './merge/auto';
+import { startSweep } from './merge/auto';
 import { resolutionConfigured } from './merge/resolution';
 
 const GIT_PATH =
@@ -248,7 +248,7 @@ async function afterPush(
   if (refsBefore && refsAfter) {
     const updates = diffRefs(refsBefore, refsAfter);
     await onRefsUpdated(env, db, repo, fullName, updates, actorId);
-    await autoResolveConflicts(env, repo, updates);
+    await startSweep(env, repo, updates);
   }
   await publishChange(env, repoId, { approvals: true });
   await settleStates(env, db, repoId);

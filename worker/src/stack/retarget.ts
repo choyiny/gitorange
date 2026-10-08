@@ -2,7 +2,9 @@ import { and, eq, isNotNull, isNull, or } from 'drizzle-orm';
 import type { DrizzleDB } from '../db/middleware';
 import { prEdges, pullRequests, type PullRequest } from '../db/app.schema';
 import { landTargetIs, landTargetOf } from '../lib/land-target';
+import { ensureRebase } from '../merge/rebase';
 import { resolutionConfigured } from '../merge/resolution';
+import { findRepoById, gitFor } from '../lib/repos';
 import { d1Of, recordEvent } from '../pulls/events';
 import { settleStates } from '../pulls/settle';
 
@@ -50,6 +52,7 @@ export async function onPullClosed(
       )
       .all();
     let moved = 0;
+    const movedChildren: PullRequest[] = [];
     for (const c of children) {
       // Compare-and-swap: a racing reconcile or close moves it once.
       const res = await db
@@ -65,6 +68,7 @@ export async function onPullClosed(
         .returning({ id: pullRequests.id });
       if (!res.length) continue;
       moved++;
+      movedChildren.push({ ...c, baseRef: target, landTarget: target });
       await recordEvent(db, {
         // One per version of the child's row: deterministic, so a repeat records it once.
         id: `unstacked:${c.id}:${pr.id}:${c.updatedAt.getTime()}`,
@@ -135,6 +139,29 @@ export async function onPullClosed(
       );
     // Old and new base share the land target: one scoped settle covers both.
     if (moved) await settleStates(env, db, pr.repositoryId, { branch: target });
+    // Children now on the land target rebase onto it; so may an open PR sharing its head into another base (it
+    // wasn't rebased while this one was open: rebaseBlocked).
+    const sharing = await db
+      .select()
+      .from(pullRequests)
+      .where(
+        and(
+          eq(pullRequests.repositoryId, pr.repositoryId),
+          eq(pullRequests.state, 'open'),
+          eq(pullRequests.headRef, pr.headRef)
+        )
+      )
+      .all();
+    const toRebase = [
+      ...movedChildren,
+      ...sharing.filter((p) => p.id !== pr.id),
+    ];
+    if (toRebase.length) {
+      const found = await findRepoById(db, pr.repositoryId);
+      if (found)
+        for (const c of toRebase)
+          await ensureRebase(env, db, gitFor(env, found.repo), c);
+    }
     await startReconcile(env, pr.repositoryId, target);
   } catch (e) {
     console.error('[stack] unwinding failed', pr.id, e);
@@ -226,6 +253,14 @@ export async function dismissEdge(
         actorId,
       });
       await settleStates(env, db, pr.repositoryId, { branch: target });
+      // Now on the land target: it rebases onto it.
+      const found = await findRepoById(db, pr.repositoryId);
+      if (found)
+        await ensureRebase(env, db, gitFor(env, found.repo), {
+          ...pr,
+          baseRef: target,
+          landTarget: target,
+        });
     }
   }
   if (!did) return 'not_found';

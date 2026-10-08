@@ -36,6 +36,8 @@ export type Repo = {
   fullName: string;
   description: string | null;
   defaultBranch: string;
+  /** Branch name patterns GitOrange never rebases (exact names, or globs: `*` within a segment, `**` across). */
+  protectedBranches: string[];
   createdAt: string;
   updatedAt: string;
 };
@@ -122,8 +124,8 @@ export type Pull = {
   headRef: string;
   /** Pull request lists only: the commit its checks ran on. */
   headSha?: string | null;
-  /** Pull request lists only (open): the current AI conflict resolution. */
-  aiResolution?: 'queued' | 'running' | 'proposed' | 'failed' | null;
+  /** Pull request lists only (open): AI resolving a rebase conflict, or failed to. */
+  aiResolution?: 'running' | 'failed' | null;
   /** Pull request lists only (open): the head commit's review in a word (agents, or a person's approval). */
   review?: {
     state:
@@ -218,14 +220,10 @@ export type PullDetail = {
   headSha: string | null;
   headBranchExists: boolean;
   commitCount: number;
+  /** It can land: up to date, or behind (landing rebases it first). */
   mergeable: boolean | null;
-  conflicts: string[];
-  /** Every conflict is a text conflict, so AI can try to resolve them. */
-  conflictsResolvable: boolean;
-  /** The conflicts are resolved by a valid AI resolution, which merging lands. */
-  resolvedByAi: boolean;
-  aiResolution: boolean;
-  resolution: MergeResolution | null;
+  /** Where it stands against its base; null unless it is open with both branches. */
+  rebase: RebaseView | null;
   /** The head commit's review by agents and people. */
   review: PullReview | null;
   canMerge: boolean;
@@ -375,20 +373,24 @@ export type PullReview = {
     disabledAt: string | null;
   };
 };
-export type MergeResolution = {
-  id: string;
-  status: 'queued' | 'running' | 'proposed' | 'applied' | 'rejected' | 'failed';
-  model: string;
-  baseSha: string;
-  headSha: string;
-  resultSha: string | null;
-  conflictedPaths: string[];
-  touchedExtraPaths: string[];
-  explanation: string | null;
-  errorMessage: string | null;
-  durationMs: number | null;
-  stale: boolean;
-  createdAt: string;
+/** A refused merge's 409 body (`ApiError.body`). */
+export type MergeRefusal = {
+  error: string;
+  /** Which gate refused it. */
+  reason?: 'stack' | 'checks' | 'review' | 'rebase';
+  /** Landing rebased the branch and pushed this head first, then stopped for its checks or review. */
+  rebased?: string;
+};
+/** Where an open pull request stands against its base (GET …/pulls/{n} `rebase`). */
+export type RebaseView = {
+  status:
+    'nothing_to_merge' | 'up_to_date' | 'behind' | 'resolving' | 'conflict';
+  /** The branch it rebases onto. */
+  onto: string;
+  /** The commit AI is resolving, or where the rebase stopped (null: before any). */
+  commit: string | null;
+  files: string[];
+  error: string | null;
 };
 export type Invitation = {
   id: string;
@@ -511,7 +513,12 @@ export type WorkflowJob = {
 };
 /** AI processing recorded as a run (Actions tab → Agent). */
 export type AgentRunKind =
-  'review' | 'conflict_resolution' | 'stack_discovery' | 'sweep' | 'learning';
+  | 'review'
+  | 'rebase'
+  | 'conflict_resolution'
+  | 'stack_discovery'
+  | 'sweep'
+  | 'learning';
 export type AgentRunStatus = 'running' | 'succeeded' | 'failed';
 export type AgentRun = {
   id: string;
@@ -839,6 +846,7 @@ export const api = {
       description?: string | null;
       defaultBranch?: string;
       visibility?: Visibility;
+      protectedBranches?: string[] | null;
     }
   ) => apiFetch<Repo>(r(o, n), { method: 'PATCH', json: body }),
   deleteRepo: (o: string, n: string) => apiFetch(r(o, n), { method: 'DELETE' }),
@@ -907,9 +915,6 @@ export const api = {
     n: string,
     num: number,
     body: {
-      title?: string;
-      message?: string;
-      resolutionId?: string;
       approve?: boolean;
       /** The head commit the page shows; the server answers 409 if the branch has moved. */
       headSha?: string;
@@ -919,6 +924,9 @@ export const api = {
       method: 'POST',
       json: body,
     }),
+  /** Try a stopped rebase again (rebase_conflict); 409 when nothing is stopped or the branch is never rebased. */
+  retryRebase: (o: string, n: string, num: number) =>
+    apiFetch<RebaseView>(`${r(o, n)}/pulls/${num}/rebase`, { method: 'POST' }),
   runs: (o: string, n: string, page: number, workflow?: string) =>
     apiFetch<{
       configured: boolean;
@@ -976,14 +984,6 @@ export const api = {
     apiFetch<Record<string, CommitRuns>>(
       `${r(o, n)}/commit-statuses?shas=${shas.join(',')}`
     ),
-  startResolution: (o: string, n: string, num: number) =>
-    apiFetch<MergeResolution>(`${r(o, n)}/pulls/${num}/resolutions`, {
-      method: 'POST',
-    }),
-  rejectResolution: (o: string, n: string, num: number, id: string) =>
-    apiFetch(`${r(o, n)}/pulls/${num}/resolutions/${id}/reject`, {
-      method: 'POST',
-    }),
   approvals: (opts: { cursor?: string; limit?: number } = {}) =>
     apiFetch<ApprovalsPage>(
       `/api/approvals?${q({

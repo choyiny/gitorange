@@ -91,6 +91,7 @@ export async function createRepository(
     name,
     description: input.description?.trim() || null,
     defaultBranch: 'main',
+    protectedBranches: null,
     artifactsName: `r_${id}`,
     nextPrNumber: 1,
     createdAt: now,

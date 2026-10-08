@@ -71,7 +71,7 @@ describe('pull state text', () => {
     );
   });
 
-  it('says rebase onto', () => {
+  it('says rebase onto and rebase conflict', () => {
     expect(
       reasonText({
         kind: 'rebase_onto',
@@ -79,6 +79,22 @@ describe('pull state text', () => {
         branch: 'setup-checks',
         why: 'x',
       })
-    ).toBe('rebase onto #28 (setup-checks)');
+    ).toBe('GitOrange is rebasing it onto #28 (setup-checks)');
+    expect(
+      reasonText({
+        kind: 'rebase_conflict',
+        commit: 'abc1234def',
+        files: ['x.ts', 'y.ts'],
+        error: null,
+      })
+    ).toBe('commit abc1234 conflicts in x.ts, y.ts');
+    expect(
+      reasonText({
+        kind: 'rebase_conflict',
+        commit: null,
+        files: [],
+        error: 'Too many commits.',
+      })
+    ).toBe('Too many commits.');
   });
 });

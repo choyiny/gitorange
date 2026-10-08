@@ -105,14 +105,14 @@ export default function PullNew() {
                 <CheckIcon className="color-fg-success" />
                 <strong className="color-fg-success">Able to merge.</strong>
                 <span className="color-fg-muted">
-                  These branches can be automatically merged.
+                  This branch can be rebased onto the base cleanly.
                 </span>
               </>
             ) : cmp.data.conflicts.length ? (
               <>
                 <XIcon className="color-fg-danger" />
                 <strong className="color-fg-danger">
-                  Can’t automatically merge.
+                  Can’t rebase automatically.
                 </strong>
                 <span className="color-fg-muted">
                   Don’t worry, you can still create the pull request.

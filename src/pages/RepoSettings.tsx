@@ -7,6 +7,13 @@ import { errorMessage } from '@/lib/api';
 import { Avatar } from '@/components/Avatar';
 import { NotFound } from './NotFound';
 
+/** One pattern per line or comma-separated: `release/*`, `develop`, `hotfix/**`. */
+const protectedPatterns = (text: string) =>
+  text
+    .split(/[\n,]/)
+    .map((p) => p.trim())
+    .filter(Boolean);
+
 export default function RepoSettings() {
   const repo = useOutletContext<RepoDetail>();
   const navigate = useNavigate();
@@ -15,6 +22,9 @@ export default function RepoSettings() {
   const [name, setName] = useState(repo.name);
   const [description, setDescription] = useState(repo.description ?? '');
   const [defaultBranch, setDefaultBranch] = useState(repo.defaultBranch);
+  const [protectedBranches, setProtectedBranches] = useState(
+    (repo.protectedBranches ?? []).join('\n')
+  );
   const [flash, setFlash] = useState<{
     kind: 'success' | 'error';
     text: string;
@@ -35,7 +45,12 @@ export default function RepoSettings() {
 
   const save = useMutation({
     mutationFn: () =>
-      api.updateRepo(o, repo.name, { name, description, defaultBranch }),
+      api.updateRepo(o, repo.name, {
+        name,
+        description,
+        defaultBranch,
+        protectedBranches: protectedPatterns(protectedBranches),
+      }),
     onSuccess: async (r) => {
       setFlash({ kind: 'success', text: 'Repository settings saved.' });
       await qc.invalidateQueries({ queryKey: ['repo', o] });
@@ -181,6 +196,25 @@ export default function RepoSettings() {
               <option key={b.name}>{b.name}</option>
             ))}
           </select>
+          <label
+            className="d-block text-bold f6 mb-1"
+            htmlFor="protected-branches"
+          >
+            Protected branches
+          </label>
+          <p className="note mt-0 mb-1">
+            GitOrange never rebases these branches. The default branch is always
+            protected.
+          </p>
+          <textarea
+            id="protected-branches"
+            className="form-control width-full mb-3 text-mono f6"
+            rows={3}
+            placeholder={'release/*\ndevelop\nhotfix/**'}
+            value={protectedBranches}
+            onChange={(e) => setProtectedBranches(e.target.value)}
+            style={{ minHeight: 0 }}
+          />
           <div>
             <button className="btn" disabled={save.isPending}>
               Save changes

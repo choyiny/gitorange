@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { drizzle } from 'drizzle-orm/d1';
 import { schema } from '../db/schema';
 import type { StepRunner } from '../merge/resolution';
-import { executeResolution } from '../merge/resolution';
+import { executeRebase } from '../merge/rebase';
 import type { ResolveResult } from '../merge/resolver';
 import { executeSweep, type SweepParams } from '../merge/auto';
 import { executeHeadReview } from '../review/head';
@@ -684,70 +684,41 @@ async function conflictingPull() {
   return { t, admin };
 }
 
-describe('agent runs: conflict resolution, sweep, stack discovery', () => {
-  it('records a conflict resolution with the resolver model and tokens', async () => {
+describe('agent runs: rebase, sweep, stack discovery', () => {
+  it('records a rebase run, step by step', async () => {
     const { t } = await conflictingPull();
-    const instance = t.actions.resolutions.find(
-      (s) => (s.params as { resolutionId?: string }).resolutionId
-    )!;
-    const id = (instance.params as { resolutionId: string }).resolutionId;
+    const pr = (await t.env.DB.prepare('SELECT id FROM pull_requests').first<{
+      id: string;
+    }>())!;
     const db = dbOf(t);
-    const result: ResolveResult = {
-      status: 'done',
-      explanation:
-        'Kept the uppercase from main and the detail from the PR.\nMore.',
-      files: { 'notes.txt': BASE.replace('three', 'THREE (main), and a half') },
-      transcript: JSON.stringify([
-        {
-          role: 'assistant',
-          usage: { input: 1000, output: 200, cacheRead: 0 },
-        },
-      ]),
-    };
     await recordAgentRun(
       t.env,
       db,
-      {
-        instanceId: instance.id,
-        payload: instance.params as MergeResolutionParams,
-      },
+      { instanceId: 'rebase-1', payload: { rebase: { pullRequestId: pr.id } } },
       durableSteps().step,
       (step) =>
-        executeResolution(
-          {
-            env: t.env,
-            db,
-            step,
-            resolver: () => ({ resolve: async () => result }),
-          },
-          id
-        )
+        executeRebase({ env: t.env, db, step }, { pullRequestId: pr.id })
     );
     const [run] = await runs(t);
     expect(run).toMatchObject({
-      kind: 'conflict_resolution',
-      status: 'succeeded',
-      title: 'Resolve conflicts with main',
+      kind: 'rebase',
+      status: 'failed',
+      title: 'Rebase #1 onto main',
     });
+    expect(run.error).toMatch(
+      /^Commit [0-9a-f]{7} conflicts in notes\.txt\. Rebase locally\.$/
+    );
     const steps = await stepsOf(t, run.id);
     expect(steps.map((s) => s.name)).toEqual([
       'load',
-      'current:before-resolve',
-      'prepare',
-      'resolve',
-      'current:before-commit',
-      'commit',
-      'auto-merge',
-      'next',
+      'tips:0',
+      'replay:0:0',
+      'stop:0:0',
+      // Nothing moved during the run: no new one.
+      'requeue',
     ]);
-    const resolve = steps.find((s) => s.name === 'resolve')!;
-    expect(resolve).toMatchObject({ tokens_in: 1000, tokens_out: 200 });
-    expect(resolve.model).toBeTruthy();
-    expect(resolve.decision).toBe(
-      'Resolved 1 file: Kept the uppercase from main and the detail from the PR.'
-    );
-    expect(steps.find((s) => s.name === 'prepare')!.decision).toBe(
-      '1 conflicted file'
+    expect(steps[2].decision).toMatch(
+      /^Commit [0-9a-f]{7} conflicts in 1 file: notes\.txt$/
     );
   });
 
@@ -779,7 +750,7 @@ describe('agent runs: conflict resolution, sweep, stack discovery', () => {
       'repo',
       'targets',
       'pr',
-      'resolve',
+      'rebase',
     ]);
     expect(steps[1].decision).toBe('1 open pull request to check');
   });

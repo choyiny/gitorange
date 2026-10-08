@@ -142,7 +142,13 @@ mcpRouter.post('/', async (c) => {
             `${name} is a self-hosted, GitHub-style git server. Use these tools to find and create ` +
             'repositories and to work with pull requests: push a branch with git, open a pull request, then ' +
             'follow its checks and agent reviews with gitorange_get_pull_request. Merging is always rebase ' +
-            'and merge. Reviewer agents review the repositories that invite them: list them with ' +
+            'and merge: GitOrange keeps open pull requests rebased onto their base itself (a rebase_conflict reason or a ' +
+            '"Not rebased" note means it stopped: rebase locally, or, where AI failed on a commit, try again with ' +
+            'gitorange_retry_rebase); after it rebases ' +
+            'your branch (gitorange_get_pull_request shows "rebased", with the old head), rebase your local commits ' +
+            'onto origin/<branch> (`git fetch && git rebase --onto origin/<branch> <old head>`) before you push again; ' +
+            'a push of the old history is rejected as a non-fast-forward, ' +
+            'never force it. Reviewer agents review the repositories that invite them: list them with ' +
             'gitorange_list_agents, and repository admins invite or remove them. ' +
             (isModerator
               ? ''

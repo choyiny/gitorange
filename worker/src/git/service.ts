@@ -5,6 +5,7 @@ import {
   makeBlob,
   makeCommit,
   makeTree,
+  parseTree,
   type GitObject,
   type Signature,
   type TreeEntry,
@@ -83,6 +84,8 @@ export class GitService {
   private trees = new Map<string, Entry[]>();
   private refsCache?: Promise<Map<string, string>>;
   private headCache?: string | null;
+  /** Objects made in memory (a rebase's trees, blobs and commits), readable before they are pushed. */
+  private staged = new Map<string, GitObject>();
 
   constructor(readonly client: ArtifactsRepoClient) {}
 
@@ -117,6 +120,11 @@ export class GitService {
 
   // ── objects ────────────────────────────────────────────────────────────────
 
+  /** Makes `objects` readable through tree() and blob() until this service is dropped (nothing is pushed). */
+  stage(objects: GitObject[]) {
+    for (const o of objects) this.staged.set(o.sha, o);
+  }
+
   async commit(sha: string): Promise<Commit | null> {
     const hit = this.commits.get(sha);
     if (hit) return hit;
@@ -128,12 +136,18 @@ export class GitService {
   async tree(sha: string): Promise<Entry[]> {
     const hit = this.trees.get(sha);
     if (hit) return hit;
-    const t = (await (await this.client.repo()).readTree(sha)) ?? [];
+    const staged = this.staged.get(sha);
+    const t =
+      staged?.type === 'tree'
+        ? parseTree(staged.data)
+        : ((await (await this.client.repo()).readTree(sha)) ?? []);
     this.trees.set(sha, t);
     return t;
   }
 
   async blob(sha: string): Promise<Uint8Array | null> {
+    const staged = this.staged.get(sha);
+    if (staged?.type === 'blob') return staged.data;
     const b = await (await this.client.repo()).readBlob(sha);
     return b ? new Uint8Array(await b.arrayBuffer()) : null;
   }

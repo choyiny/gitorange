@@ -5,6 +5,7 @@ import {
   ArrowLeftIcon,
   CalendarIcon,
   CpuIcon,
+  GitBranchIcon,
   GitMergeIcon,
   GitPullRequestIcon,
   HubotIcon,
@@ -33,9 +34,10 @@ export const AGENT_KINDS: {
   icon: typeof HubotIcon;
 }[] = [
   { kind: 'review', label: 'Review', icon: SparkleFillIcon },
+  { kind: 'rebase', label: 'Rebase', icon: GitBranchIcon },
   {
     kind: 'conflict_resolution',
-    label: 'Conflict resolution',
+    label: 'Conflict resolution (squash-era)',
     icon: GitMergeIcon,
   },
   {

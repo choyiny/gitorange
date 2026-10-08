@@ -13,6 +13,7 @@ import type { PullEvent, PullReason } from '@/lib/uiApi';
 import { blocking, reasonText } from '@/lib/pullState';
 import { timeAgo } from '@/lib/format';
 import { learnedPhrase, learnedText } from '@/lib/lessons';
+import { rebasedText } from '@/lib/rebaseStatus';
 import { PullStateLabel } from './PullStateLabel';
 
 const num = (v: unknown) => (typeof v === 'number' ? v : null);
@@ -177,6 +178,21 @@ export function PullEventItem({
             short
           )}
         </span>
+        {when}
+      </Row>
+    );
+  }
+  if (e.kind === 'rebased') {
+    const to = str(d.to);
+    return (
+      <Row icon={<GitBranchIcon />}>
+        {rebasedText(d)}
+        {to && (
+          <>
+            {' '}
+            · <Link to={`${repoPath}/commit/${to}`}>{to.slice(0, 7)}</Link>
+          </>
+        )}
         {when}
       </Row>
     );

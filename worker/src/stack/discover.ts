@@ -11,7 +11,7 @@ import type { FileChange, GitService } from '../git/service';
 import { pingingSteps } from '../live/publish';
 import { recordEvent } from '../pulls/events';
 import { findRepoById, gitFor } from '../lib/repos';
-import { pullRef } from '../merge/land';
+import { pullShas } from '../lib/pulls';
 import type { StepRunner } from '../merge/resolution';
 import { reviewConfigured } from '../review/head';
 import { headReviewFor, hasInvitedAgents } from '../review/keys';
@@ -237,17 +237,17 @@ export async function executeStacking(
       .limit(MAX_LANDED)
       .all();
     const addLanded = async (l: PullRequest) => {
-      if (!l.mergeCommitSha) return;
-      const merge = await git.commit(l.mergeCommitSha);
-      const h = refs.get(pullRef(l.number));
-      if (!merge || !h) return;
-      candidates.push(candidate(await side(l, h, merge.parents[0], true)));
+      // Everything it landed: from the first parent of its oldest landed commit to the landed head (or, landed
+      // before rebase merging, the squash commit's first parent to its pinned head).
+      const shas = await pullShas(git, l);
+      if (!shas) return;
+      candidates.push(candidate(await side(l, shas.head, shas.base, true)));
     };
     for (const l of landed) {
       if (!l.mergeCommitSha || !l.mergedAt) continue;
       if (Date.now() - l.mergedAt.getTime() > LANDED_WINDOW_MS) continue;
       if ((await git.mergeBase(l.mergeCommitSha, head)) === l.mergeCommitSha)
-        continue; // already in this PR's history
+        continue; // already in this PR's history (merge_commit_sha is the landed head)
       await addLanded(l);
     }
     // Landed prerequisites this PR still has to account for are re-checked whatever their age, and even once

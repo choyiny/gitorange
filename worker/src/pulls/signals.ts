@@ -6,7 +6,7 @@ import {
   type PullRequest,
 } from '../db/app.schema';
 import type { GitService } from '../git/service';
-import { SUPERSEDED } from '../merge/resolution';
+import { NOTHING_TO_MERGE, rebaseRow, SUPERSEDED } from '../merge/resolution';
 import { checkVerdict, type CheckRun } from '../review/checks';
 import { reviewInputs, reviewVerdict, type GateInput } from '../review/gate';
 import { chunks, stackTreeView, type StackTreeView } from '../stack/view';
@@ -100,6 +100,7 @@ export async function pullStates(
       status: string;
       baseSha: string;
       headSha: string;
+      commitSha: string | null;
       errorMessage: string | null;
       conflictedPaths: string[];
     }
@@ -111,6 +112,7 @@ export async function pullStates(
         status: mergeResolutions.status,
         baseSha: mergeResolutions.baseSha,
         headSha: mergeResolutions.headSha,
+        commitSha: mergeResolutions.commitSha,
         errorMessage: mergeResolutions.errorMessage,
         conflictedPaths: mergeResolutions.conflictedPaths,
       })
@@ -118,7 +120,8 @@ export async function pullStates(
       .where(
         and(
           inArray(mergeResolutions.pullRequestId, part),
-          sql`${mergeResolutions}.rowid = (SELECT m.rowid FROM merge_resolutions m WHERE m.pull_request_id = ${mergeResolutions.pullRequestId} ORDER BY m.created_at DESC, m.rowid DESC LIMIT 1)`
+          // A squash-era row (rebaseRow) is never a rebase outcome.
+          sql`${mergeResolutions}.rowid = (SELECT m.rowid FROM merge_resolutions m WHERE m.pull_request_id = ${mergeResolutions.pullRequestId} AND ${rebaseRow('m')} ORDER BY m.created_at DESC, m.rowid DESC LIMIT 1)`
         )
       )
       .all())
@@ -194,16 +197,22 @@ export async function pullStates(
     const gate = reviews.get(pr.id);
     if (gate) reasons.push(...reviewVerdict(gate).reasons);
 
+    // The latest rebase conflict row, at the tips the PR rebases between now (base_ref's, else the land target's).
     const r = resolutions.get(pr.id);
-    if (r && r.baseSha === base && r.headSha === head) {
-      if (r.status === 'queued' || r.status === 'running')
+    const onto = (await tipOf(pr.baseRef)) ?? base;
+    if (r && r.baseSha === onto && r.headSha === head) {
+      // A per-commit resolution (a squash-era row, commit_sha NULL, is never resumed).
+      if ((r.status === 'running' || r.status === 'resolved') && r.commitSha)
         reasons.push({ kind: 'resolution_running' });
       else if (
-        r.status === 'rejected' ||
-        (r.status === 'failed' && r.errorMessage !== SUPERSEDED)
+        r.status === 'failed' &&
+        r.errorMessage !== SUPERSEDED &&
+        // Nothing to merge isn't a conflict: there is nothing to rebase.
+        r.errorMessage !== NOTHING_TO_MERGE
       )
         reasons.push({
-          kind: 'conflicts_unresolved',
+          kind: 'rebase_conflict',
+          commit: r.commitSha,
           files: r.conflictedPaths,
           error: r.errorMessage,
         });

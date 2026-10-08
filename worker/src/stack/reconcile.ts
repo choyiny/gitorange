@@ -9,6 +9,7 @@ import {
 import { findRepoById, gitFor } from '../lib/repos';
 import { landTargetIs } from '../lib/land-target';
 import { pingingSteps } from '../live/publish';
+import { ensureRebase } from '../merge/rebase';
 import type { StepRunner } from '../merge/resolution';
 import { MODEL_RETRIES } from '../review/detail';
 import { reviewConfigured } from '../review/head';
@@ -310,7 +311,7 @@ export async function executeReconcile(
     const nodes =
       view.targets.find((t) => t.branch === params.landTarget)?.nodes ?? [];
     const branchOf = new Map(nodes.map((n) => [n.number, n.headRef]));
-    let moved = 0;
+    const movedIds: string[] = [];
     for (const pr of job.prs) {
       const parent = nodes.find((n) => n.number === pr.number)?.parent ?? null;
       const branch = parent ? branchOf.get(parent.number) : undefined;
@@ -354,11 +355,11 @@ export async function executeReconcile(
           event,
         })
       )
-        moved++;
+        movedIds.push(pr.id);
     }
-    return moved;
+    return movedIds;
   });
-  if (changed)
+  if (changed.length) {
     await step.do(`${p}states`, async () => {
       // The old and the new base share this land target: one scoped settle covers both.
       await settleStates(env, db, params.repositoryId, {
@@ -366,7 +367,21 @@ export async function executeReconcile(
       });
       return true;
     });
-  return changed;
+    await step.do(`${p}rebase`, async () => {
+      // A retargeted pull request rebases onto its new base (a parent's branch, or the land target).
+      const git = gitFor(env, job.repo as Repository);
+      for (const id of changed) {
+        const pr = await db
+          .select()
+          .from(pullRequests)
+          .where(eq(pullRequests.id, id))
+          .get();
+        if (pr) await ensureRebase(env, db, git, pr);
+      }
+      return true;
+    });
+  }
+  return changed.length;
 }
 
 /**

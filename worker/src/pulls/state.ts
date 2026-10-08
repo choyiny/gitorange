@@ -21,7 +21,13 @@ export const STATE_RANK: Record<PullStateName, number> = {
 export type Reason =
   | { kind: 'check_failed'; run_number: number; check: string | null }
   | { kind: 'changes_requested'; flags: number }
-  | { kind: 'conflicts_unresolved'; files: string[]; error: string | null }
+  /** GitOrange's rebase stopped at `commit` (null: before any) on these files; the agent rebases locally. */
+  | {
+      kind: 'rebase_conflict';
+      commit: string | null;
+      files: string[];
+      error: string | null;
+    }
   | {
       kind: 'must_account_for';
       pr: number;
@@ -67,7 +73,7 @@ export type ReasonKind = Reason['kind'];
 const KINDS: Record<ReasonKind, true> = {
   check_failed: true,
   changes_requested: true,
-  conflicts_unresolved: true,
+  rebase_conflict: true,
   must_account_for: true,
   rebase_onto: true,
   cycle: true,
@@ -91,10 +97,9 @@ export function reasonState(r: Reason): PullStateName | null {
   switch (r.kind) {
     case 'check_failed':
     case 'changes_requested':
-    case 'conflicts_unresolved':
+    case 'rebase_conflict':
     // Not accounted for and not dismissed: stackReasons emits it only then.
     case 'must_account_for':
-    case 'rebase_onto':
     case 'agent_changes_requested':
       return 'agent_followup';
     case 'cycle':
@@ -103,6 +108,8 @@ export function reasonState(r: Reason): PullStateName | null {
     case 'needs_approval':
       return 'human_review';
     case 'checks_running':
+    // GitOrange rebases it onto its parent.
+    case 'rebase_onto':
     case 'resolution_running':
     case 'stack_checking':
     case 'agent_reviewing':

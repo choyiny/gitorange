@@ -175,7 +175,7 @@ const getRepository: ToolModule = {
     title: 'Get repository',
     description:
       'Get one repository by its full name (owner/name, from gitorange_list_repositories): description, ' +
-      'visibility, default branch, branches, open pull request count, the latest commit on the default ' +
+      'visibility, default branch, protected branch patterns (never rebased by GitOrange), branches, open pull request count, the latest commit on the default ' +
       'branch, the latest Actions run status, and how to clone it.',
     annotations: { readOnlyHint: true, title: 'Get repository' },
     inputSchema: {
@@ -237,6 +237,8 @@ const getRepository: ToolModule = {
           permissions: perms,
           empty: branches.length === 0,
           default_branch: repo.defaultBranch,
+          // Branches GitOrange never rebases, besides the default branch (globs: * within a segment, ** across).
+          protected_branches: repo.protectedBranches ?? [],
           branches: branches.map((b) => b.name),
           open_pull_requests: Number(openPulls?.n ?? 0),
           latest_commit: commit

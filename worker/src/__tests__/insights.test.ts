@@ -33,7 +33,7 @@ const DAY = 86400;
  *  #2 auto-merged after two flags were approved; AI resolution failed, then applied
  *  #3 merged by a person after 3 days, never reviewed
  *  #4 closed without merging; its review failed
- *  #5 open: two reviews, the latest with one unapproved flag; resolution proposed
+ *  #5 open: two reviews, the latest with one unapproved flag; resolution resolved
  *  #6 merged long ago (outside every period but a year)
  */
 async function seed(t: TestEnv, cookie: string, name = 'app') {
@@ -194,7 +194,7 @@ async function seed(t: TestEnv, cookie: string, name = 'app') {
     key: string,
     n: number,
     ago: number,
-    status: 'failed' | 'applied' | 'proposed',
+    status: 'failed' | 'applied' | 'resolved',
     model = 'm'
   ) => ({
     id: `${repo.id}-${key}`,
@@ -209,7 +209,7 @@ async function seed(t: TestEnv, cookie: string, name = 'app') {
   await db.insert(mergeResolutions).values([
     resolution('r1', 2, 5 * DAY, 'failed'),
     resolution('r2', 2, 5 * DAY - HOUR, 'applied'),
-    resolution('r3', 5, DAY, 'proposed'),
+    resolution('r3', 5, DAY, 'resolved'),
     // Conflicts AI can't resolve (binary, delete/edit): recorded, but never an AI attempt.
     resolution('rn', 5, 2 * DAY, 'failed', 'none'),
     resolution('r0', 6, 110 * DAY, 'failed'),

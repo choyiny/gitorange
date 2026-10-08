@@ -59,6 +59,7 @@ export async function settleStates(
 
 type Payload = {
   resolutionId?: string;
+  rebase?: { pullRequestId: string };
   sweep?: { repositoryId: string };
   stack?: { pullRequestId: string };
   reconcile?: { repositoryId: string; landTarget: string };
@@ -81,6 +82,7 @@ export async function repositoryForPayload(
     };
   if (p.sweep) return { repositoryId: p.sweep.repositoryId };
   let prId = p.stack?.pullRequestId;
+  if (!prId && p.rebase) prId = p.rebase.pullRequestId;
   if (!prId && p.headReview)
     prId = (
       await db
