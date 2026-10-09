@@ -11,7 +11,7 @@
   flex: 1;
 }
 
-/* ---------- Toolbar: branch, branches, branch map, search, clone ---------- */
+/* ---------- Toolbar: branch, branches, search, clone ---------- */
 .codebar {
   display: flex;
   align-items: center;

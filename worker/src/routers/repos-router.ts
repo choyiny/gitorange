@@ -1,6 +1,6 @@
 import { OpenAPIHono, createRoute, z } from '@hono/zod-openapi';
 import { rebase, REBASE_COMMITTER } from '../git/rebase';
-import { and, desc, eq, sql } from 'drizzle-orm';
+import { and, asc, desc, eq, or, sql } from 'drizzle-orm';
 import {
   lfsObjects,
   pullRequests,
@@ -10,6 +10,7 @@ import {
   type Repository,
 } from '../db/app.schema';
 import { users } from '../db/auth.schema';
+import { landTargetIs } from '../lib/land-target';
 import type { DrizzleDB } from '../db/middleware';
 import { isAgentUser } from '../agents/identity';
 import { decoder } from '../git/bytes';
@@ -34,6 +35,7 @@ import { repoStats } from '../lib/repo-stats';
 import {
   invalidProtectedPatterns,
   normalizeProtectedPatterns,
+  protectedBy,
 } from '../lib/protected-branches';
 import {
   LFS_NOT_CONFIGURED,
@@ -542,8 +544,34 @@ reposRouter.openapi(deleteBranchRoute, async (c) => {
   if (!c.get('perms').write)
     return c.json({ error: 'You do not have push access' }, 403);
   const { name } = c.req.valid('query');
-  if (name === c.get('repo').defaultBranch)
+  const repo = c.get('repo');
+  if (name === repo.defaultBranch)
     return c.json({ error: 'Cannot delete the default branch' }, 400);
+  if (protectedBy(repo.protectedBranches, name))
+    return c.json({ error: `${name} is a protected branch.` }, 409);
+  // A branch an open pull request comes from, builds on or lands on is in use (as Clean up and landing keep it).
+  const usedBy = await c
+    .get('db')
+    .select({ number: pullRequests.number })
+    .from(pullRequests)
+    .where(
+      and(
+        eq(pullRequests.repositoryId, repo.id),
+        eq(pullRequests.state, 'open'),
+        or(
+          eq(pullRequests.headRef, name),
+          eq(pullRequests.baseRef, name),
+          landTargetIs(name)
+        )
+      )
+    )
+    .orderBy(asc(pullRequests.number))
+    .get();
+  if (usedBy)
+    return c.json(
+      { error: `Open pull request #${usedBy.number} uses ${name}.` },
+      409
+    );
   // The branch itself, not a tag or commit of that name; deleting one that isn't there does nothing and records nothing.
   const sha = (await c.get('git').refs()).get(`refs/heads/${name}`);
   if (sha) {

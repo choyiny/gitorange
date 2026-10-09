@@ -1,5 +1,4 @@
-/* Health: the decision waiting, the "did anything get worse?" table, the branch map card, who made things better or
-   worse, and the reviewers. Ported from docs/design/crew/views.css (decision card, movers, reviewer rows). Tokens
+/* Health: the decision waiting, the "did anything get worse?" table, who made things better or worse, and the reviewers. Ported from docs/design/crew/views.css (decision card, movers, reviewer rows). Tokens
    only; the table, list, chip, spark and coder tile come from components.css. */
 
 /* ---------- The decision waiting on the owner ---------- */

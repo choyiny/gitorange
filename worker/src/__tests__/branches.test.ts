@@ -456,6 +456,35 @@ describe('DELETE /api/repos/{o}/{r}/branches', () => {
     expect(JSON.parse(results[0].data)).toEqual({ sha });
   });
 
+  it('refuses a protected branch, and one an open pull request comes from, builds on or lands on', async () => {
+    const s = await crewRepo();
+    await s.branch('release/1');
+    await s.setRepo('protected_branches', JSON.stringify(['release/*']));
+    const protectedRes = await del(s, 'release/1');
+    expect(protectedRes.status).toBe(409);
+    expect(await protectedRes.json()).toEqual({
+      error: 'release/1 is a protected branch.',
+    });
+
+    await s.branch('parent');
+    const parent = await s.web('parent');
+    await s.branch('child');
+    const child = await s.web('child', { base: 'parent' });
+    const head = await del(s, 'child');
+    expect(head.status).toBe(409);
+    expect(await head.json()).toEqual({
+      error: `Open pull request #${child} uses child.`,
+    });
+    // parent is #parent's head and #child's base: the lowest number is named.
+    expect(await (await del(s, 'parent')).json()).toEqual({
+      error: `Open pull request #${parent} uses parent.`,
+    });
+    expect(s.repo.refs.has('refs/heads/release/1')).toBe(true);
+    expect(s.repo.refs.has('refs/heads/parent')).toBe(true);
+    expect(s.repo.refs.has('refs/heads/child')).toBe(true);
+    expect((await rows(s)).results).toEqual([]);
+  });
+
   it('records nothing for a branch that does not exist, or for a tag of that name', async () => {
     const s = await crewRepo();
     s.repo.refs.set('refs/tags/v1', s.main);

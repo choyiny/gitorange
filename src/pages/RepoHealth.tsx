@@ -56,7 +56,7 @@ function Report({ data, repo }: { data: HealthReport; repo: RepoDetail }) {
 
 /**
  * Health, the owner's "did anything get worse?" page for one repository: the decision waiting, a week-over-week row
- * for each reviewer, tests on main and merging, the branch map, who made things better or worse, and the reviewers.
+ * for each reviewer, tests on main and merging, who made things better or worse, and the reviewers.
  * Everything is measured from GitOrange's own signals, not from the running app. The report refreshes when the
  * repository changes (live pings) and its approvals when decisions are made.
  */

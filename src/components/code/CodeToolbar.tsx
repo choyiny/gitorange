@@ -38,8 +38,8 @@ function PathBar({
 }
 
 /**
- * Above the files: the branch, how many there are and a way to the branch map (not on an agent's repository, which
- * has no Branches tab), "Go to file", and the clone menu; below it, the path when inside a directory or a file.
+ * Above the files: the branch and how many there are, "Go to file", and the clone menu; below it, the path when
+ * inside a directory or a file.
  */
 export function CodeToolbar({
   repo,
