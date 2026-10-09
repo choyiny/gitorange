@@ -11,12 +11,12 @@ import { ApiError } from '@/lib/api';
 import { useCurrentUser } from '@/lib/auth';
 import { timeAgo } from '@/lib/format';
 import { dismissedText, LESSON_STATUS, lessonNote } from '@/lib/lessons';
-import { Header } from '@/components/Header';
+import { usePageHead } from '@/components/ui/PageHead';
 import { Avatar } from '@/components/Avatar';
 import { REVIEWER_STATUS } from '@/components/ReviewersBox';
 import { Spinner } from '@/components/Spinner';
 import { VisibilityLabel } from '@/components/VisibilityLabel';
-import { NotFound } from './NotFound';
+import { NOT_FOUND_HEAD, NotFound } from './NotFound';
 
 /** A person's page or the team's page, at `/<username>` or `/<team slug>`. */
 export default function Profile() {
@@ -26,31 +26,35 @@ export default function Profile() {
     queryKey: qk.namespace(owner),
     queryFn: () => api.namespace(owner),
   });
-  if (q.error instanceof ApiError && q.error.status === 404)
-    return <NotFound />;
+  const missing = q.error instanceof ApiError && q.error.status === 404;
+  usePageHead(
+    missing
+      ? NOT_FOUND_HEAD
+      : {
+          icon: q.data?.agent ? 'crew' : 'person',
+          crumbs: [{ label: owner }],
+          title: owner,
+        }
+  );
+  if (missing) return <NotFound />;
   const data = q.data;
   const isTeam = data?.kind === 'team';
   const isMe = data?.kind === 'user' && data.owner.id === me?.id;
   return (
     <>
-      <Header
-        context={<Link to={`/${owner}`}>{owner}</Link>}
-        nav={
-          <nav className="UnderlineNav">
-            <div className="UnderlineNav-body">
-              <span className="UnderlineNav-item selected">
-                <span className="UnderlineNav-octicon">
-                  <RepoIcon />
-                </span>
-                <span className="text-bold">Repositories</span>
-                <span className="Counter repo-tab-count">
-                  {data?.repositories.length ?? ''}
-                </span>
-              </span>
-            </div>
-          </nav>
-        }
-      />
+      <nav className="UnderlineNav" aria-label="Profile">
+        <div className="UnderlineNav-body">
+          <span className="UnderlineNav-item selected">
+            <span className="UnderlineNav-octicon">
+              <RepoIcon />
+            </span>
+            <span className="text-bold">Repositories</span>
+            <span className="Counter repo-tab-count">
+              {data?.repositories.length ?? ''}
+            </span>
+          </span>
+        </div>
+      </nav>
       {!data ? (
         <Spinner />
       ) : (
@@ -60,12 +64,12 @@ export default function Profile() {
         >
           <div className="col-md-3">
             <Avatar user={data.owner} size={260} square={isTeam} />
-            <h1 className="mt-3 lh-condensed">
+            <h2 className="mt-3 lh-condensed">
               <span className="d-block f3 text-bold">{data.owner.name}</span>
               <span className="d-block f4 text-light color-fg-muted">
                 {data.owner.username}
               </span>
-            </h1>
+            </h2>
             {data.agent ? (
               <AgentAbout agent={data.agent} />
             ) : isTeam ? (

@@ -9,64 +9,6 @@ body {
   min-height: 100vh;
 }
 
-/* ── App header (GitHub's global nav) ───────────────────────────────────── */
-.AppHeader {
-  background-color: var(--header-bgColor, var(--bgColor-inset));
-  border-bottom: 1px solid var(--borderColor-muted);
-  padding: 16px 16px 0;
-}
-.AppHeader-globalBar {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  padding-bottom: 16px;
-}
-.AppHeader-context {
-  display: flex;
-  align-items: center;
-  gap: 4px;
-  font-size: 14px;
-  min-width: 0;
-}
-.AppHeader-context a {
-  color: var(--fgColor-default);
-  padding: 4px 6px;
-  border-radius: 6px;
-  font-weight: 600;
-}
-.AppHeader-context a:hover {
-  background: var(--control-transparent-bgColor-hover);
-  text-decoration: none;
-}
-.AppHeader-context .sep {
-  color: var(--fgColor-muted);
-}
-.AppHeader-search {
-  min-width: 260px;
-}
-.AppHeader .UnderlineNav {
-  box-shadow: none;
-  min-height: 48px;
-  margin-bottom: -1px;
-}
-.AppHeader-logo {
-  border: 1px solid var(--borderColor-default);
-  border-radius: 6px;
-  width: 32px;
-  height: 32px;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-}
-.icon-btn {
-  width: 32px;
-  height: 32px;
-  padding: 0;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-}
-
 /* ── File listing ───────────────────────────────────────────────────────── */
 .file-table {
   width: 100%;
@@ -496,25 +438,6 @@ body {
   overflow: hidden;
   white-space: nowrap;
   text-overflow: ellipsis;
-}
-/* A long repository name in the header truncates instead of wrapping; the owner stays whole. */
-.AppHeader-context a {
-  flex-shrink: 0;
-  white-space: nowrap;
-}
-.AppHeader-context a:last-child {
-  flex-shrink: 1;
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-:root {
-  --dashboard-aside-min-height: auto;
-}
-@media (min-width: 768px) {
-  :root {
-    --dashboard-aside-min-height: calc(100vh - 65px);
-  }
 }
 @media (max-width: 767.98px) {
   /* Avatars beside comments are hidden at this width, so their speech-bubble arrows go too. */

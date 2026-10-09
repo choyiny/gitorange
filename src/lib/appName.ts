@@ -10,10 +10,10 @@ export function useAppName(): string {
   return q.data?.appName || DEFAULT_NAME;
 }
 
-/** Keeps the browser tab title in step with the instance name. */
-export function useDocumentTitle() {
+/** Keeps the browser tab title in step with the page (`Pull requests · o/r · GitOrange`) and the instance name. */
+export function useDocumentTitle(page?: string | null) {
   const name = useAppName();
   useEffect(() => {
-    document.title = name;
-  }, [name]);
+    document.title = page ? `${page} · ${name}` : name;
+  }, [page, name]);
 }

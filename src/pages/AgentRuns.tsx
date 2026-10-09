@@ -355,9 +355,9 @@ export default function AgentRunView() {
         style={{ gap: 8 }}
       >
         <AgentStatusIcon status={run.status} size={24} />
-        <h1 className="f2 text-normal flex-1" style={{ minWidth: 0 }}>
+        <h2 className="f2 text-normal flex-1" style={{ minWidth: 0 }}>
           {run.title}
-        </h1>
+        </h2>
       </div>
 
       <div className="d-flex flex-column flex-md-row" style={{ gap: 24 }}>

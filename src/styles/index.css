@@ -1,6 +1,8 @@
 /* The design system. Loaded after Primer (src/index.css) so the bridge and components win at equal specificity.
-   Order matters: tokens, then Primer's variables mapped to them, then the shell, then components. */
+   Order matters: tokens, then Primer's variables mapped to them, then the shell, then components, then the
+   stop-gap rules that keep not-yet-redesigned pages right inside the shell. */
 @import './tokens.css';
 @import './primer-bridge.css';
 @import './shell.css';
 @import './components.css';
+@import './legacy.css';

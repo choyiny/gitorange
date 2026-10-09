@@ -1,13 +1,13 @@
 import { NavLink } from 'react-router-dom';
 import { KeyIcon, MailIcon, PlugIcon } from '@primer/octicons-react';
 
-/** The sidebar shared by the personal settings pages. */
+/** The sidebar shared by the personal settings pages; above the page on phones, so every page stays reachable. */
 export function SettingsNav() {
   const item = ({ isActive }: { isActive: boolean }) =>
     `menu-item d-flex flex-items-center${isActive ? ' selected' : ''}`;
   return (
     <nav
-      className="menu col-3 d-none d-md-block"
+      className="menu col-12 col-md-3 flex-shrink-0"
       style={{ height: 'fit-content' }}
       aria-label="Settings"
     >

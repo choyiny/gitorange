@@ -1,17 +1,28 @@
 import { useState } from 'react';
-import { Link } from 'react-router-dom';
+import { Link, useLocation } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { DependabotIcon } from '@primer/octicons-react';
 import { api, qk } from '@/lib/uiApi';
 import { errorMessage } from '@/lib/api';
 import { timeAgo } from '@/lib/format';
-import { Header } from '@/components/Header';
+import { usePageHead } from '@/components/ui/PageHead';
 import { Avatar } from '@/components/Avatar';
 import { Spinner } from '@/components/Spinner';
 import { AdminNav } from '@/components/AdminNav';
 
 /** Site admin → Agents: create reviewer agents, list them, delete them. */
 export default function AdminAgents() {
+  // Also at /agents until the Agents directory exists (crew redesign C10).
+  const asAgents = useLocation().pathname === '/agents';
+  usePageHead(
+    asAgents
+      ? { icon: 'crew', crumbs: [{ label: 'Agents' }], title: 'Agents' }
+      : {
+          icon: 'shield',
+          crumbs: [{ label: 'Site admin', to: '/admin' }, { label: 'Agents' }],
+          title: 'Agents',
+        }
+  );
   const qc = useQueryClient();
   const agents = useQuery({ queryKey: qk.agents, queryFn: api.agents });
   const [form, setForm] = useState<{ handle: string; name: string } | null>(
@@ -51,7 +62,6 @@ export default function AdminAgents() {
 
   return (
     <>
-      <Header context={<span className="text-bold px-2">Site admin</span>} />
       <div className="container-lg px-3 py-4">
         <AdminNav />
         <div className="Subhead">

@@ -9,7 +9,7 @@ import {
 import { api, qk, type ApprovalItem } from '@/lib/uiApi';
 import { ApiError, errorMessage } from '@/lib/api';
 import { timeAgo } from '@/lib/format';
-import { Header } from '@/components/Header';
+import { usePageHead } from '@/components/ui/PageHead';
 import { PullStateLabel, PullStateReasons } from '@/components/PullStateLabel';
 import { Spinner } from '@/components/Spinner';
 import { Avatar } from '@/components/Avatar';
@@ -283,6 +283,11 @@ function Item({ item }: { item: ApprovalItem }) {
 
 /** Open pull requests waiting on the user: agents' findings, failed reviews, approvals, failed conflict resolutions. */
 export default function Approvals() {
+  usePageHead({
+    icon: 'inbox',
+    crumbs: [{ label: 'Home', to: '/' }, { label: 'Approvals' }],
+    title: 'Approvals',
+  });
   const q = useApprovalPages();
   const count = q.data?.pages[0]?.count ?? 0;
   // A pull request updated between pages can come back on a later one: show it once.
@@ -296,9 +301,8 @@ export default function Approvals() {
   ];
   return (
     <>
-      <Header />
       <div className="container-lg px-3 py-4">
-        <h1 className="f2 text-normal mb-1">Approvals</h1>
+        <h2 className="f2 text-normal mb-1">Approvals</h2>
         <p className="color-fg-muted mb-4">
           Pull requests waiting on you before they can merge on their own,
           across every repository you can merge in.

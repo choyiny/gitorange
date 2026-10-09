@@ -117,7 +117,7 @@ export default function RepoSettings() {
     onError: (e) => setFlash({ kind: 'error', text: errorMessage(e) }),
   });
 
-  if (!repo.permissions.admin) return <NotFound inline />;
+  if (!repo.permissions.admin) return <NotFound />;
   const existing = new Set([
     repo.owner.id,
     ...(collabs.data ?? []).map((c) => c.id),

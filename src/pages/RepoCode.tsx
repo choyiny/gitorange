@@ -505,7 +505,7 @@ export default function RepoCode() {
   });
   if (repo.empty) return <QuickSetup repo={repo} />;
   if (q.error instanceof ApiError && q.error.status === 404)
-    return <NotFound inline />;
+    return <NotFound />;
   if (!q.data) return <Spinner />;
   const data = q.data;
   const atRoot = !data.path;

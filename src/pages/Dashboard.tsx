@@ -1,17 +1,28 @@
 import { useState } from 'react';
-import { Link } from 'react-router-dom';
+import { Link, useLocation } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
 import { RepoIcon, PersonAddIcon } from '@primer/octicons-react';
 import { api, qk } from '@/lib/uiApi';
 import { useCurrentUser } from '@/lib/auth';
 import { timeAgo } from '@/lib/format';
-import { Header } from '@/components/Header';
+import { usePageHead } from '@/components/ui/PageHead';
 import { Avatar } from '@/components/Avatar';
 import { Spinner } from '@/components/Spinner';
 import { VisibilityLabel } from '@/components/VisibilityLabel';
 
 export default function Dashboard() {
   const user = useCurrentUser()!;
+  // Also at /repos until the Repositories board exists (crew redesign C1).
+  const asRepos = useLocation().pathname === '/repos';
+  usePageHead(
+    asRepos
+      ? {
+          icon: 'repo',
+          crumbs: [{ label: 'Repositories' }],
+          title: 'Repositories',
+        }
+      : { icon: 'home', crumbs: [{ label: 'Home' }], title: 'Home' }
+  );
   const repos = useQuery({ queryKey: qk.repos, queryFn: api.repos });
   const [filter, setFilter] = useState('');
   const mine = (repos.data ?? []).filter(
@@ -22,13 +33,8 @@ export default function Dashboard() {
   );
   return (
     <>
-      <Header />
       <div className="d-flex flex-column flex-md-row">
-        <aside
-          className="col-md-4 col-lg-3 p-4 border-right color-bg-subtle"
-          // Full height beside the feed on desktop; on phones it sits above it.
-          style={{ minHeight: 'var(--dashboard-aside-min-height)' }}
-        >
+        <aside className="col-md-4 col-lg-3 p-4 border-right color-bg-subtle">
           <div className="d-flex flex-items-center mb-2" style={{ gap: 8 }}>
             <Avatar user={{ username: user.username ?? user.name }} size={20} />
             <span className="text-bold f5">{user.username}</span>
@@ -76,7 +82,7 @@ export default function Dashboard() {
             )}
           </ul>
         </aside>
-        <main className="flex-1 p-4" style={{ maxWidth: 960 }}>
+        <div className="flex-1 p-4" style={{ maxWidth: 960 }}>
           <h2 className="f3 text-normal mb-3">Home</h2>
           {user.role === 'admin' && (
             <div
@@ -147,7 +153,7 @@ export default function Dashboard() {
               ))}
             </div>
           )}
-        </main>
+        </div>
       </div>
     </>
   );

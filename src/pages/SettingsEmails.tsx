@@ -3,12 +3,20 @@ import { Link, useSearchParams } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { api, qk, type AlternateEmail } from '@/lib/uiApi';
 import { errorMessage } from '@/lib/api';
-import { Header } from '@/components/Header';
+import { usePageHead } from '@/components/ui/PageHead';
 import { Spinner } from '@/components/Spinner';
 import { SettingsNav } from '@/components/SettingsNav';
 
 /** Settings → Emails: the addresses whose commits are linked to your profile. */
 export default function SettingsEmails() {
+  usePageHead({
+    icon: 'mail',
+    crumbs: [
+      { label: 'Settings', to: '/settings/tokens' },
+      { label: 'Emails' },
+    ],
+    title: 'Emails',
+  });
   const qc = useQueryClient();
   const emails = useQuery({ queryKey: qk.emails, queryFn: api.emails });
   const [email, setEmail] = useState('');
@@ -51,8 +59,10 @@ export default function SettingsEmails() {
   const data = emails.data;
   return (
     <>
-      <Header context={<span className="text-bold px-2">Settings</span>} />
-      <div className="container-lg px-3 py-4 d-flex" style={{ gap: 24 }}>
+      <div
+        className="container-lg px-3 py-4 d-flex flex-column flex-md-row"
+        style={{ gap: 24 }}
+      >
         <SettingsNav />
         <div className="flex-1" style={{ minWidth: 0 }}>
           <div className="Subhead">
@@ -257,6 +267,15 @@ function EmailRow({
 
 /** `/settings/emails/verify?token=…`, the link in the verification email. */
 export function VerifyEmail() {
+  usePageHead({
+    icon: 'mail',
+    crumbs: [
+      { label: 'Settings', to: '/settings/tokens' },
+      { label: 'Emails', to: '/settings/emails' },
+      { label: 'Verify email' },
+    ],
+    title: 'Verify email',
+  });
   const [params] = useSearchParams();
   const token = params.get('token') ?? '';
   const qc = useQueryClient();
@@ -273,7 +292,6 @@ export function VerifyEmail() {
   }, [token, verify]);
   return (
     <>
-      <Header context={<span className="text-bold px-2">Settings</span>} />
       <div className="container-md px-3 py-6">
         <div className="Box p-4">
           {!token ? (

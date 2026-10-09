@@ -5,11 +5,19 @@ import { LockIcon, RepoIcon } from '@primer/octicons-react';
 import { api, qk, type Visibility } from '@/lib/uiApi';
 import { useCurrentUser } from '@/lib/auth';
 import { errorMessage } from '@/lib/api';
-import { Header } from '@/components/Header';
+import { usePageHead } from '@/components/ui/PageHead';
 import { Avatar } from '@/components/Avatar';
 
 export default function NewRepo() {
   const user = useCurrentUser()!;
+  usePageHead({
+    icon: 'plus',
+    crumbs: [
+      { label: 'Repositories', to: '/repos' },
+      { label: 'New repository' },
+    ],
+    title: 'New repository',
+  });
   const navigate = useNavigate();
   const qc = useQueryClient();
   const [name, setName] = useState('');
@@ -49,10 +57,9 @@ export default function NewRepo() {
 
   return (
     <>
-      <Header />
       <div className="container-md px-3 py-5" style={{ maxWidth: 768 }}>
         <div className="pb-2 mb-3 border-bottom">
-          <h1 className="f2 text-normal">Create a new repository</h1>
+          <h2 className="f2 text-normal">Create a new repository</h2>
           <p className="color-fg-muted f5 mt-1">
             A repository contains all project files, including the revision
             history. Already have a project repository elsewhere? Push it here

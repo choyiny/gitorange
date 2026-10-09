@@ -3,12 +3,20 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { api, qk } from '@/lib/uiApi';
 import { errorMessage } from '@/lib/api';
 import { timeAgo } from '@/lib/format';
-import { Header } from '@/components/Header';
+import { usePageHead } from '@/components/ui/PageHead';
 import { CopyButton } from '@/components/CopyButton';
 import { Spinner } from '@/components/Spinner';
 import { SettingsNav } from '@/components/SettingsNav';
 
 export default function SettingsTokens() {
+  usePageHead({
+    icon: 'key',
+    crumbs: [
+      { label: 'Settings', to: '/settings/tokens' },
+      { label: 'Personal access tokens' },
+    ],
+    title: 'Personal access tokens',
+  });
   const qc = useQueryClient();
   const tokens = useQuery({ queryKey: qk.tokens, queryFn: api.tokens });
   const [name, setName] = useState('');
@@ -34,8 +42,10 @@ export default function SettingsTokens() {
   });
   return (
     <>
-      <Header context={<span className="text-bold px-2">Settings</span>} />
-      <div className="container-lg px-3 py-4 d-flex" style={{ gap: 24 }}>
+      <div
+        className="container-lg px-3 py-4 d-flex flex-column flex-md-row"
+        style={{ gap: 24 }}
+      >
         <SettingsNav />
         <div className="flex-1">
           <div className="Subhead">

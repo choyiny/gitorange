@@ -18,7 +18,7 @@ export default function RepoCommits() {
   });
   return (
     <div className="container-xl px-3 px-md-4 px-lg-5 pb-6">
-      <h1 className="f3 text-normal mb-3">Commits</h1>
+      <h2 className="f3 text-normal mb-3">Commits</h2>
       <div className="mb-3">
         <BranchSelect
           branches={repo.branches}

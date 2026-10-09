@@ -15,7 +15,7 @@ export default function CommitView() {
     queryKey: qk.commit(repo.owner.username, repo.name, sha),
     queryFn: () => api.commit(repo.owner.username, repo.name, sha),
   });
-  if (q.error instanceof ApiError) return <NotFound inline />;
+  if (q.error instanceof ApiError) return <NotFound />;
   if (!q.data) return <Spinner />;
   const { commit, files } = q.data;
   const base = `/${repo.fullName}`;
