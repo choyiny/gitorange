@@ -67,16 +67,20 @@ export const parentPath = (path: string) =>
 
 export const isMarkdownPath = (path: string) => /\.(md|markdown)$/i.test(path);
 
+// The first line of real front matter is a `key:` straight after the opening `---`. A README that opens with a
+// horizontal rule (and has another one further down) starts with a blank line or prose instead.
+const FIRST_KEY = /^(?:[A-Za-z_][\w.-]*|"[^"\n]*"|'[^'\n]*')[ \t]*:(?:[ \t]|$)/;
+
 /**
- * A leading `---` YAML block and the text after it. An agent's AGENT.md starts with its settings this way. A
- * document without a closing `---` line has none.
+ * A leading `---` YAML block and the text after it. An agent's AGENT.md starts with its settings this way. It needs
+ * a closing `---` line and must begin with a `key:`, so a horizontal rule is not mistaken for one.
  */
 export function splitFrontmatter(text: string): {
   frontmatter: string | null;
   body: string;
 } {
   const m = /^---[ \t]*\r?\n([\s\S]*?)\r?\n---[ \t]*(?:\r?\n|$)/.exec(text);
-  if (!m) return { frontmatter: null, body: text };
+  if (!m || !FIRST_KEY.test(m[1])) return { frontmatter: null, body: text };
   return {
     frontmatter: m[1].replace(/\r/g, ''),
     body: text.slice(m[0].length).replace(/^(?:[ \t]*\r?\n)+/, ''),

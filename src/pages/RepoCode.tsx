@@ -75,7 +75,7 @@ export default function RepoCode() {
     );
   if (q.error instanceof ApiError && q.error.status === 404)
     return <NotFound />;
-  if (q.isError)
+  if (q.isError && !data)
     return (
       <LoadError
         what="this page"

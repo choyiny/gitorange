@@ -80,7 +80,7 @@ export default function CommitView() {
 
   // Anything the server refuses (an unknown or unreadable commit) is a missing page; a failed request is not.
   if (q.error instanceof ApiError && q.error.status < 500) return <NotFound />;
-  if (q.isError)
+  if (q.isError && !q.data)
     return (
       <LoadError
         what="this commit"
@@ -115,7 +115,7 @@ export default function CommitView() {
         )}
         <div className="cb-foot">
           <span className="cb-who">
-            <CommitAuthor commit={commit} size={22} />
+            <CommitAuthor commit={commit} repo={repo} size={22} />
             <CoAuthored trailers={message.trailers} />
             <span className="muted">
               committed {timeAgo(commit.committedAt)}

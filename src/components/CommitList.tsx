@@ -50,7 +50,7 @@ function CommitRow({
         </div>
         {expanded && <CommitBody message={message} />}
         <p className="cl-by small muted">
-          <CommitAuthor commit={c} size={16} />
+          <CommitAuthor commit={c} size={16} repo={repo} />
           <CoAuthored trailers={message.trailers} />
           <span className="no-wrap">committed {timeAgo(c.committedAt)}</span>
         </p>

@@ -25,6 +25,7 @@ export function LatestCommit({
       <span className="authors">
         <CommitAuthor
           commit={c}
+          repo={repo}
           size={20}
           className="text-bold"
           showCommitter={false}

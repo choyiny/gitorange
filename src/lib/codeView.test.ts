@@ -102,6 +102,20 @@ describe('splitFrontmatter', () => {
     expect(r.frontmatter).toBe('name: A\nbio: B');
     expect(r.body).toBe('# Body\n');
   });
+  it('is not fooled by a README that opens with a horizontal rule', () => {
+    const text = '---\n\n# Title\n\nIntro.\n\n---\n\nMore';
+    expect(splitFrontmatter(text)).toEqual({ frontmatter: null, body: text });
+    const prose = '---\nSome text\n---\n\nMore';
+    expect(splitFrontmatter(prose)).toEqual({ frontmatter: null, body: prose });
+  });
+  it('needs the block to start with a key', () => {
+    expect(splitFrontmatter('---\ntitle: A\n---\nB').frontmatter).toBe(
+      'title: A'
+    );
+    expect(splitFrontmatter('---\n"quoted key": 1\n---\nB').frontmatter).toBe(
+      '"quoted key": 1'
+    );
+  });
   it('leaves a document that does not start with one alone', () => {
     const text = '# Title\n\n---\n\ntext';
     expect(splitFrontmatter(text)).toEqual({ frontmatter: null, body: text });
