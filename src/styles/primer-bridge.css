@@ -1,0 +1,138 @@
+/* Primer bridge: Primer CSS stays the base layer (forms, markdown-body, utilities, older pages) and follows every
+   theme through its functional variables, mapped here to our tokens.
+
+   - Dev skin (GitHub): our tokens are Primer's own values, so Primer keeps its variables untouched.
+   - HQ skin: text, grounds, lines, controls, buttons, radii and type map to the HQ tokens. Those tokens already
+     switch between light and dark (tokens.css), so one block serves both modes. Solid "emphasis" grounds carry
+     white text (--fgColor-onEmphasis), so they take the HQ colours only in light mode; in dark mode the HQ status
+     colours are pastels, and Primer's dark emphasis colours stay (accent becomes an indigo that holds white text).
+
+   Selectors are (0,2,0) or more and load after Primer's theme files (also (0,2,0)), so they win. They key off
+   data-skin and data-theme, which the boot script sets together with Primer's data-color-mode. */
+
+:root:not([data-skin='dev']) {
+  /* Type and shape */
+  --fontStack-sansSerif: var(--font);
+  --fontStack-sansSerifDisplay: var(--font);
+  --fontStack-system: var(--font);
+  --fontStack-monospace: var(--mono);
+  --borderRadius-small: 4px;
+  --borderRadius-medium: var(--r-sm);
+  --borderRadius-large: var(--r);
+
+  /* Text */
+  --fgColor-default: var(--ink);
+  --fgColor-muted: var(--muted);
+  --fgColor-disabled: var(--faint);
+  --fgColor-neutral: var(--muted);
+  --fgColor-accent: var(--accent);
+  --fgColor-link: var(--accent);
+  --fgColor-success: var(--ok);
+  --fgColor-open: var(--ok);
+  --fgColor-attention: var(--warn);
+  --fgColor-severe: var(--change);
+  --fgColor-danger: var(--bad);
+  --fgColor-closed: var(--bad);
+
+  /* Grounds */
+  --bgColor-default: var(--surface);
+  --bgColor-muted: var(--surface-2);
+  --bgColor-inset: var(--bg);
+  --bgColor-disabled: var(--surface-3);
+  --bgColor-neutral-muted: var(--surface-3);
+  --bgColor-accent-muted: var(--accent-tint);
+  --bgColor-success-muted: var(--ok-bg);
+  --bgColor-open-muted: var(--ok-bg);
+  --bgColor-attention-muted: var(--warn-bg);
+  --bgColor-severe-muted: var(--change-bg);
+  --bgColor-danger-muted: var(--bad-bg);
+  --bgColor-closed-muted: var(--bad-bg);
+  --overlay-bgColor: var(--surface);
+  --overlay-borderColor: var(--line-2);
+
+  /* Lines */
+  --borderColor-default: var(--line);
+  --borderColor-muted: var(--line-3);
+  --borderColor-emphasis: var(--faint);
+  --borderColor-disabled: var(--line);
+  --borderColor-neutral-muted: var(--line-2);
+  --borderColor-accent-emphasis: var(--accent);
+  --borderColor-accent-muted: var(--accent-tint-2);
+  --borderColor-success-muted: var(--ok-line);
+  --borderColor-open-muted: var(--ok-line);
+  --borderColor-attention-muted: var(--warn-line);
+  --borderColor-severe-muted: var(--change-line);
+  --borderColor-danger-muted: var(--bad-line);
+  --borderColor-closed-muted: var(--bad-line);
+  --focus-outlineColor: var(--accent);
+
+  /* Controls and buttons */
+  --control-fgColor-rest: var(--ink-2);
+  --control-bgColor-rest: var(--surface);
+  --control-bgColor-hover: var(--surface-3);
+  --control-bgColor-active: var(--surface-3);
+  --control-borderColor-rest: var(--line-2);
+  --control-transparent-bgColor-hover: var(--surface-3);
+  --control-transparent-bgColor-active: var(--surface-3);
+  --button-default-fgColor-rest: var(--ink-2);
+  --button-default-bgColor-rest: var(--surface);
+  --button-default-bgColor-hover: var(--surface-3);
+  --button-default-bgColor-active: var(--surface-3);
+  --button-default-borderColor-rest: var(--line-2);
+  --button-default-borderColor-hover: var(--line-2);
+  --button-default-borderColor-active: var(--line-2);
+  --button-default-shadow-resting: var(--sh);
+  --button-primary-fgColor-rest: var(--on-accent);
+  --button-primary-iconColor-rest: var(--on-accent);
+  --button-primary-bgColor-rest: var(--accent);
+  --button-primary-bgColor-hover: var(--accent-2);
+  --button-primary-bgColor-active: var(--accent-2);
+  --button-primary-borderColor-rest: var(--accent);
+  --button-primary-borderColor-hover: var(--accent-2);
+  --button-primary-borderColor-active: var(--accent-2);
+  --button-primary-bgColor-disabled: var(--accent-tint-2);
+  --button-primary-borderColor-disabled: var(--accent-tint-2);
+  --button-primary-fgColor-disabled: var(--muted);
+  --button-danger-fgColor-rest: var(--bad);
+  --button-invisible-fgColor-rest: var(--ink-2);
+  --button-invisible-iconColor-rest: var(--muted);
+  --underlineNav-borderColor-active: var(--accent);
+}
+
+/* HQ light: solid grounds take the HQ colours (all hold white text). */
+:root:not([data-skin='dev'])[data-theme='light'] {
+  --bgColor-accent-emphasis: var(--accent);
+  --bgColor-success-emphasis: var(--ok);
+  --bgColor-open-emphasis: var(--ok);
+  --bgColor-attention-emphasis: var(--warn);
+  --bgColor-severe-emphasis: var(--change);
+  --bgColor-danger-emphasis: var(--bad);
+  --bgColor-closed-emphasis: var(--bad);
+  --borderColor-success-emphasis: var(--ok);
+  --borderColor-attention-emphasis: var(--warn);
+  --borderColor-danger-emphasis: var(--bad);
+}
+@media not (prefers-color-scheme: dark) {
+  :root:not([data-skin='dev']):not([data-theme]) {
+    --bgColor-accent-emphasis: var(--accent);
+    --bgColor-success-emphasis: var(--ok);
+    --bgColor-open-emphasis: var(--ok);
+    --bgColor-attention-emphasis: var(--warn);
+    --bgColor-severe-emphasis: var(--change);
+    --bgColor-danger-emphasis: var(--bad);
+    --bgColor-closed-emphasis: var(--bad);
+    --borderColor-success-emphasis: var(--ok);
+    --borderColor-attention-emphasis: var(--warn);
+    --borderColor-danger-emphasis: var(--bad);
+  }
+}
+
+/* HQ dark: Primer's dark emphasis colours stay; the accent ground is an indigo that holds white text. */
+:root:not([data-skin='dev'])[data-theme='dark'] {
+  --bgColor-accent-emphasis: #4f46e5;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-skin='dev']):not([data-theme='light']) {
+    --bgColor-accent-emphasis: #4f46e5;
+  }
+}

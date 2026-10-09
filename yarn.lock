@@ -1192,6 +1192,21 @@
   resolved "https://registry.yarnpkg.com/@esbuild/win32-x64/-/win32-x64-0.28.2.tgz#b21affb804cc167c133d95f45b3a1dc1323b9a87"
   integrity sha512-5ebpxr3nWMzrL/rnUI755Jkuee0bHL/Gq0WTF9lvcpv73wAp5eu8MfBUgWK9bhWvZjj7yX8etf/8tI8Ney695g==
 
+"@fontsource/figtree@^5.3.0":
+  version "5.3.0"
+  resolved "https://registry.yarnpkg.com/@fontsource/figtree/-/figtree-5.3.0.tgz#15a87d903fbfd75dfcfa31d368bd10201c4b6295"
+  integrity sha512-/iTcTXL1eRBGhvD7NN9dnKzXzWqDLVZVEUFI9xIxAC1G/hXU8tCyYeXCAuPOuvSYPInFUP7H6KLGgygmDfy1SA==
+
+"@fontsource/ibm-plex-mono@^5.3.0":
+  version "5.3.0"
+  resolved "https://registry.yarnpkg.com/@fontsource/ibm-plex-mono/-/ibm-plex-mono-5.3.0.tgz#1879699d104602d5331e28e103f33c3b1b766b17"
+  integrity sha512-eTgnZjZEGk1QtD3ZstF+Vclo2HLAni8YMy34/DxllwZvyz1lR/1RF/xTiAquOBO7MvqBx8D2Ig2WCPMVfdZu7Q==
+
+"@fontsource/inter-tight@^5.3.0":
+  version "5.3.0"
+  resolved "https://registry.yarnpkg.com/@fontsource/inter-tight/-/inter-tight-5.3.0.tgz#ba4071c249fe7e4e01cd454f5981fc9ec9c119f0"
+  integrity sha512-uRwIrjKSUcCKIFeO2qm3yECA9phwge6Y1qQZvUmwqFgiIVWUELwwuq7pFlmlpPtO33ZtFQVOXQGNuvna1JPs6A==
+
 "@google/genai@2.21.0":
   version "2.21.0"
   resolved "https://registry.yarnpkg.com/@google/genai/-/genai-2.21.0.tgz#806f18d30309d66c48367e70c0da6ddae553b062"
@@ -2415,6 +2430,11 @@ agent-base@^7.1.2:
   version "7.1.4"
   resolved "https://registry.yarnpkg.com/agent-base/-/agent-base-7.1.4.tgz#e3cd76d4c548ee895d3c3fd8dc1f6c5b9032e7a8"
   integrity sha512-MnA+YT8fwfJPgBx3m60MNqakm30XOkyIoH1y6huTQvC0PwZG7ki8NacLBcrPbNoo8vEZy7Jpuk7+jMO+CUovTQ==
+
+agent-robot-avatar@0.5.2:
+  version "0.5.2"
+  resolved "https://registry.yarnpkg.com/agent-robot-avatar/-/agent-robot-avatar-0.5.2.tgz#2dc56827737507208236882107aaa921982c16b9"
+  integrity sha512-2YOHEA5QD+WMsoWjdOC/juUQI3Yiq+jx4pBuf2FTCDooF6CkZ8WYXhoEujJmIGapIu7ePlpZnJLkqB0Tbbmmwg==
 
 agents@0.26.0:
   version "0.26.0"
