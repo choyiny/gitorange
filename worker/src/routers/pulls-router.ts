@@ -2,6 +2,7 @@ import { OpenAPIHono, createRoute, z } from '@hono/zod-openapi';
 import type { Context } from 'hono';
 import { and, asc, desc, eq, inArray, sql } from 'drizzle-orm';
 import {
+  agents,
   mergeResolutions,
   pullRequestComments,
   pullRequests,
@@ -48,7 +49,12 @@ import { revertPull } from '../lib/revert';
 import { pullSessionId, pullSessionIds } from '../lib/sessions';
 import { reviewConfigured } from '../review/head';
 import { maybeAutoMerge } from '../review/auto-merge';
-import { listReview, reviewInputs, reviewVerdict } from '../review/gate';
+import {
+  listReview,
+  reviewInputs,
+  reviewVerdict,
+  type GateReviewer,
+} from '../review/gate';
 import {
   assignFlag,
   CHANGES_NOTE_MAX,
@@ -63,7 +69,9 @@ import { publishChange } from '../live/publish';
 import { settleStates } from '../pulls/settle';
 import { retryReviewer } from '../review/reviewers';
 import { ensureHeadReview, retryHeadReview } from '../review/head';
-import { stackTreeView, stackViewFor } from '../stack/view';
+import { chunks, stackTreeView, stackViewFor } from '../stack/view';
+import { agentColor } from '../agents/presets';
+import { pullSearch } from '../lib/pull-search';
 import { ensureStacking, retryFailedPairs } from '../stack/discover';
 import { dismissEdge, onPullClosed, startReconcile } from '../stack/retarget';
 import { queueLessons } from '../learn/lessons';
@@ -185,9 +193,22 @@ const listRoute = createRoute({
   request: {
     params: ownerRepoParams,
     query: z.object({
+      /**
+       * `closed` is every closed and merged pull request, newest number first; `merged` only the merged ones, newest
+       * merge first; the four pull states are open pull requests in that state.
+       */
       state: z
-        .enum(['open', 'closed', ...PULL_STATES] as const)
+        .enum(['open', 'closed', 'merged', ...PULL_STATES] as const)
         .default('open'),
+      /** Rows per page (1 to 100). Without it the whole list comes back, as it always did. */
+      limit: z.coerce.number().int().min(1).max(100).optional(),
+      /** Which page of `limit` rows, from 1. */
+      page: z.coerce.number().int().min(1).default(1),
+      /**
+       * Only the pull requests every word of this matches: a number (`#12`), or part of the title, branch, author, the
+       * app that opened it or its session label; "by hand" matches the ones no app opened.
+       */
+      q: z.string().trim().max(100).optional(),
     }),
   },
   responses: {
@@ -216,10 +237,25 @@ const listRoute = createRoute({
               .nullable(),
             /** Open PRs: whose move it is, and why. */
             pullState: pullStateSchema.nullable(),
+            /**
+             * Open PRs: each reviewer agent that was asked to review the head commit, by handle, with the state of its
+             * review. An agent Clef did not wake for this commit is left out.
+             */
+            reviewers: z.array(
+              z.object({
+                handle: z.string(),
+                name: z.string(),
+                color: z.string(),
+                status: z.enum(reviewerStatuses),
+              })
+            ),
           })
         ),
+        /** Every open pull request, and every closed or merged one, whatever the page. */
         openCount: z.number(),
         closedCount: z.number(),
+        /** How many pull requests `state` matches, before paging. */
+        total: z.number(),
       }),
       'Pull requests'
     ),
@@ -228,8 +264,8 @@ const listRoute = createRoute({
 pullsRouter.openapi(listRoute, async (c) => {
   const db = c.get('db');
   const repo = c.get('repo');
-  const { state } = c.req.valid('query');
-  const openList = state !== 'closed';
+  const { state, limit, page, q } = c.req.valid('query');
+  const openList = state !== 'closed' && state !== 'merged';
   const byPullState = (PULL_STATES as readonly string[]).includes(state);
   const counts = await db
     .select({ state: pullRequests.state, n: sql<number>`COUNT(*)` })
@@ -239,22 +275,33 @@ pullsRouter.openapi(listRoute, async (c) => {
     .all();
   const count = (s: string) =>
     Number(counts.find((r) => r.state === s)?.n ?? 0);
-  const rows = await db
+  const offset = ((limit ? page : 1) - 1) * (limit ?? 0);
+  const search = q ? pullSearch(q) : undefined;
+  const inList = and(
+    eq(pullRequests.repositoryId, repo.id),
+    openList
+      ? eq(pullRequests.state, 'open')
+      : state === 'merged'
+        ? eq(pullRequests.state, 'merged')
+        : sql`${pullRequests.state} != 'open'`,
+    search
+  );
+  let listed = db
     .select({
       pr: pullRequests,
       comments: sql<number>`(SELECT COUNT(*) FROM pull_request_comments WHERE pull_request_id = ${pullRequests.id})`,
     })
     .from(pullRequests)
-    .where(
-      and(
-        eq(pullRequests.repositoryId, repo.id),
-        openList
-          ? eq(pullRequests.state, 'open')
-          : sql`${pullRequests.state} != 'open'`
-      )
+    .where(inList)
+    .orderBy(
+      ...(state === 'merged'
+        ? [desc(pullRequests.mergedAt), desc(pullRequests.number)]
+        : [desc(pullRequests.number)])
     )
-    .orderBy(desc(pullRequests.number))
-    .all();
+    .$dynamic();
+  // A pull-state filter is applied after the states are computed, so it pages below; the rest page in SQL.
+  if (limit && !byPullState) listed = listed.limit(limit).offset(offset);
+  const rows = await listed.all();
   const people = await usersById(
     db,
     rows.flatMap((r) => [r.pr.authorId, r.pr.mergedById ?? ''])
@@ -329,9 +376,29 @@ pullsRouter.openapi(listRoute, async (c) => {
         { refs, reviewConfigured: reviewConfigured(c.env), reviews: gates }
       )
     : new Map<string, PullState>();
-  const shown = byPullState
+  const matching = byPullState
     ? rows.filter((r) => states.get(r.pr.id)?.state === state)
     : rows;
+  // The counts above are the repository's; a search makes its own.
+  const total = byPullState
+    ? matching.length
+    : search
+      ? Number(
+          (
+            await db
+              .select({ n: sql<number>`COUNT(*)` })
+              .from(pullRequests)
+              .where(inList)
+              .get()
+          )?.n ?? 0
+        )
+      : state === 'open'
+        ? count('open')
+        : state === 'merged'
+          ? count('merged')
+          : count('closed') + count('merged');
+  const shown =
+    limit && byPullState ? matching.slice(offset, offset + limit) : matching;
   const review = (pr: PullRequest) => {
     const gate = gates.get(pr.id);
     return gate ? listReview(reviewVerdict(gate)) : null;
@@ -356,6 +423,36 @@ pullsRouter.openapi(listRoute, async (c) => {
       return 'failed' as const;
     return null;
   };
+  // The reviewer agents asked to review each shown pull request's head commit: already read for the gate above (a
+  // reviewer row per agent at the head), so only the agents' names and colours need one more query.
+  const asked = new Map<string, GateReviewer[]>();
+  for (const { pr } of shown) {
+    const rs = (gates.get(pr.id)?.reviewers ?? []).filter(
+      (r) => r.requested && r.status !== 'not_needed'
+    );
+    if (rs.length) asked.set(pr.id, rs);
+  }
+  const looks = new Map<string, { name: string; color: string | null }>();
+  const agentIds = [
+    ...new Set([...asked.values()].flatMap((rs) => rs.map((r) => r.agentId))),
+  ];
+  for (const part of chunks(agentIds, 90))
+    for (const a of await db
+      .select({ id: agents.userId, name: agents.name, color: agents.color })
+      .from(agents)
+      .where(inArray(agents.userId, part))
+      .all())
+      looks.set(a.id, a);
+  const reviewers = (pr: PullRequest) =>
+    (asked.get(pr.id) ?? []).map((r) => {
+      const look = looks.get(r.agentId);
+      return {
+        handle: r.handle,
+        name: look?.name ?? r.handle,
+        color: agentColor({ color: look?.color }, r.handle),
+        status: r.status,
+      };
+    });
   const sessionIds = await pullSessionIds(shown.map((r) => r.pr));
   return c.json(
     {
@@ -370,9 +467,11 @@ pullsRouter.openapi(listRoute, async (c) => {
         aiResolution: aiResolution(r.pr),
         review: review(r.pr),
         pullState: states.get(r.pr.id) ?? null,
+        reviewers: reviewers(r.pr),
       })),
       openCount: count('open'),
       closedCount: count('closed') + count('merged'),
+      total,
     },
     200
   );

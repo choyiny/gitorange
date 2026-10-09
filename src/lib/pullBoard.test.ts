@@ -7,10 +7,15 @@ import {
   laneLabel,
   laneOf,
   LANE_ORDER,
-  recentlyMerged,
-  reviewersOf,
+  sortReviewers,
 } from './pullBoard';
-import type { Pull, PullReason, PullState, QueueTarget } from './uiApi';
+import type {
+  Pull,
+  PullReason,
+  PullReviewer,
+  PullState,
+  QueueTarget,
+} from './uiApi';
 
 const state = (
   name: PullState['state'],
@@ -25,7 +30,7 @@ describe('laneOf', () => {
     expect(laneOf(state('ready'))).toBe('queued');
   });
 
-  it('puts a pull request that only waits for merging to resume in the queue', () => {
+  it('puts a waiting pull request in the queue lane while merging is paused, whatever else it waits for', () => {
     expect(
       laneOf(
         state('waiting', { kind: 'merging_paused' }, { kind: 'checks_running' })
@@ -101,57 +106,37 @@ describe('laneChip', () => {
   });
 });
 
-describe('reviewersOf', () => {
-  it('reads each agent a reason names, in its state', () => {
+describe('sortReviewers', () => {
+  const r = (handle: string, status: PullReviewer['status']): PullReviewer => ({
+    handle,
+    name: handle,
+    color: '#123456',
+    status,
+  });
+
+  it('puts what needs a look first, and the finished last', () => {
     expect(
-      reviewersOf(
-        state(
-          'human_review',
-          {
-            kind: 'agent_flagged',
-            agent: 'dataagent',
-            flags: [{ id: 'f', title: 'T' }],
-          },
-          {
-            kind: 'agent_changes_requested',
-            agent: 'securityagent',
-            changes: [],
-          },
-          { kind: 'agent_reviewing', agent: 'speedagent' },
-          { kind: 'agent_review_failed', agent: 'privacyagent', error: null }
-        )
-      )
+      sortReviewers([
+        r('a-approved', 'approved'),
+        r('b-reviewing', 'reviewing'),
+        r('c-asked', 'changes_requested'),
+        r('d-flagged', 'flagged'),
+        r('e-failed', 'failed'),
+      ]).map((x) => x.status)
     ).toEqual([
-      { handle: 'dataagent', status: 'flagged' },
-      { handle: 'securityagent', status: 'changes_requested' },
-      { handle: 'speedagent', status: 'reviewing' },
-      { handle: 'privacyagent', status: 'failed' },
+      'failed',
+      'flagged',
+      'changes_requested',
+      'reviewing',
+      'approved',
     ]);
   });
 
-  it('keeps the most urgent state when an agent appears twice', () => {
-    expect(
-      reviewersOf(
-        state(
-          'human_review',
-          { kind: 'agent_reviewing', agent: 'dataagent' },
-          { kind: 'agent_flagged', agent: 'dataagent', flags: [] }
-        )
-      )
-    ).toEqual([{ handle: 'dataagent', status: 'flagged' }]);
-  });
-
-  it('skips a review that names no agent and reasons that are not reviews', () => {
-    expect(
-      reviewersOf(
-        state(
-          'waiting',
-          { kind: 'agent_reviewing', agent: null },
-          { kind: 'checks_running', check: null, started: true }
-        )
-      )
-    ).toEqual([]);
-    expect(reviewersOf(null)).toEqual([]);
+  it('keeps handle order within a state, and leaves its input alone', () => {
+    const input = [r('zed', 'approved'), r('amy', 'approved')];
+    expect(sortReviewers(input).map((x) => x.handle)).toEqual(['amy', 'zed']);
+    expect(input.map((x) => x.handle)).toEqual(['zed', 'amy']);
+    expect(sortReviewers([])).toEqual([]);
   });
 });
 
@@ -314,23 +299,25 @@ describe('boardLanes', () => {
     expect(card.position).toBeNull();
   });
 
-  it('shows the reviewers a reason names and the estimate', () => {
-    const open = [
-      pull(10, {
-        pullState: state('human_review', {
-          kind: 'agent_flagged',
-          agent: 'dataagent',
-          flags: [],
-        }),
-      }),
+  it('shows the pull request’s reviewers, most pressing first, and the estimate', () => {
+    const reviewers: PullReviewer[] = [
+      { handle: 'sec', name: 'Security', color: '#2a78d6', status: 'approved' },
+      { handle: 'data', name: 'Data', color: '#199e70', status: 'flagged' },
     ];
-    const card = boardLanes(open, [
+    const open = [
+      pull(10, { pullState: state('human_review'), reviewers }),
+      pull(11, { pullState: state('ready') }),
+    ];
+    const { lanes } = boardLanes(open, [
       target([{ number: 10, etaMinutes: 6, blockers: ['x'] }]),
-    ]).lanes.needs[0];
-    expect(card.reviewers).toEqual([
-      { handle: 'dataagent', status: 'flagged' },
     ]);
-    expect(card.eta).toBe('About 6 min once it is unblocked');
+    expect(lanes.needs[0].reviewers.map((x) => x.handle)).toEqual([
+      'data',
+      'sec',
+    ]);
+    expect(lanes.needs[0].eta).toBe('About 6 min once it is unblocked');
+    // A list from a server that sends none has none.
+    expect(lanes.queued[0].reviewers).toEqual([]);
   });
 
   it('notes what it is stacked on or waits on, unless the blocker says so', () => {
@@ -389,32 +376,5 @@ describe('boardLanes', () => {
       target([{ number: 10, etaMinutes: 4 }], paused),
     ]).lanes.queued[0];
     expect(card.eta).toBeNull();
-  });
-});
-
-describe('recentlyMerged', () => {
-  const merged = (
-    n: number,
-    at: string | null,
-    state: Pull['state'] = 'merged'
-  ) => pull(n, { state, mergedAt: at });
-
-  it('lists the newest merges first and leaves out closed ones', () => {
-    const list = [
-      merged(1, '2026-10-01T10:00:00.000Z'),
-      merged(2, '2026-10-03T10:00:00.000Z'),
-      merged(3, null, 'closed'),
-      merged(4, '2026-10-02T10:00:00.000Z'),
-    ];
-    expect(recentlyMerged(list).map((p) => p.number)).toEqual([2, 4, 1]);
-  });
-
-  it('keeps only the newest few', () => {
-    const list = Array.from({ length: 9 }, (_, i) =>
-      merged(i + 1, `2026-10-0${i + 1}T10:00:00.000Z`)
-    );
-    expect(recentlyMerged(list, 5).map((p) => p.number)).toEqual([
-      9, 8, 7, 6, 5,
-    ]);
   });
 });

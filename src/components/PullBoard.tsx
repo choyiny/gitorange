@@ -20,21 +20,25 @@ import {
   type RepoDetail,
 } from '@/lib/uiApi';
 import { timeAgo } from '@/lib/format';
+import { pullsHref } from '@/lib/pullsView';
 import {
   boardLanes,
   laneLabel,
   LANE_ORDER,
-  recentlyMerged,
   type BoardCard,
   type LaneId,
 } from '@/lib/pullBoard';
 import { ChecksBadge, useCommitStatuses } from '@/components/Checks';
 import { CoderChip } from '@/components/CoderChip';
 import { AiResolutionBadge } from '@/components/PullBadges';
+import { ReviewChip } from '@/components/ReviewChip';
 import { ReviewerAvatars } from '@/components/ReviewerAvatars';
 import { QueryError } from '@/components/actions/states';
 import { Banner } from '@/components/ui/Banner';
 import { EmptyState } from '@/components/ui/EmptyState';
+
+/** How many merges the "Merged recently" lane shows. */
+const MERGED_LANE = 5;
 
 const LANE_ICON: Record<LaneId, Icon> = {
   needs: PersonIcon,
@@ -84,10 +88,15 @@ function Card({
           </>
         )}
       </p>
-      <ReviewerAvatars
-        reviewers={card.reviewers}
-        className="prcard-reviewers"
-      />
+      {(card.reviewers.length > 0 || pull.review) && (
+        <div className="prcard-review">
+          <ReviewerAvatars
+            reviewers={card.reviewers}
+            className="prcard-reviewers"
+          />
+          <ReviewChip review={pull.review} />
+        </div>
+      )}
       <div className="prcard-foot">
         {card.eta && (
           <span className="prcard-eta">
@@ -167,10 +176,13 @@ export function BoardSkeleton() {
 /** The merged-recently lane: the newest merges as compact cards. */
 function MergedLane({
   merged,
+  total,
   base,
   query,
 }: {
   merged: Pull[];
+  /** Every merged pull request there is, for the link to them. */
+  total: number;
   base: string;
   query: { isError: boolean; data: unknown; refetch(): unknown };
 }) {
@@ -179,9 +191,10 @@ function MergedLane({
       <h3>
         <GitMergeIcon size={14} />
         Merged recently
-        <span className="count" data-zero={merged.length ? undefined : ''}>
-          {merged.length}
-        </span>
+        {/* Not a count pill: it is the newest few, not how many have merged. */}
+        {merged.length > 0 && (
+          <span className="lane-note">Latest {merged.length}</span>
+        )}
       </h3>
       {query.isError ? (
         <p className="muted small" role="status">
@@ -203,6 +216,16 @@ function MergedLane({
               <MergedCard pull={p} base={base} />
             </li>
           ))}
+          {total > merged.length && (
+            <li>
+              <Link
+                to={pullsHref(base, { view: 'list', state: 'closed' })}
+                className="lane-all"
+              >
+                See all {total} merged
+              </Link>
+            </li>
+          )}
         </ul>
       ) : (
         <p className="muted small">Nothing has merged yet.</p>
@@ -224,9 +247,10 @@ export function PullBoard({ repo }: { repo: RepoDetail }) {
     queryKey: qk.queue(o, repo.name),
     queryFn: () => api.queue(o, repo.name),
   });
-  const closed = useQuery({
-    queryKey: qk.pulls(o, repo.name, 'closed'),
-    queryFn: () => api.pulls(o, repo.name, 'closed'),
+  // Only the newest few merges, newest first: the closed list is as long as the repository's history.
+  const merged = useQuery({
+    queryKey: qk.pulls(o, repo.name, 'merged', MERGED_LANE),
+    queryFn: () => api.pulls(o, repo.name, 'merged', { limit: MERGED_LANE }),
   });
   const pulls = open.data?.pulls;
   const statuses = useCommitStatuses(
@@ -248,8 +272,14 @@ export function PullBoard({ repo }: { repo: RepoDetail }) {
 
   const { lanes, paused } = boardLanes(pulls, queue.data ?? []);
   const pause = queue.data?.find((t) => t.paused)?.paused;
-  const merged = recentlyMerged(closed.data?.pulls ?? []);
-  const mergedLane = <MergedLane merged={merged} base={base} query={closed} />;
+  const mergedLane = (
+    <MergedLane
+      merged={merged.data?.pulls ?? []}
+      total={merged.data?.total ?? 0}
+      base={base}
+      query={merged}
+    />
+  );
 
   return (
     <>

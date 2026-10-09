@@ -4,8 +4,8 @@
  * (blockers, order, estimate), with no request per pull request.
  */
 import type { Tone } from './agentLook';
-import { blocking, reasonText } from './pullState';
-import type { Pull, PullState, QueueTarget, ReviewerStatus } from './uiApi';
+import { blocking, isPaused, reasonText, stateLabel } from './pullState';
+import type { Pull, PullReviewer, PullState, QueueTarget } from './uiApi';
 
 export type LaneId = 'needs' | 'fixing' | 'checking' | 'queued';
 
@@ -23,7 +23,8 @@ const LANE_LABEL: Record<LaneId, string> = {
   queued: 'Queued',
 };
 
-const paused = (s: PullState | null | undefined) =>
+/** Merging is paused, as this pull request's reasons say (whatever its state: a person's move carries it too). */
+const mentionsPause = (s: PullState | null | undefined) =>
   !!s?.reasons.some((r) => r.kind === 'merging_paused');
 
 /**
@@ -41,7 +42,7 @@ export function laneOf(state: PullState | null | undefined): LaneId {
     case 'ready':
       return 'queued';
     case 'waiting':
-      return paused(state) ? 'queued' : 'checking';
+      return isPaused(state) ? 'queued' : 'checking';
   }
 }
 
@@ -63,49 +64,27 @@ export function laneChip(state: PullState | null | undefined): {
   tone: Tone;
 } {
   const lane = laneOf(state);
-  const isPaused = lane === 'queued' && paused(state);
-  return {
-    lane,
-    label: laneLabel(lane, isPaused),
-    tone: isPaused ? 'off' : LANE_TONE[lane],
-  };
+  // "Paused" is the pull-state label's word for it, so the two never disagree.
+  if (state && isPaused(state))
+    return { lane, label: stateLabel(state), tone: 'off' };
+  return { lane, label: LANE_LABEL[lane], tone: LANE_TONE[lane] };
 }
 
-export interface BoardReviewer {
-  handle: string;
-  status: ReviewerStatus;
-}
-
-/** Most urgent first: a failed review, a person's decision, a change request, then one still running. */
+/** Most urgent first: a failed review, a person's decision, a change request, one still running, then the done. */
 const REVIEW_RANK: Record<string, number> = {
   failed: 0,
   flagged: 1,
   changes_requested: 2,
   reviewing: 3,
+  approved: 4,
 };
 
-/**
- * The reviewer agents a pull request's reasons name, each in its state. The list carries only the agents that still
- * hold the pull request (reviewing, flagged, asked for changes, failed); one that approved is not named.
- */
-export function reviewersOf(
-  state: PullState | null | undefined
-): BoardReviewer[] {
-  const found = new Map<string, ReviewerStatus>();
-  const see = (handle: unknown, status: ReviewerStatus) => {
-    if (typeof handle !== 'string' || !handle) return;
-    const had = found.get(handle);
-    if (!had || REVIEW_RANK[status] < REVIEW_RANK[had])
-      found.set(handle, status);
-  };
-  for (const r of state?.reasons ?? []) {
-    if (r.kind === 'agent_reviewing') see(r.agent, 'reviewing');
-    else if (r.kind === 'agent_flagged') see(r.agent, 'flagged');
-    else if (r.kind === 'agent_changes_requested')
-      see(r.agent, 'changes_requested');
-    else if (r.kind === 'agent_review_failed') see(r.agent, 'failed');
-  }
-  return [...found].map(([handle, status]) => ({ handle, status }));
+/** A pull request's reviewer agents with what needs a look first, then by handle. */
+export function sortReviewers(reviewers: PullReviewer[]): PullReviewer[] {
+  const rank = (r: PullReviewer) => REVIEW_RANK[r.status] ?? 5;
+  return [...reviewers].sort(
+    (a, b) => rank(a) - rank(b) || a.handle.localeCompare(b.handle)
+  );
 }
 
 /** An estimate in minutes as words ("about 4 min"); null without one. */
@@ -144,7 +123,7 @@ export interface BoardCard {
   position: number | null;
   /** What holds it back, in a sentence, and any further blockers. */
   blocker: { text: string; more: string[] };
-  reviewers: BoardReviewer[];
+  reviewers: PullReviewer[];
   /** What it is stacked on or waits on, unless the blocker already says. */
   notes: string[];
   eta: string | null;
@@ -211,7 +190,8 @@ export function boardLanes(
     for (const e of t.entries)
       if (!entries.has(e.number)) entries.set(e.number, e);
   const mergingPaused =
-    queue.some((t) => !!t.paused) || open.some((p) => paused(p.pullState));
+    queue.some((t) => !!t.paused) ||
+    open.some((p) => mentionsPause(p.pullState));
   const lanes: Record<LaneId, BoardCard[]> = {
     needs: [],
     fixing: [],
@@ -241,18 +221,10 @@ export function boardLanes(
         text: blocker.text,
         more: blocker.more.filter((t) => !covered(t)),
       },
-      reviewers: reviewersOf(pull.pullState),
+      reviewers: sortReviewers(pull.reviewers ?? []),
       notes,
       eta: etaLine(lane, entry?.etaMinutes, mergingPaused),
     });
   }
   return { lanes, paused: mergingPaused };
-}
-
-/** The newest merged pull requests, newest first; closed ones are left out. */
-export function recentlyMerged(pulls: Pull[], limit = 5): Pull[] {
-  return pulls
-    .filter((p) => p.state === 'merged' && p.mergedAt)
-    .sort((a, b) => Date.parse(b.mergedAt!) - Date.parse(a.mergedAt!))
-    .slice(0, limit);
 }

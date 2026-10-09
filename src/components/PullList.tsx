@@ -1,6 +1,6 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
-import { useQuery } from '@tanstack/react-query';
+import { keepPreviousData, useQuery } from '@tanstack/react-query';
 import {
   CommentIcon,
   GitPullRequestIcon,
@@ -8,12 +8,13 @@ import {
 } from '@primer/octicons-react';
 import { api, qk, type Pull, type RepoDetail } from '@/lib/uiApi';
 import { timeAgo } from '@/lib/format';
-import { laneChip, reviewersOf } from '@/lib/pullBoard';
+import { laneChip, sortReviewers } from '@/lib/pullBoard';
 import { blocking, reasonText } from '@/lib/pullState';
 import {
   filterPulls,
   OPEN_FILTERS,
   paginate,
+  PULLS_PAGE_SIZE,
   pullsHref,
   type ListState,
   type PullsParams,
@@ -21,6 +22,7 @@ import {
 import { ChecksBadge, useCommitStatuses } from '@/components/Checks';
 import { CoderChip } from '@/components/CoderChip';
 import { AiResolutionBadge } from '@/components/PullBadges';
+import { ReviewChip } from '@/components/ReviewChip';
 import { ReviewerAvatars } from '@/components/ReviewerAvatars';
 import { Pager } from '@/components/actions/parts';
 import { QueryError, RowsSkeleton } from '@/components/actions/states';
@@ -47,38 +49,6 @@ const EMPTY_TEXT: Record<ListState, string> = {
   waiting: 'No pull requests are being checked or paused right now.',
   ready: 'No pull requests are queued to merge right now.',
 };
-
-type Review = NonNullable<Pull['review']>;
-const REVIEW: Record<
-  Review['state'],
-  {
-    label: string;
-    tone: 'good' | 'warn' | 'serious' | 'critical' | 'info' | 'off';
-  }
-> = {
-  reviewing: { label: 'Reviewing…', tone: 'info' },
-  review_required: { label: 'Review required', tone: 'warn' },
-  approved: { label: 'Approved', tone: 'good' },
-  failed: { label: 'Review failed', tone: 'critical' },
-  changes_requested: { label: 'Changes requested', tone: 'serious' },
-  needs_approval: { label: 'Needs approval', tone: 'warn' },
-};
-
-/** The head commit's review in a word: Reviewing…, Review required (with its flags), Approved, and so on. */
-function ReviewChip({ review }: { review: Pull['review'] }) {
-  if (!review) return null;
-  const { label, tone } = REVIEW[review.state];
-  const flags =
-    review.state === 'review_required' && review.flags > 0
-      ? ` · ${review.flags} flag${review.flags === 1 ? '' : 's'}`
-      : '';
-  return (
-    <Chip tone={tone}>
-      {label}
-      {flags}
-    </Chip>
-  );
-}
 
 function Row({
   pull,
@@ -150,7 +120,10 @@ function Row({
       </div>
       <div className="prow-side">
         {open && (
-          <ReviewerAvatars reviewers={reviewersOf(pull.pullState)} size={24} />
+          <ReviewerAvatars
+            reviewers={sortReviewers(pull.reviewers ?? [])}
+            size={24}
+          />
         )}
         {chip && (
           <span className="prow-state">
@@ -189,28 +162,82 @@ export function PullList({
   const base = `/${repo.fullName}`;
   const navigate = useNavigate();
   const { state, q, page } = params;
+  // The closed list can be long, so the server pages it (and searches it); an open list is short and arrives whole.
+  const serverPaged = state === 'closed';
   const query = useQuery({
-    queryKey: qk.pulls(o, repo.name, state),
-    queryFn: () => api.pulls(o, repo.name, state),
+    queryKey: serverPaged
+      ? qk.pulls(o, repo.name, state, PULLS_PAGE_SIZE, page, q)
+      : qk.pulls(o, repo.name, state),
+    queryFn: () =>
+      api.pulls(
+        o,
+        repo.name,
+        state,
+        serverPaged ? { limit: PULLS_PAGE_SIZE, page, q } : {}
+      ),
+    // Turning a page or typing keeps the rows on screen until the next ones arrive.
+    placeholderData: (previous, previousQuery) =>
+      serverPaged && previousQuery?.queryKey[4] === 'closed'
+        ? previous
+        : undefined,
   });
   const go = (next: Partial<PullsParams>, replace = false) =>
     navigate(pullsHref(base, { ...params, view: 'list', ...next }), {
       replace,
     });
+  /** Another page, from the top of it: the panel is the scroller, and it keeps its place across a page. */
+  const turn = (to: number) => {
+    go({ page: to });
+    document.getElementById('main')?.scrollTo({ top: 0 });
+  };
 
-  // The box keeps what was typed (spaces included); the address keeps it trimmed.
+  // The box keeps what was typed (spaces included); the address keeps it trimmed. The server's list is searched
+  // once typing pauses; the open list is filtered where it is, on every key.
   const [draft, setDraft] = useState(q);
   useEffect(() => {
     setDraft((d) => (d.trim() === q ? d : q));
   }, [q]);
+  const typing = useRef<number>();
+  useEffect(() => () => window.clearTimeout(typing.current), []);
+  const search = (text: string) => {
+    setDraft(text);
+    window.clearTimeout(typing.current);
+    if (serverPaged)
+      typing.current = window.setTimeout(
+        () => go({ q: text, page: 1 }, true),
+        250
+      );
+    else go({ q: text, page: 1 }, true);
+  };
 
   const all = query.data?.pulls ?? [];
-  const shown = filterPulls(all, q);
-  const paged = paginate(shown, page);
+  const paged = serverPaged
+    ? {
+        items: all,
+        page,
+        pages: Math.max(
+          1,
+          Math.ceil((query.data?.total ?? 0) / PULLS_PAGE_SIZE)
+        ),
+        total: query.data?.total ?? 0,
+      }
+    : paginate(filterPulls(all, q), page);
+  const shown = paged.items;
+  // A page past the last one (a stale link, or matches that shrank) goes to the last.
+  useEffect(() => {
+    if (
+      serverPaged &&
+      !query.isPlaceholderData &&
+      query.data &&
+      page > paged.pages
+    )
+      go({ page: paged.pages }, true);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- only when the numbers change
+  }, [serverPaged, query.data, query.isPlaceholderData, page, paged.pages]);
   // Checks for the rows on screen, in one request.
   const statuses = useCommitStatuses(
     repo,
-    paged.items.map((p) => p.headSha)
+    shown.map((p) => p.headSha)
   );
   const openish = state !== 'closed';
   const filtered = state !== 'open' && state !== 'closed';
@@ -240,7 +267,8 @@ export function PullList({
         />
       </div>
     );
-  else if (!query.data) body = <RowsSkeleton />;
+  else if (!query.data || (serverPaged && page > paged.pages))
+    body = <RowsSkeleton />;
   else if (shown.length === 0)
     body = (
       <div className="panel">
@@ -279,13 +307,9 @@ export function PullList({
           <Pager
             prevLabel="Previous"
             nextLabel="Next"
-            onPrev={
-              paged.page > 1 ? () => go({ page: paged.page - 1 }) : undefined
-            }
+            onPrev={paged.page > 1 ? () => turn(paged.page - 1) : undefined}
             onNext={
-              paged.page < paged.pages
-                ? () => go({ page: paged.page + 1 })
-                : undefined
+              paged.page < paged.pages ? () => turn(paged.page + 1) : undefined
             }
             note={`Page ${paged.page} of ${paged.pages} · ${paged.total} pull requests`}
           />
@@ -325,10 +349,7 @@ export function PullList({
               value={draft}
               placeholder="Search pull requests"
               aria-label="Search pull requests"
-              onChange={(e) => {
-                setDraft(e.target.value);
-                go({ q: e.target.value, page: 1 }, true);
-              }}
+              onChange={(e) => search(e.target.value)}
             />
           </label>
         </div>

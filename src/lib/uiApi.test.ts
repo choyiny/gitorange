@@ -275,6 +275,72 @@ describe('crew redesign writes', () => {
   });
 });
 
+describe('pull request lists', () => {
+  it('asks for the whole list without a limit, as before', async () => {
+    expect((await sent(() => api.pulls('o', 'r', 'open'))).url).toBe(
+      '/api/repos/o/r/pulls?state=open'
+    );
+  });
+
+  it('asks for one page of a limit', async () => {
+    expect(
+      (await sent(() => api.pulls('o', 'r', 'merged', { limit: 5 }))).url
+    ).toBe('/api/repos/o/r/pulls?state=merged&limit=5');
+    calls = [];
+    expect(
+      (await sent(() => api.pulls('o', 'r', 'closed', { limit: 25, page: 3 })))
+        .url
+    ).toBe('/api/repos/o/r/pulls?state=closed&limit=25&page=3');
+  });
+
+  it('sends a search, trimmed, and none when it is blank', async () => {
+    expect(
+      (
+        await sent(() =>
+          api.pulls('o', 'r', 'closed', { limit: 25, q: '  claude s4 ' })
+        )
+      ).url
+    ).toBe('/api/repos/o/r/pulls?state=closed&limit=25&q=claude+s4');
+    calls = [];
+    expect(
+      (await sent(() => api.pulls('o', 'r', 'closed', { limit: 25, q: '  ' })))
+        .url
+    ).toBe('/api/repos/o/r/pulls?state=closed&limit=25');
+  });
+
+  it('leaves out page 1, and a page without a limit', async () => {
+    expect(
+      (await sent(() => api.pulls('o', 'r', 'closed', { limit: 25, page: 1 })))
+        .url
+    ).toBe('/api/repos/o/r/pulls?state=closed&limit=25');
+    calls = [];
+    expect(
+      (await sent(() => api.pulls('o', 'r', 'closed', { page: 4 }))).url
+    ).toBe('/api/repos/o/r/pulls?state=closed');
+  });
+
+  it('keeps every page under the pull request lists, and tells pages apart', () => {
+    for (const key of [
+      qk.pulls('o', 'r', 'open'),
+      qk.pulls('o', 'r', 'merged', 5),
+      qk.pulls('o', 'r', 'closed', 25, 2),
+    ])
+      expect(key.slice(0, 4)).toEqual(['repo', 'o', 'r', 'pulls']);
+    expect(qk.pulls('o', 'r', 'closed', 25, 1)).not.toEqual(
+      qk.pulls('o', 'r', 'closed', 25, 2)
+    );
+    expect(qk.pulls('o', 'r', 'closed')).not.toEqual(
+      qk.pulls('o', 'r', 'closed', 25)
+    );
+    expect(qk.pulls('o', 'r', 'closed', 25)).not.toEqual(
+      qk.pulls('o', 'r', 'merged', 25)
+    );
+    expect(qk.pulls('o', 'r', 'closed', 25, 1, 'a')).not.toEqual(
+      qk.pulls('o', 'r', 'closed', 25, 1, 'b')
+    );
+  });
+});
+
 describe('query keys', () => {
   it('start every repository-scoped key with the repository, so its live pings refresh them', () => {
     const keys = [
