@@ -521,6 +521,49 @@ pause, revert, live feed, health, search`.
 
 ---
 
+## Lane S: demo data
+
+### Task S1: Local demo seed
+
+**Files:**
+
+- Create: `scripts/seed-demo.mjs` (Node, no new dependencies), `scripts/seed-demo/` (fixture files for the demo
+  repository: a small TypeScript invoicing app — `package.json`, `src/invoices.ts`, `src/currency.ts`,
+  `src/api/routes.ts`, `migrations/0001_invoices.sql`, `README.md`, `.github/workflows/test.yml`)
+- Modify: `package.json` (script `seed:demo`), `docs/development.md` (how to seed a local instance)
+
+**What it builds** (against a running `yarn dev`, base URL from `--url`, default `http://localhost:8080`; an
+admin username/password from `--admin`/`--password` or env `SEED_ADMIN`/`SEED_PASSWORD`; never against a
+non-local host — refuse unless the host is `localhost`, `127.0.0.1` or ends in `.localhost`/`.test`):
+
+1. Sign in as the admin through the API; create a personal access token for git.
+2. Invite and accept one teammate, `cho` (Cho Yin), through the invitation API.
+3. Create repository `<admin>/invoices` (internal) and push the fixture project as a history of ~12 commits
+   over the last 10 days (backdated author dates), with branches for open pull requests:
+   `claude/s4-usd-invoices`, `claude/s4-invoice-pdf` (stacked on the first), `codex/s5-rate-limit`,
+   `claude/s6-signin-log`, `cho/insights-findings`, `codex/s2-live-token`; plus three already-merged branches left
+   undeleted (`rebase-merging`, `stack-tree`, `faster-conflict-resolution`).
+4. `POST /api/admin/agents/crew`, then invite Security, Data, Features and Shipping to the repository.
+5. Open the six pull requests through the API; mark provenance (`created_via`, `session_label`, `request`) with
+   `wrangler d1 execute DB --local --env dev` so they read as Claude Code s4/s6, Codex s2/s5 and by hand.
+6. Merge 8 earlier pull requests through the merge API (real landings), then backdate their `merged_at` across
+   the last 10 days so Health and the branch map have history.
+7. Insert review rows directly in local D1 (agents need not run): per open PR a `pr_classifications` row
+   (`status = done`, file one-liners), `pr_reviewers` rows (mix of approved / flagged / changes_requested /
+   reviewing), and findings: one Data `needs_person` finding on the USD-invoices PR with
+   `question = 'Were all your invoices so far in Canadian dollars?'`; one Security `change_requested`; one
+   Features `needs_person` assigned to `cho`; one Shipping `needs_person` approved yesterday via "GitOrange AI".
+8. Insert `workflow_runs` rows: passing runs on the default branch, one failing run last week, one running.
+9. Print a summary with URLs to open.
+
+Idempotent: re-running detects the repository and skips steps already done. No secrets printed.
+
+- [ ] Steps: write the script; run it against the local dev server; open every new page's data endpoint
+      (`/api/repos?stats=1`, `/health`, `/branches/map`, `/queue`, `/live`, `/audit`, `/sessions`, `/api/approvals`)
+      and confirm each returns non-empty, sensible data; commit `Crew redesign S1: local demo seed`.
+
+---
+
 ## Lane C: pages
 
 Every page task: port the matching mockup view (file + `registerView` id given) into React using lane A
