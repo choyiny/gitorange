@@ -1,0 +1,167 @@
+/* Insights: headline numbers, the reviewer bars, and the panels of rows. Ported from docs/design/crew/repo.css
+   (Insights bars). Tokens only. */
+
+.ins-report {
+  display: grid;
+  gap: 22px;
+  min-width: 0;
+}
+/* The previous period stays on screen, dimmed, while the next one loads. */
+.ins-report.is-stale {
+  opacity: 0.6;
+}
+.ins-detail {
+  font-size: 12px;
+}
+.ins-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 22px;
+  align-items: start;
+}
+
+/* ---------- Rows ---------- */
+.ins-rows {
+  padding: 0;
+}
+.ins-row {
+  display: grid;
+  gap: 6px;
+  padding: 10px 14px;
+  border-top: 1px solid var(--line);
+}
+.ins-row:first-child {
+  border-top: 0;
+}
+.ins-row-main {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 12px;
+}
+.ins-label {
+  display: grid;
+  gap: 1px;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.ins-value,
+.ins-num {
+  font-variant-numeric: tabular-nums;
+}
+.table .ins-num {
+  text-align: right;
+}
+.ins-value {
+  flex: none;
+  text-align: right;
+}
+.ins-num {
+  text-align: right;
+}
+.ins-split {
+  display: flex;
+  height: 8px;
+  border-radius: 99px;
+  overflow: hidden;
+  background: var(--surface-3);
+}
+.ins-split-auto {
+  background: var(--ok);
+}
+.ins-split-person {
+  background: var(--accent);
+}
+.ins-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 14px;
+}
+.ins-key {
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  margin-right: 4px;
+  border-radius: 50%;
+}
+.ins-key.auto {
+  background: var(--ok);
+}
+.ins-key.person {
+  background: var(--accent);
+}
+
+/* ---------- Reviewers: avatar, bar, numbers ---------- */
+.ins-bars {
+  list-style: none;
+  margin: 0;
+  gap: 12px;
+}
+.ins-bar-row {
+  display: grid;
+  grid-template-columns: minmax(150px, 220px) minmax(0, 1fr) minmax(130px, auto);
+  gap: 14px;
+  align-items: center;
+}
+.view a.ins-agent {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+  color: var(--ink);
+}
+.ins-agent-name {
+  display: grid;
+  align-content: center;
+  min-width: 0;
+  /* Two lines tall, so the row does not jump when the agent's name arrives. */
+  min-height: 2.6em;
+  line-height: 1.3;
+  overflow-wrap: anywhere;
+}
+.ins-track {
+  height: 14px;
+  background: var(--surface-3);
+  border-radius: 4px;
+  overflow: hidden;
+}
+.ins-bar {
+  display: block;
+  height: 100%;
+  background: color-mix(
+    in srgb,
+    var(--agent, var(--accent)) 35%,
+    var(--surface)
+  );
+  border-radius: 4px;
+}
+.ins-bar-in {
+  display: block;
+  height: 100%;
+  background: var(--agent, var(--accent));
+  border-radius: 4px 0 0 4px;
+}
+.ins-val {
+  font-size: 12px;
+  color: var(--muted);
+  text-align: right;
+  white-space: nowrap;
+}
+.ins-learning th[scope='row'] {
+  font-weight: 400;
+}
+
+@media (max-width: 980px) {
+  .ins-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+@media (max-width: 640px) {
+  .ins-bar-row {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 6px;
+  }
+  .ins-val {
+    text-align: left;
+  }
+}

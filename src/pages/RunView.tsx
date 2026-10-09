@@ -7,7 +7,6 @@ import {
 } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import {
-  ArrowLeftIcon,
   ChevronDownIcon,
   ChevronRightIcon,
   HomeIcon,
@@ -24,19 +23,23 @@ import {
 } from '@/lib/uiApi';
 import { errorMessage } from '@/lib/api';
 import { duration, shortSha, timeAgo } from '@/lib/format';
-import { Spinner } from '@/components/Spinner';
-import { RunStatusIcon, runStatusLabel } from '@/components/RunStatusIcon';
-
-/** Re-renders every second while `active`, so running durations tick. */
-function useNow(active: boolean) {
-  const [now, setNow] = useState(Date.now());
-  useEffect(() => {
-    if (!active) return;
-    const t = setInterval(() => setNow(Date.now()), 1000);
-    return () => clearInterval(t);
-  }, [active]);
-  return now;
-}
+import {
+  confirmingCancel,
+  focusStep,
+  isErrorLine,
+  runLabel,
+  stepLabel,
+} from '@/lib/runs';
+import { useNow } from '@/lib/useNow';
+import { Identicon } from '@/components/Identicon';
+import { RunStatusIcon } from '@/components/RunStatusIcon';
+import { PendingButton } from '@/components/ui/PendingButton';
+import { Section } from '@/components/ui/Section';
+import { Skeleton } from '@/components/ui/Skeleton';
+import { usePageHead } from '@/components/ui/PageHead';
+import { RunHeader } from '@/components/actions/parts';
+import { RunChip } from '@/components/actions/RunChip';
+import { QueryError } from '@/components/actions/states';
 
 function StepLog({
   repo,
@@ -58,30 +61,34 @@ function StepLog({
     refetchInterval: running ? 2000 : false,
     staleTime: step.status === 'completed' ? Infinity : 0,
   });
-  if (q.isLoading)
-    return <div className="job-log-lines px-4 py-2">Loading log…</div>;
-  const lines = (q.data ?? '').replace(/\n$/, '').split('\n');
+  if (q.isLoading) return <div className="act-log-note">Loading log…</div>;
   if (!q.data)
     return (
-      <div className="job-log-lines px-4 py-2" style={{ color: '#8b949e' }}>
+      <div className="act-log-note">
         {step.status === 'queued' ? 'Waiting to start…' : 'No output'}
       </div>
     );
+  const lines = q.data.replace(/\n$/, '').split('\n');
   return (
-    <div className="job-log-lines py-2 pr-3">
+    <div className="act-log-lines">
       {lines.map((l, i) => (
-        <div
-          key={i}
-          style={
-            /^(Error|##\[error\])/.test(l) ? { color: '#f85149' } : undefined
-          }
-        >
-          <span className="ln">{i + 1}</span>
-          {l}
+        <div key={i} className={isErrorLine(l) ? 'act-line err' : 'act-line'}>
+          <span className="act-ln">{i + 1}</span>
+          <span>{l}</span>
         </div>
       ))}
     </div>
   );
+}
+
+/** A job's state in words: how it ended, where it waits, or when it started. */
+function jobState(job: WorkflowJob): string {
+  if (job.status === 'completed')
+    return `${runLabel(job.status, job.conclusion)}${job.completedAt ? ` ${timeAgo(job.completedAt)}` : ''}${job.startedAt ? ` in ${duration(job.startedAt, job.completedAt)}` : ''}`;
+  if (job.queuedAhead !== null) return `Queued (${job.queuedAhead} ahead)`;
+  if (job.status === 'in_progress')
+    return `Started ${job.startedAt ? timeAgo(job.startedAt) : ''}`;
+  return 'Waiting for a runner';
 }
 
 function JobLog({
@@ -96,15 +103,13 @@ function JobLog({
   now: number;
 }) {
   // Open the step that is running or failed, like GitHub.
-  const focus =
-    job.steps.find((s) => s.status === 'in_progress') ??
-    job.steps.find((s) => s.conclusion === 'failure');
+  const focus = focusStep(job.steps);
   const [open, setOpen] = useState<Set<number>>(
-    () => new Set(focus ? [focus.number] : [])
+    () => new Set(focus !== null ? [focus] : [])
   );
   useEffect(() => {
-    if (focus) setOpen((prev) => new Set(prev).add(focus.number));
-  }, [focus?.number]);
+    if (focus !== null) setOpen((prev) => new Set(prev).add(focus));
+  }, [focus]);
   const toggle = (n: number) =>
     setOpen((prev) => {
       const next = new Set(prev);
@@ -114,67 +119,156 @@ function JobLog({
     });
 
   return (
-    <div className="job-log">
-      <div
-        className="px-4 py-3 d-flex flex-items-center"
-        style={{ gap: 8, borderBottom: '1px solid #30363d' }}
-      >
-        <div className="flex-1">
-          <div className="text-bold f4" style={{ color: '#e6edf3' }}>
-            {job.name}
-          </div>
-          <div className="f6" style={{ color: '#8b949e' }}>
-            {job.status === 'completed'
-              ? `${runStatusLabel(job.status, job.conclusion).toLowerCase()} ${job.completedAt ? timeAgo(job.completedAt) : ''} in ${duration(job.startedAt, job.completedAt)}`
-              : job.queuedAhead !== null
-                ? `Queued (${job.queuedAhead} ahead)`
-                : job.status === 'in_progress'
-                  ? `started ${job.startedAt ? timeAgo(job.startedAt) : ''}`
-                  : 'Waiting for a runner'}
-          </div>
+    <section className="act-logbox panel" aria-label={`Log of ${job.name}`}>
+      <div className="act-log-head">
+        <div>
+          <b>{job.name}</b>
+          <p className="small muted">{jobState(job)}</p>
         </div>
+        <span className="mono small muted" title="Runner">
+          {job.runsOn}
+        </span>
       </div>
-      <div className="py-2">
-        {job.steps.map((s) => (
-          <details
-            key={s.number}
-            className="job-log-step"
-            open={open.has(s.number)}
-          >
-            <summary
-              className="px-3 py-1 d-flex flex-items-center f6"
-              style={{ gap: 8 }}
-              onClick={(e) => {
-                e.preventDefault();
-                toggle(s.number);
-              }}
-            >
-              <span style={{ color: '#8b949e' }}>
-                {open.has(s.number) ? (
-                  <ChevronDownIcon />
-                ) : (
-                  <ChevronRightIcon />
-                )}
-              </span>
-              <RunStatusIcon status={s.status} conclusion={s.conclusion} />
-              <span className="flex-1">{s.name}</span>
-              <span style={{ color: '#8b949e' }}>
-                {s.status !== 'queued' && s.conclusion !== 'skipped'
-                  ? duration(s.startedAt, s.completedAt, now)
-                  : ''}
-              </span>
-            </summary>
-            {open.has(s.number) && (
-              <StepLog repo={repo} run={run} job={job} step={s} />
-            )}
-          </details>
-        ))}
+      <div className="act-log">
+        {job.steps.length === 0 && (
+          <div className="act-log-note">No steps yet</div>
+        )}
+        {job.steps.map((s) => {
+          const isOpen = open.has(s.number);
+          return (
+            <div key={s.number} className="act-logstep">
+              <button
+                type="button"
+                className="act-logstep-btn"
+                aria-expanded={isOpen}
+                onClick={() => toggle(s.number)}
+              >
+                <span className="act-chev">
+                  {isOpen ? <ChevronDownIcon /> : <ChevronRightIcon />}
+                </span>
+                <RunStatusIcon status={s.status} conclusion={s.conclusion} />
+                <span className="act-logstep-name">{s.name}</span>
+                <span className="act-logstep-time">
+                  <span className="sr">
+                    {stepLabel(s.status, s.conclusion)}.{' '}
+                  </span>
+                  {s.status !== 'queued' && s.conclusion !== 'skipped'
+                    ? duration(s.startedAt, s.completedAt, now)
+                    : ''}
+                </span>
+              </button>
+              {isOpen && <StepLog repo={repo} run={run} job={job} step={s} />}
+            </div>
+          );
+        })}
       </div>
-    </div>
+    </section>
   );
 }
 
+function Summary({
+  run,
+  jobs,
+  base,
+  now,
+}: {
+  run: WorkflowRun;
+  jobs: WorkflowJob[];
+  base: string;
+  now: number;
+}) {
+  return (
+    <>
+      <section className="panel pad act-summary">
+        <dl className="act-facts act-facts-row">
+          <div>
+            <dt>
+              Triggered via{' '}
+              {run.event === 'pull_request' ? 'pull request' : 'push'}{' '}
+              {timeAgo(run.createdAt)}
+            </dt>
+            <dd className="act-actor">
+              <Identicon login={run.actor?.username ?? 'someone'} size={18} />
+              <b>{run.actor?.username ?? 'someone'}</b>
+              {run.event === 'pull_request' ? (
+                <>
+                  updated{' '}
+                  <Link to={`${base}/pull/${run.pullRequestNumber}`}>
+                    #{run.pullRequestNumber}
+                  </Link>
+                </>
+              ) : (
+                'pushed'
+              )}
+              <Link to={`${base}/commit/${run.headSha}`} className="mono">
+                {shortSha(run.headSha)}
+              </Link>
+              {run.event === 'push' && (
+                <span className="mono act-branch">{run.refName}</span>
+              )}
+            </dd>
+          </div>
+          <div>
+            <dt>Status</dt>
+            <dd>
+              <RunChip status={run.status} conclusion={run.conclusion} />
+            </dd>
+          </div>
+          <div>
+            <dt>Total duration</dt>
+            <dd>
+              {run.startedAt
+                ? duration(run.startedAt, run.completedAt, now)
+                : '–'}
+            </dd>
+          </div>
+        </dl>
+      </section>
+      {run.errorMessage && (
+        <div className="act-error" role="alert">
+          <pre>{run.errorMessage}</pre>
+        </div>
+      )}
+      {jobs.length > 0 && (
+        <Section
+          title={run.workflowPath.split('/').pop()}
+          actions={<span className="muted small mono">on: {run.event}</span>}
+        >
+          <div className="act-jobcards">
+            {jobs.map((j) => (
+              <Link
+                key={j.id}
+                to={`${base}/actions/runs/${run.runNumber}/job/${j.id}`}
+                className="act-jobcard panel"
+              >
+                <RunStatusIcon status={j.status} conclusion={j.conclusion} />
+                <span className="act-jobcard-name">{j.name}</span>
+                <span className="muted small">
+                  {j.queuedAhead !== null
+                    ? `Queued (${j.queuedAhead} ahead)`
+                    : j.startedAt && j.conclusion !== 'skipped'
+                      ? duration(j.startedAt, j.completedAt, now)
+                      : ''}
+                </span>
+              </Link>
+            ))}
+          </div>
+        </Section>
+      )}
+    </>
+  );
+}
+
+/**
+ * A run. Keyed by run number: re-running navigates to the next number with the same route, and the "Confirm
+ * cancel" step (and any action error) of the run you left must not carry over to the new one.
+ */
 export default function RunView() {
+  const { number = '' } = useParams();
+  return <RunPage key={number} />;
+}
+
+function RunPage() {
   const repo = useOutletContext<RepoDetail>();
   const { number = '', jobId } = useParams();
   const num = Number(number);
@@ -182,7 +276,7 @@ export default function RunView() {
   const base = `/${repo.fullName}`;
   const navigate = useNavigate();
   const qc = useQueryClient();
-  const [error, setError] = useState<string | null>(null);
+  const [confirmCancel, setConfirmCancel] = useState(false);
   const q = useQuery({
     queryKey: qk.run(o, repo.name, num),
     queryFn: () => api.run(o, repo.name, num),
@@ -194,9 +288,10 @@ export default function RunView() {
 
   const cancel = useMutation({
     mutationFn: () => api.cancelRun(o, repo.name, num),
-    onSuccess: () =>
-      qc.invalidateQueries({ queryKey: qk.run(o, repo.name, num) }),
-    onError: (e) => setError(errorMessage(e)),
+    onSuccess: () => {
+      setConfirmCancel(false);
+      return qc.invalidateQueries({ queryKey: qk.run(o, repo.name, num) });
+    },
   });
   const rerun = useMutation({
     mutationFn: () => api.rerun(o, repo.name, num),
@@ -204,198 +299,160 @@ export default function RunView() {
       await qc.invalidateQueries({ queryKey: ['repo', o, repo.name, 'runs'] });
       navigate(`${base}/actions/runs/${r.runNumber}`);
     },
-    onError: (e) => setError(errorMessage(e)),
   });
 
-  if (q.error)
+  const run = q.data?.run;
+  const job = q.data?.jobs.find((j) => j.id === jobId);
+  usePageHead({
+    icon: 'play',
+    crumbs: [
+      { label: 'Actions', to: `${base}/actions` },
+      ...(job
+        ? [
+            { label: `Run #${num}`, to: `${base}/actions/runs/${num}` },
+            { label: job.name },
+          ]
+        : [{ label: `Run #${num}` }]),
+    ],
+    title: job ? job.name : `Run #${num}`,
+    tab: 'actions',
+    documentTitle: `Run #${num}`,
+  });
+
+  if (q.isError && !q.data)
     return (
-      <div className="container-xl px-3 px-md-4 px-lg-5">
-        <div className="flash flash-error">{errorMessage(q.error)}</div>
-      </div>
+      <QueryError
+        error={q.error}
+        onRetry={() => void q.refetch()}
+        title="This run did not load"
+      />
     );
-  if (!q.data) return <Spinner />;
-  const { run, jobs } = q.data;
-  const job = jobs.find((j) => j.id === jobId);
+  if (!q.data || !run) return <Skeleton kind="detail" />;
+  const { jobs } = q.data;
+  const actionError = rerun.error ?? cancel.error;
+  // Only a run that is still going can be cancelled, so the confirm step ends when it does.
+  const confirming = confirmingCancel(confirmCancel, run.status);
 
   return (
-    <div className="container-xl px-3 px-md-4 px-lg-5 pb-6">
-      <Link
-        to={`${base}/actions`}
-        className="f6 color-fg-muted d-inline-flex flex-items-center mb-2"
-        style={{ gap: 4 }}
-      >
-        <ArrowLeftIcon size={14} /> {run.name}
-      </Link>
-      <div
-        className="d-flex flex-items-center flex-wrap mb-3 pb-3 border-bottom"
-        style={{ gap: 8 }}
-      >
-        <RunStatusIcon
-          status={run.status}
-          conclusion={run.conclusion}
-          size={24}
-        />
-        <h2 className="f2 text-normal flex-1" style={{ minWidth: 0 }}>
-          {run.displayTitle}{' '}
-          <span className="color-fg-muted">#{run.runNumber}</span>
-        </h2>
-        {repo.permissions.write &&
+    <>
+      <RunHeader
+        lead={
+          <RunStatusIcon
+            status={run.status}
+            conclusion={run.conclusion}
+            size={24}
+          />
+        }
+        title={
+          <>
+            {run.displayTitle} <span className="muted">#{run.runNumber}</span>
+          </>
+        }
+        lede={
+          <>
+            {run.name} ·{' '}
+            {run.event === 'pull_request' ? (
+              <>pull request #{run.pullRequestNumber}</>
+            ) : (
+              <>
+                pushed to <span className="mono">{run.refName}</span>
+              </>
+            )}{' '}
+            · {runLabel(run.status, run.conclusion).toLowerCase()}
+            {run.startedAt && (
+              <> · {duration(run.startedAt, run.completedAt, now)}</>
+            )}
+          </>
+        }
+        actions={
+          repo.permissions.write &&
           (run.status === 'completed' ? (
-            <button
-              className="btn btn-sm"
-              disabled={rerun.isPending}
+            <PendingButton
+              className="small"
+              pending={rerun.isPending}
+              pendingLabel="Re-running…"
               onClick={() => rerun.mutate()}
             >
-              <SyncIcon /> Re-run all jobs
-            </button>
+              <SyncIcon size={14} /> Re-run all jobs
+            </PendingButton>
+          ) : confirming ? (
+            <>
+              <PendingButton
+                className="small danger"
+                pending={cancel.isPending}
+                pendingLabel="Cancelling…"
+                onClick={() => cancel.mutate()}
+              >
+                <XIcon size={14} /> Confirm cancel
+              </PendingButton>
+              <button
+                type="button"
+                className="btn small quiet"
+                disabled={cancel.isPending}
+                onClick={() => setConfirmCancel(false)}
+              >
+                Keep running
+              </button>
+            </>
           ) : (
             <button
-              className="btn btn-sm btn-danger"
-              disabled={cancel.isPending}
-              onClick={() => cancel.mutate()}
+              type="button"
+              className="btn small danger"
+              onClick={() => setConfirmCancel(true)}
             >
-              <XIcon /> Cancel workflow
+              <XIcon size={14} /> Cancel workflow
             </button>
-          ))}
-      </div>
-      {error && <div className="flash flash-error mb-3">{error}</div>}
-
-      <div className="d-flex flex-column flex-md-row" style={{ gap: 24 }}>
-        <nav className="col-md-3" style={{ minWidth: 220 }}>
+          ))
+        }
+      />
+      {actionError && (
+        <div className="act-error" role="alert">
+          {errorMessage(actionError)}
+        </div>
+      )}
+      <div className="act-runlayout">
+        <nav className="act-joblist panel" aria-label="Jobs">
           <Link
             to={`${base}/actions/runs/${run.runNumber}`}
-            className={`d-flex flex-items-center rounded-2 px-2 py-1 color-fg-default ${!job ? 'color-bg-subtle text-bold' : ''}`}
-            style={{ gap: 8 }}
+            aria-current={!job ? 'page' : undefined}
           >
-            <HomeIcon /> Summary
+            <HomeIcon size={16} />
+            <span>Summary</span>
           </Link>
-          {jobs.length > 0 && (
-            <div className="f6 color-fg-muted text-bold px-2 mt-3 mb-1">
-              Jobs
-            </div>
-          )}
+          {jobs.length > 0 && <p className="act-joblist-h">Jobs</p>}
           {jobs.map((j) => (
             <Link
               key={j.id}
               to={`${base}/actions/runs/${run.runNumber}/job/${j.id}`}
-              className={`d-flex flex-items-center rounded-2 px-2 py-1 color-fg-default ${job?.id === j.id ? 'color-bg-subtle text-bold' : ''}`}
-              style={{ gap: 8 }}
+              aria-current={job?.id === j.id ? 'page' : undefined}
             >
               <RunStatusIcon status={j.status} conclusion={j.conclusion} />
-              <span className="css-truncate css-truncate-target">{j.name}</span>
+              <span className="act-joblist-name">{j.name}</span>
+              <span className="muted small">
+                {j.queuedAhead !== null
+                  ? `${j.queuedAhead} ahead`
+                  : j.startedAt && j.conclusion !== 'skipped'
+                    ? duration(j.startedAt, j.completedAt, now)
+                    : ''}
+              </span>
             </Link>
           ))}
         </nav>
-
-        <div className="flex-1" style={{ minWidth: 0 }}>
+        <div className="act-runmain">
           {job ? (
             <JobLog key={job.id} repo={repo} run={run} job={job} now={now} />
+          ) : jobId ? (
+            <div className="act-error" role="alert">
+              This run has no job with that id.{' '}
+              <Link to={`${base}/actions/runs/${run.runNumber}`}>
+                Back to the summary
+              </Link>
+            </div>
           ) : (
-            <>
-              <div className="Box mb-3">
-                <div className="Box-body d-flex flex-wrap" style={{ gap: 32 }}>
-                  <div>
-                    <div className="f6 color-fg-muted">
-                      Triggered via{' '}
-                      {run.event === 'pull_request' ? 'pull request' : 'push'}{' '}
-                      {timeAgo(run.createdAt)}
-                    </div>
-                    <div className="f5 mt-1">
-                      <span className="text-bold">
-                        {run.actor?.username ?? 'someone'}
-                      </span>{' '}
-                      {run.event === 'pull_request' ? (
-                        <>
-                          updated{' '}
-                          <Link to={`${base}/pull/${run.pullRequestNumber}`}>
-                            #{run.pullRequestNumber}
-                          </Link>
-                        </>
-                      ) : (
-                        'pushed'
-                      )}{' '}
-                      <Link
-                        to={`${base}/commit/${run.headSha}`}
-                        className="text-mono"
-                      >
-                        {shortSha(run.headSha)}
-                      </Link>
-                      {run.event === 'push' && (
-                        <>
-                          {' '}
-                          <span className="Label Label--accent text-mono">
-                            {run.refName}
-                          </span>
-                        </>
-                      )}
-                    </div>
-                  </div>
-                  <div>
-                    <div className="f6 color-fg-muted">Status</div>
-                    <div className="f5 mt-1 text-bold">
-                      {runStatusLabel(run.status, run.conclusion)}
-                    </div>
-                  </div>
-                  <div>
-                    <div className="f6 color-fg-muted">Total duration</div>
-                    <div className="f5 mt-1 text-bold">
-                      {run.startedAt
-                        ? duration(run.startedAt, run.completedAt, now)
-                        : '–'}
-                    </div>
-                  </div>
-                </div>
-              </div>
-              {run.errorMessage && (
-                <div className="flash flash-error mb-3">
-                  <pre
-                    className="m-0"
-                    style={{ whiteSpace: 'pre-wrap', fontFamily: 'inherit' }}
-                  >
-                    {run.errorMessage}
-                  </pre>
-                </div>
-              )}
-              {jobs.length > 0 && (
-                <div className="Box">
-                  <div className="Box-header py-2">
-                    <span className="text-bold">
-                      {run.workflowPath.split('/').pop()}
-                    </span>
-                    <div className="f6 color-fg-muted">on: {run.event}</div>
-                  </div>
-                  <div
-                    className="Box-body d-flex flex-wrap"
-                    style={{ gap: 12 }}
-                  >
-                    {jobs.map((j) => (
-                      <Link
-                        key={j.id}
-                        to={`${base}/actions/runs/${run.runNumber}/job/${j.id}`}
-                        className="Box d-flex flex-items-center px-3 py-2 color-fg-default"
-                        style={{ gap: 8, minWidth: 220 }}
-                      >
-                        <RunStatusIcon
-                          status={j.status}
-                          conclusion={j.conclusion}
-                        />
-                        <span className="flex-1 text-bold f6">{j.name}</span>
-                        <span className="f6 color-fg-muted">
-                          {j.queuedAhead !== null
-                            ? `Queued (${j.queuedAhead} ahead)`
-                            : j.startedAt && j.conclusion !== 'skipped'
-                              ? duration(j.startedAt, j.completedAt, now)
-                              : ''}
-                        </span>
-                      </Link>
-                    ))}
-                  </div>
-                </div>
-              )}
-            </>
+            <Summary run={run} jobs={jobs} base={base} now={now} />
           )}
         </div>
       </div>
-    </div>
+    </>
   );
 }
