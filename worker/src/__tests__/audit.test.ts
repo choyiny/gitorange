@@ -478,7 +478,7 @@ describe('mutations write the audit log', () => {
         actor_kind: 'system',
         actor: null,
         target: 'feature',
-        data: { sha: head, merged: true },
+        data: { sha: head, merged: true, pull: 1 },
         repo: 'app',
       },
     ]);
@@ -526,7 +526,7 @@ describe('mutations write the audit log', () => {
         actor_kind: 'system',
         actor: null,
         target: 'feature',
-        data: { sha: head, merged: true },
+        data: { sha: head, merged: true, pull: 1 },
         repo: 'app',
       },
     ]);

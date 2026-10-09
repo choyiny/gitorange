@@ -1,4 +1,4 @@
-import { reasonText, STATE_LABEL, stateText } from './pullState';
+import { reasonText, stateLabel, stateText } from './pullState';
 import type { PullStateName, StackDependency, StackTree } from './uiApi';
 
 /** One Mermaid flowchart per land target: how its open pull requests are slated to land. */
@@ -57,7 +57,7 @@ export function nodeTooltip(n: TipNode): string {
   ];
   if (n.pullState) {
     const why = n.pullState.reasons.map(reasonText).join('; ');
-    lines.push(`${STATE_LABEL[n.pullState.state]}${why ? `: ${why}` : ''}`);
+    lines.push(`${stateLabel(n.pullState)}${why ? `: ${why}` : ''}`);
   }
   const why = (d: StackDependency) => (d.reason ? `: ${d.reason}` : '');
   const seen = new Set<number>();

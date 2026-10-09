@@ -49,6 +49,38 @@ export async function sessionId(
   return `s-${hex}`;
 }
 
+/** What a pull request row needs to say which session it belongs to. */
+type SessionKey = {
+  authorId: string;
+  createdVia: string | null;
+  sessionLabel: string | null;
+};
+
+/**
+ * The id of the session a pull request belongs to: the id `GET /sessions` gives its group. Never null: a pull request
+ * opened by hand (no app, no label) is in its author's "by hand" session.
+ */
+export function pullSessionId(pr: SessionKey): Promise<string> {
+  return sessionId(pr.authorId, pr.createdVia || null, pr.sessionLabel || null);
+}
+
+/** The session id of each pull request (by its `id`), hashing each distinct session once. */
+export async function pullSessionIds(
+  prs: (SessionKey & { id: string })[]
+): Promise<Map<string, string>> {
+  const bySession = new Map<string, Promise<string>>();
+  const out = new Map<string, string>();
+  await Promise.all(
+    prs.map(async (pr) => {
+      const key = `${pr.authorId}\0${pr.createdVia || ''}\0${pr.sessionLabel || ''}`;
+      let id = bySession.get(key);
+      if (!id) bySession.set(key, (id = pullSessionId(pr)));
+      out.set(pr.id, await id);
+    })
+  );
+  return out;
+}
+
 type Row = {
   id: string;
   number: number;

@@ -392,7 +392,7 @@ export async function deleteMergedBranch(opts: {
   db: DrizzleDB;
   repo: Repository;
   git: GitService;
-  pr: Pick<PullRequest, 'id' | 'repositoryId' | 'headRef'>;
+  pr: Pick<PullRequest, 'id' | 'number' | 'repositoryId' | 'headRef'>;
   /** The head commit that landed. */
   headSha: string;
 }): Promise<boolean> {
@@ -433,6 +433,8 @@ export async function deleteMergedBranch(opts: {
     action: 'branch.deleted',
     target: branch,
     data: { sha: opts.headSha, merged: true },
+    // The pull request whose landing deleted it, so the log can say "deleted <branch> after #<n> merged".
+    pull: pr.number,
   });
   await publishChange(env, pr.repositoryId);
   return true;

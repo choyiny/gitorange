@@ -1,5 +1,12 @@
 import { describe, expect, it } from 'vitest';
-import { blocking, reasonText, STATE_LABEL, stateText } from './pullState';
+import {
+  blocking,
+  reasonText,
+  STATE_LABEL,
+  stateLabel,
+  stateText,
+} from './pullState';
+import type { PullState } from './uiApi';
 
 describe('pull state text', () => {
   it('names each state as the spec does', () => {
@@ -53,22 +60,71 @@ describe('pull state text', () => {
   });
 
   it('says merging is paused in plain English, and counts it as holding the pull request', () => {
-    expect(reasonText({ kind: 'merging_paused' })).toBe('Merging is paused');
+    // Lowercase: callers join reason fragments into sentences ("… ; merging is paused").
+    expect(reasonText({ kind: 'merging_paused' })).toBe('merging is paused');
     expect(blocking({ kind: 'merging_paused' })).toBe(true);
+  });
+
+  it('labels a waiting pull request that merging is paused on "Paused", not "Waiting for checks"', () => {
+    const paused: PullState = {
+      state: 'waiting',
+      reasons: [{ kind: 'merging_paused' }],
+    };
+    expect(stateLabel(paused)).toBe('Paused');
+    expect(stateText(paused).label).toBe('Paused');
+    // Whatever else holds it, the pause is why it isn't landing.
+    expect(
+      stateLabel({
+        state: 'waiting',
+        reasons: [
+          { kind: 'checks_running', check: 'test', started: true },
+          { kind: 'merging_paused' },
+        ],
+      })
+    ).toBe('Paused');
+    // Without the pause the label is the state's own.
+    expect(
+      stateLabel({
+        state: 'waiting',
+        reasons: [{ kind: 'checks_running', check: 'test', started: true }],
+      })
+    ).toBe('Waiting for checks');
+    expect(stateLabel({ state: 'waiting', reasons: [] })).toBe(
+      'Waiting for checks'
+    );
+    // A person's or an agent's move stays that move, pause or not.
+    expect(
+      stateLabel({
+        state: 'human_review',
+        reasons: [{ kind: 'needs_approval' }, { kind: 'merging_paused' }],
+      })
+    ).toBe('Requires human review');
+    expect(
+      stateLabel({
+        state: 'agent_followup',
+        reasons: [{ kind: 'merging_paused' }],
+      })
+    ).toBe('Ready for agent followup');
+    expect(
+      stateText({
+        state: 'ready',
+        reasons: [{ kind: 'stacked_on', pr: 3 }],
+      }).label
+    ).toBe('Ready, stacked on #3');
   });
 
   it('gives the pause as the reason a paused pull request waits', () => {
     expect(
       stateText({ state: 'waiting', reasons: [{ kind: 'merging_paused' }] })
         .reason
-    ).toBe('Merging is paused');
+    ).toBe('merging is paused');
     // Stacking only informs: the pause is still the first thing that holds it.
     expect(
       stateText({
         state: 'waiting',
         reasons: [{ kind: 'stacked_on', pr: 3 }, { kind: 'merging_paused' }],
       }).reason
-    ).toBe('Merging is paused');
+    ).toBe('merging is paused');
   });
 
   it('omits a missing number instead of printing NaN', () => {

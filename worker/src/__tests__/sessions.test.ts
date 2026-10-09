@@ -376,3 +376,105 @@ describe('GET /api/repos/{o}/{r}/sessions/{id}', () => {
     ).toBe(404);
   });
 });
+
+describe('the session id on pull request rows', () => {
+  /** The session id GET /sessions gives each pull request number, the one id every other row must agree with. */
+  async function idsByNumber(s: Awaited<ReturnType<typeof crewRepo>>) {
+    const out = new Map<number, string>();
+    for (const x of await sessions(s))
+      for (const p of x.pulls) out.set(p.number, x.id);
+    return out;
+  }
+  const getJson = async <T>(
+    s: Awaited<ReturnType<typeof crewRepo>>,
+    path: string
+  ) => {
+    const res = await call(s.t, `/api/repos/octocat/app${path}`, {
+      cookie: s.admin,
+    });
+    expect(res.status).toBe(200);
+    return (await res.json()) as T;
+  };
+
+  async function fixture() {
+    const s = await crewRepo();
+    const ada = await collaborator(s, 'ada');
+    const claude = (await connect(s.t, s.admin, 'Claude Code')).access_token;
+    const cursor = (await connect(s.t, ada, 'Cursor')).access_token;
+    for (const b of ['a', 'b', 'c', 'd']) await s.branch(b);
+    const a = await s.mcp(claude, 'a', { session: 's4' });
+    const b = await s.mcp(cursor, 'b', { session: 's4' });
+    const c = await s.web('c');
+    const d = await s.web('d', { cookie: ada });
+    return { s, ada, a, b, c, d };
+  }
+
+  it('is the same on queue entries as GET /sessions gives the pull request’s session, "by hand" ones included', async () => {
+    const { s, a, b, c, d } = await fixture();
+    const ids = await idsByNumber(s);
+    // Four people/apps, four sessions: by hand is a per-person session of its own.
+    expect(new Set(ids.values()).size).toBe(4);
+    const [main] = await getJson<
+      { entries: { number: number; sessionId: string }[] }[]
+    >(s, '/queue');
+    expect(main.entries.map((e) => e.number).sort()).toEqual(
+      [a, b, c, d].sort()
+    );
+    for (const e of main.entries) {
+      expect(e.sessionId).toMatch(/^s-[0-9a-f]{10}$/);
+      expect(e.sessionId).toBe(ids.get(e.number));
+    }
+  });
+
+  it('is the same on a branch’s pull request and on the branch map', async () => {
+    const { s, a, b, c, d } = await fixture();
+    const ids = await idsByNumber(s);
+    const list = await getJson<
+      { name: string; pull: { number: number; sessionId: string } | null }[]
+    >(s, '/branches');
+    const withPull = list.filter((x) => x.pull);
+    expect(withPull.map((x) => x.pull!.number).sort()).toEqual(
+      [a, b, c, d].sort()
+    );
+    for (const x of withPull)
+      expect(x.pull!.sessionId).toBe(ids.get(x.pull!.number));
+    // main has no pull request to carry one.
+    expect(list.find((x) => x.name === 'main')!.pull).toBeNull();
+
+    const map = await getJson<{
+      open: { number: number; sessionId: string }[];
+    }>(s, '/branches/map');
+    expect(map.open).toHaveLength(4);
+    for (const o of map.open) expect(o.sessionId).toBe(ids.get(o.number));
+  });
+
+  it('is the same on the pull request list and detail', async () => {
+    const { s, a, b, c, d } = await fixture();
+    const ids = await idsByNumber(s);
+    const { pulls } = await getJson<{
+      pulls: { number: number; sessionId: string }[];
+    }>(s, '/pulls?state=open');
+    expect(pulls.map((p) => p.number).sort()).toEqual([a, b, c, d].sort());
+    for (const p of pulls) expect(p.sessionId).toBe(ids.get(p.number));
+    for (const n of [a, c]) {
+      const { pull } = await getJson<{ pull: { sessionId: string } }>(
+        s,
+        `/pulls/${n}`
+      );
+      expect(pull.sessionId).toBe(ids.get(n));
+    }
+  });
+
+  it('is the formula for a by-hand pull request, with an empty client and label', async () => {
+    const { s, c } = await fixture();
+    const author = (await s.t.env.DB.prepare(
+      "SELECT id FROM users WHERE username = 'octocat'"
+    ).first<{ id: string }>())!.id;
+    const [main] = await getJson<
+      { entries: { number: number; sessionId: string }[] }[]
+    >(s, '/queue');
+    expect(main.entries.find((e) => e.number === c)!.sessionId).toBe(
+      await sessionId(author, null, null)
+    );
+  });
+});

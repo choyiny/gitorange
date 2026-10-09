@@ -45,6 +45,7 @@ import { attributeCommits } from '../lib/commit-authors';
 import { landPull, pullRef } from '../merge/land';
 import { addComment, openPull, pullShas } from '../lib/pulls';
 import { revertPull } from '../lib/revert';
+import { pullSessionId, pullSessionIds } from '../lib/sessions';
 import { reviewConfigured } from '../review/head';
 import { maybeAutoMerge } from '../review/auto-merge';
 import { listReview, reviewInputs, reviewVerdict } from '../review/gate';
@@ -103,6 +104,8 @@ const pullSchema = z
     createdVia: z.string().nullable(),
     /** The coding session label that app reported, if any. */
     sessionLabel: z.string().nullable(),
+    /** The id `GET /sessions` gives its coding session; never null (one opened by hand is its author's session). */
+    sessionId: z.string(),
     /** The person's original request that app reported, if any. */
     request: z.string().nullable(),
     createdAt: z.string(),
@@ -121,6 +124,7 @@ const ghost: PublicUser = {
 function serializePull(
   pr: PullRequest,
   people: Map<string, PublicUser>,
+  sessionId: string,
   commentCount = 0
 ) {
   return {
@@ -140,6 +144,7 @@ function serializePull(
     closedAt: pr.closedAt?.toISOString() ?? null,
     createdVia: pr.createdVia,
     sessionLabel: pr.sessionLabel,
+    sessionId,
     request: pr.request,
     createdAt: pr.createdAt.toISOString(),
     updatedAt: pr.updatedAt.toISOString(),
@@ -351,10 +356,16 @@ pullsRouter.openapi(listRoute, async (c) => {
       return 'failed' as const;
     return null;
   };
+  const sessionIds = await pullSessionIds(shown.map((r) => r.pr));
   return c.json(
     {
       pulls: shown.map((r) => ({
-        ...serializePull(r.pr, people, Number(r.comments)),
+        ...serializePull(
+          r.pr,
+          people,
+          sessionIds.get(r.pr.id)!,
+          Number(r.comments)
+        ),
         headSha: headSha(r.pr),
         aiResolution: aiResolution(r.pr),
         review: review(r.pr),
@@ -514,7 +525,14 @@ pullsRouter.openapi(createPullRoute, async (c) => {
   });
   if (!result.ok) return c.json({ error: result.error }, result.status);
   const pr = result.pr;
-  return c.json(serializePull(pr, await usersById(db, [author.id])), 201);
+  return c.json(
+    serializePull(
+      pr,
+      await usersById(db, [author.id]),
+      await pullSessionId(pr)
+    ),
+    201
+  );
 });
 
 const reviewFlagSchema = z
@@ -731,7 +749,7 @@ pullsRouter.openapi(getPullRoute, async (c) => {
   });
   return c.json(
     {
-      pull: serializePull(pr, people, comments.length),
+      pull: serializePull(pr, people, await pullSessionId(pr), comments.length),
       comments: comments.map((x) => ({
         id: x.id,
         author: people.get(x.authorId) ?? ghost,

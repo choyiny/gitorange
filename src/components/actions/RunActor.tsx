@@ -35,11 +35,7 @@ export function useAgentDirectory() {
       );
       return {
         name: found?.name ?? handle,
-        // Sent since crew redesign B1; typed in uiApi by C0.
-        color: agentColor(
-          handle,
-          (found as { color?: string | null } | undefined)?.color
-        ),
+        color: agentColor(handle, found?.color),
       };
     },
     [agents]

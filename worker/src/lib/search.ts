@@ -34,9 +34,9 @@ export const SEARCH_LIMIT = 8;
 /** The default branch's file list is kept per isolate this long, and holds at most this many paths. */
 export const FILE_CACHE_MS = 60_000;
 export const MAX_FILE_PATHS = 5000;
+/** The most trees read for one file list (one per directory, plus the root): a repository wider than this is cut off. */
+export const MAX_FILE_TREES = 200;
 const MAX_CACHED_REPOS = 32;
-/** Agents and people read before ranking (exact handles first), of which the first 8 are kept. */
-const RANKED_POOL = 50;
 
 export type SearchResults = {
   repos: { name: string; description: string | null }[];
@@ -62,6 +62,17 @@ const pattern = (term: string, prefix = false) =>
 const likes = (column: AnySQLiteColumn | SQL, p: string) =>
   sql`${column} LIKE ${p} ESCAPE '\\'`;
 
+/**
+ * ORDER BY for a handle column, in the database so the best matches are never cut off by a pool read first: the exact
+ * handle (any case), then those starting with the term, then the rest; ties shortest then alphabetical. Mirrors
+ * `ranked` below, which does the same for lists read whole.
+ */
+const byHandle = (column: AnySQLiteColumn, term: string) => [
+  sql`CASE WHEN lower(${column}) = lower(${term}) THEN 0 WHEN ${likes(column, pattern(term, true))} THEN 1 ELSE 2 END`,
+  sql`length(${column})`,
+  asc(column),
+];
+
 /** Exact matches first, then those starting with the term, then the rest; ties shortest then alphabetical. */
 function ranked<T>(items: T[], text: (x: T) => string, term: string): T[] {
   const t = term.toLowerCase();
@@ -80,8 +91,10 @@ function ranked<T>(items: T[], text: (x: T) => string, term: string): T[] {
 const fileCache = new Map<string, { at: number; paths: string[] }>();
 
 /**
- * Every file path in the tree of commit `tip` (at most 5000), read breadth first and kept for a minute per isolate
- * under `key` (the repository) and the commit.
+ * Every file path in the tree of commit `tip`, read breadth first and kept for a minute per isolate under `key` (the
+ * repository) and the commit. At most 5000 paths and at most `MAX_FILE_TREES` trees are read (a repository with
+ * thousands of directories holding few files would otherwise be read tree by tree without ever reaching the path
+ * cap): past either the list is what was seen.
  */
 export async function filePaths(
   git: GitService,
@@ -95,8 +108,15 @@ export async function filePaths(
   const commit = await git.commit(tip);
   const paths: string[] = [];
   const queue: [string, string][] = commit ? [[commit.treeHash, '']] : [];
-  while (queue.length && paths.length < MAX_FILE_PATHS) {
-    const batch = queue.splice(0, 8);
+  let read = 0;
+  while (
+    queue.length &&
+    paths.length < MAX_FILE_PATHS &&
+    read < MAX_FILE_TREES
+  ) {
+    // Never more than the trees left in the budget.
+    const batch = queue.splice(0, Math.min(8, MAX_FILE_TREES - read));
+    read += batch.length;
     const trees = await Promise.all(batch.map(([hash]) => git.tree(hash)));
     batch.forEach(([, prefix], i) => {
       for (const e of trees[i]) {
@@ -220,8 +240,8 @@ export async function search(
           or(likes(users.username, p), likes(agents.name, p))
         )
       )
-      .orderBy(asc(users.username))
-      .limit(RANKED_POOL)
+      .orderBy(...byHandle(users.username, term))
+      .limit(SEARCH_LIMIT)
       .all(),
     db
       .select({ login: users.username, name: users.name })
@@ -236,8 +256,8 @@ export async function search(
           or(likes(users.username, p), likes(users.name, p))
         )
       )
-      .orderBy(asc(users.username))
-      .limit(RANKED_POOL)
+      .orderBy(...byHandle(users.username, term))
+      .limit(SEARCH_LIMIT)
       .all(),
   ]);
 
@@ -263,19 +283,13 @@ export async function search(
           ]
         : [];
     }),
-    agents: ranked(agentRows, (a) => a.handle!, term)
-      .slice(0, SEARCH_LIMIT)
-      .map((a) => ({
-        handle: a.handle!,
-        name: a.name,
-        color: agentColor(a, a.handle!),
-      })),
-    people: ranked(peopleRows, (u) => u.login!, term)
-      .slice(0, SEARCH_LIMIT)
-      .map((u) => ({
-        login: u.login!,
-        name: u.name,
-      })),
+    // Ranked and limited in SQL (`byHandle`).
+    agents: agentRows.map((a) => ({
+      handle: a.handle!,
+      name: a.name,
+      color: agentColor(a, a.handle!),
+    })),
+    people: peopleRows.map((u) => ({ login: u.login!, name: u.name })),
     branches: [],
     files: [],
   };

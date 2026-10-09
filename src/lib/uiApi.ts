@@ -178,6 +178,8 @@ export type Pull = {
   createdVia: string | null;
   /** The coding session label that app reported, if any. */
   sessionLabel: string | null;
+  /** The id of its coding session (`SessionSummary.id`); never null: one opened by hand is its author's session. */
+  sessionId: string;
   /** The person's original request that app reported, if any. */
   request: string | null;
   createdAt: string;
@@ -1015,6 +1017,8 @@ export type BranchInfo = {
     createdVia: string | null;
     /** The session label that app reported. */
     session: string | null;
+    /** The id of its coding session (`SessionSummary.id`); never null: one opened by hand is its author's session. */
+    sessionId: string;
   } | null;
   /** Its newest pull request is merged and the branch is still there (never the default or a protected branch). */
   mergedNotDeleted: boolean;
@@ -1044,6 +1048,8 @@ export type BranchMap = {
     createdVia: string | null;
     /** The session label that app reported. */
     session: string | null;
+    /** The id of its coding session (`SessionSummary.id`); never null: one opened by hand is its author's session. */
+    sessionId: string;
     /** The pull request whose branch this one is based on, when stacked. */
     stackedOn: number | null;
   }[];
@@ -1068,6 +1074,8 @@ export type QueueTarget = {
     createdVia: string | null;
     /** The session label that app reported. */
     session: string | null;
+    /** The id of its coding session (`SessionSummary.id`); never null: one opened by hand is its author's session. */
+    sessionId: string;
     /** Its pull request state: agent_followup, human_review, waiting or ready. */
     state: string;
     /** What holds it back, in plain words; empty when it is ready. */
