@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
   CLEARED,
   SEARCH_GROUPS,
+  blurCloses,
   flattenSections,
   hitsFromResults,
   jumpHits,
@@ -150,6 +151,30 @@ describe('searchKey (keyboard)', () => {
 
   it('clamps a stale selection after the results shrank', () => {
     expect(searchKey({ q: 'x', sel: 7 }, 'Enter', hits).go).toBe('/repo/c');
+  });
+});
+
+describe('blurCloses (leaving the search box)', () => {
+  const tabbedOut = {
+    windowFocused: true,
+    pressedInside: false,
+    focusInside: false,
+  };
+
+  it('closes when focus moves elsewhere in the page (Tab out)', () => {
+    expect(blurCloses(tabbedOut)).toBe(true);
+  });
+
+  it('stays open when the whole window lost focus (switching apps)', () => {
+    expect(blurCloses({ ...tabbedOut, windowFocused: false })).toBe(false);
+  });
+
+  it('stays open after a press inside the box (the results scrollbar)', () => {
+    expect(blurCloses({ ...tabbedOut, pressedInside: true })).toBe(false);
+  });
+
+  it('stays open when focus moved to something inside the box', () => {
+    expect(blurCloses({ ...tabbedOut, focusInside: true })).toBe(false);
   });
 });
 

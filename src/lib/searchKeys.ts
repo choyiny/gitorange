@@ -127,6 +127,23 @@ export function searchKey(
   }
 }
 
+/**
+ * Whether the search box closes (and clears) when focus leaves it. Only a real move elsewhere in the page (Tab out)
+ * closes it: not the window losing focus (switching apps), not a press inside the box (the results' scrollbar),
+ * not focus landing on something inside it. A press outside is the shell's to handle.
+ */
+export function blurCloses({
+  windowFocused,
+  pressedInside,
+  focusInside,
+}: {
+  windowFocused: boolean;
+  pressedInside: boolean;
+  focusInside: boolean;
+}): boolean {
+  return windowFocused && !pressedInside && !focusInside;
+}
+
 /* ---------- Matching ---------- */
 
 const WORD_BREAK = /[^a-z0-9]+/;
