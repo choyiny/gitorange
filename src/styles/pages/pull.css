@@ -907,10 +907,7 @@
 }
 
 /* ---------- Files tab ---------- */
-.pr-filejump {
-  max-height: 320px;
-  overflow: auto;
-}
+/* The list grows with .content; only wide file/diff content scrolls horizontally. */
 .pr-filejump .table td {
   padding: 6px 14px;
   overflow-wrap: anywhere;

@@ -320,7 +320,7 @@ describe('nextStep', () => {
     );
     expect(s.tone).toBe('warn');
     expect(s.headline).toBe(
-      'Ready, but merging is paused. It merges once someone resumes merging.'
+      'Ready, but merging is paused. Someone needs to resume merging before this can land.'
     );
     const more = nextStep(
       input({
@@ -334,6 +334,20 @@ describe('nextStep', () => {
     // The pause is the headline; only what else it waits on is listed.
     expect(more.listed).toEqual(['Tests are running']);
   });
+
+  it.each(['disabled', 'off'] as const)(
+    'does not promise an automatic merge after resuming when auto-merge is %s',
+    (autoMerge) => {
+      const s = nextStep(
+        input({ autoMerge, pullState: state('waiting', 'merging_paused') }),
+        ctx({ blockers: ['Merging is paused'] })
+      );
+      expect(s.headline).toBe(
+        'Ready, but merging is paused. Someone needs to resume merging before this can land.'
+      );
+      expect(s.listed).toEqual([]);
+    }
+  );
 
   it('leads a wait with its first blocker', () => {
     const s = nextStep(

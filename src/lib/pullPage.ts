@@ -223,7 +223,7 @@ export function nextStep(
         return holding.length === 1
           ? step(
               'warn',
-              'Ready, but merging is paused. It merges once someone resumes merging.',
+              'Ready, but merging is paused. Someone needs to resume merging before this can land.',
               null,
               []
             )
