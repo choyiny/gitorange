@@ -1,10 +1,9 @@
-import { Link, useOutletContext } from 'react-router-dom';
+import { useOutletContext } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
 import { PulseIcon } from '@primer/octicons-react';
 import { api, qk, type HealthReport, type RepoDetail } from '@/lib/uiApi';
 import { healthLede } from '@/lib/health';
 import { QueryError, StatsSkeleton } from '@/components/actions/states';
-import { BranchMapCard } from '@/components/health/BranchMapCard';
 import { Contributors } from '@/components/health/Contributors';
 import { DecisionSlot } from '@/components/health/DecisionCard';
 import { BuiltIn, Reviewers } from '@/components/health/Reviewers';
@@ -41,18 +40,6 @@ function Report({ data, repo }: { data: HealthReport; repo: RepoDetail }) {
           tests, the chart shows the share of runs that failed. A week with no
           test runs shows as a gap.
         </p>
-      </Section>
-
-      <Section
-        title="Branch map"
-        actions={
-          <Link className="small" to={`${base}/branches`}>
-            Open the full map
-          </Link>
-        }
-      >
-        {/* Integration: replace this placeholder with C6's <BranchMap compact /> once that task lands. */}
-        <BranchMapCard base={base} />
       </Section>
 
       <Contributors

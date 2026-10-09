@@ -284,14 +284,7 @@ export function PullBoard({ repo }: { repo: RepoDetail }) {
   return (
     <>
       {paused && (
-        <Banner
-          icon={<PauseIcon size={16} />}
-          action={
-            <Link to={`${base}/branches`} className="btn small">
-              Open Branches
-            </Link>
-          }
-        >
+        <Banner icon={<PauseIcon size={16} />}>
           Merging is paused
           {pause
             ? ` by ${pause.by.name || pause.by.login}, ${timeAgo(new Date(pause.at))}`

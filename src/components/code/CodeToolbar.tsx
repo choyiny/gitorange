@@ -70,27 +70,13 @@ export function CodeToolbar({
             )
           }
         />
-        {atRoot &&
-          (agentRepo ? (
-            <span className="branch-count small muted">
-              <GitBranchIcon />
-              <span>
-                <b>{count}</b> {count === 1 ? 'branch' : 'branches'}
-              </span>
-            </span>
-          ) : (
-            <Link className="btn small quiet" to={`${base}/branches`}>
-              <GitBranchIcon />
-              <span>
-                <b>{count}</b> {count === 1 ? 'branch' : 'branches'}
-              </span>
-            </Link>
-          ))}
-        {!agentRepo && (
-          <Link className="btn small" to={`${base}/branches`}>
+        {atRoot && (
+          <span className="branch-count small muted">
             <GitBranchIcon />
-            Open the branch map
-          </Link>
+            <span>
+              <b>{count}</b> {count === 1 ? 'branch' : 'branches'}
+            </span>
+          </span>
         )}
         <span className="grow" />
         <button

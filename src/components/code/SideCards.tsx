@@ -36,10 +36,8 @@ export function AboutCard({
         <li>
           <GitBranchIcon />
           <span>
-            <Link to={`${base}/branches`}>
-              {count} {count === 1 ? 'branch' : 'branches'}
-            </Link>
-            , default <span className="mono">{repo.defaultBranch}</span>
+            {count} {count === 1 ? 'branch' : 'branches'}, default{' '}
+            <span className="mono">{repo.defaultBranch}</span>
           </span>
         </li>
         <li>

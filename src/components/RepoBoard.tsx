@@ -196,14 +196,6 @@ export function CodeRow({ row }: { row: BoardRow }) {
         )}
         <span className="board-actions">
           <Link
-            className="btn small"
-            to={`/${repo.fullName}/branches`}
-            aria-label={`Branch map of ${repo.fullName}`}
-          >
-            <GitBranchIcon size={14} />
-            Branch map
-          </Link>
-          <Link
             className="btn small primary"
             to={`/${repo.fullName}`}
             aria-label={`Open ${repo.fullName}`}

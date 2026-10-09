@@ -100,29 +100,6 @@
   margin: 0;
 }
 
-/* ---------- Branch map ---------- */
-.hl-map {
-  display: grid;
-  grid-template-columns: auto minmax(0, 1fr) auto;
-  gap: 14px;
-  align-items: center;
-  padding: 14px 16px;
-}
-.hl-map-icon {
-  width: 40px;
-  height: 40px;
-  border-radius: 50%;
-  display: grid;
-  place-items: center;
-  background: var(--accent-tint);
-  color: var(--accent);
-}
-.hl-map-text {
-  display: grid;
-  gap: 2px;
-  min-width: 0;
-}
-
 /* ---------- Who made things better or worse ---------- */
 .list.hl-movers li {
   grid-template-columns: minmax(0, 0.9fr) auto minmax(0, 1.4fr);
@@ -251,12 +228,10 @@
   }
 }
 @media (max-width: 640px) {
-  .hl-ask,
-  .hl-map {
+  .hl-ask {
     grid-template-columns: auto minmax(0, 1fr);
   }
-  .hl-ask > .btn,
-  .hl-map > .btn {
+  .hl-ask > .btn {
     grid-column: 1 / -1;
     justify-self: start;
   }

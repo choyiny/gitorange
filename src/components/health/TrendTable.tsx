@@ -38,20 +38,22 @@ function AreaName({ area, base }: { area: HealthArea; base: string }) {
         <b>{area.label}</b>
       </Link>
     );
-  return (
-    <Link
-      className="hl-area"
-      to={kind === 'tests' ? `${base}/actions` : `${base}/branches`}
-    >
-      <span className="hl-area-mark" aria-hidden="true">
-        {kind === 'tests' ? (
+  if (kind === 'tests')
+    return (
+      <Link className="hl-area" to={`${base}/actions`}>
+        <span className="hl-area-mark" aria-hidden="true">
           <BeakerIcon size={16} />
-        ) : (
-          <GitMergeIcon size={16} />
-        )}
+        </span>
+        <b>{area.label}</b>
+      </Link>
+    );
+  return (
+    <span className="hl-area">
+      <span className="hl-area-mark" aria-hidden="true">
+        <GitMergeIcon size={16} />
       </span>
       <b>{area.label}</b>
-    </Link>
+    </span>
   );
 }
 
