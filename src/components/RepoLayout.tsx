@@ -12,7 +12,8 @@ import {
   type PageHeadInfo,
 } from '@/components/ui/PageHead';
 import { useForgetRepo, useShellRepo } from '@/components/shell/AppShell';
-import { CrewIcon, PageIcon } from '@/components/shell/icons';
+import { PageIcon } from '@/components/shell/icons';
+import { AgentAvatar } from '@/components/AgentAvatar';
 import { Spinner } from './Spinner';
 import { NOT_FOUND_HEAD, NotFound } from '@/pages/NotFound';
 
@@ -41,7 +42,7 @@ export function useRepo() {
  * The agent whose instructions live in `<handle>/<handle>`, if this is such a repository. Agent repositories
  * always have the owner's name, so other repositories never load the agent list.
  */
-function useRepoAgent(owner: string, repo: string) {
+export function useRepoAgent(owner: string, repo: string) {
   const isCandidate = owner.toLowerCase() === repo.toLowerCase();
   const agents = useQuery({
     queryKey: qk.agents,
@@ -134,7 +135,17 @@ export function RepoLayout() {
       <div className="rhead">
         <div className="rhead-row">
           <span className="rhead-name">
-            {isAgentRepo ? <CrewIcon /> : <RepoIcon />}
+            {agent ? (
+              <AgentAvatar
+                handle={agent.username}
+                // Sent since crew redesign B1; typed in uiApi by C0.
+                color={(agent as { color?: string | null }).color}
+                size={28}
+                label={`${agent.name}, a reviewer agent`}
+              />
+            ) : (
+              <RepoIcon />
+            )}
             <Link to={`/${owner}`}>{owner}</Link>
             <span className="sep">/</span>
             <Link to={base}>

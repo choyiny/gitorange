@@ -7,4 +7,6 @@
 @import './components.css';
 @import './pages/actions.css';
 @import './pages/insights.css';
+@import './pages/code.css';
+@import './pages/commits.css';
 @import './legacy.css';
