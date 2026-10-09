@@ -10,10 +10,7 @@ import { useCurrentUser } from '@/lib/auth';
 import type { ShellMenu } from './AppShell';
 import { CrewIcon } from './icons';
 
-/**
- * The "+" menu: New repository, New reviewer agent and Invite member (site admins), New access token. Reviewer
- * agents are created from Site admin → Agents until the New reviewer page exists (crew redesign C10).
- */
+/** The "+" menu: New repository, New reviewer and Invite member (site admins create those), New access token. */
 export function CreateMenu({
   open,
   setMenu,
@@ -46,10 +43,10 @@ export function CreateMenu({
             </span>
           </Link>
           {admin && (
-            <Link className="ws-item" to="/admin/agents" onClick={close}>
+            <Link className="ws-item" to="/agents/new" onClick={close}>
               <CrewIcon />
               <span>
-                <b>New reviewer agent</b>
+                <b>New reviewer</b>
               </span>
             </Link>
           )}

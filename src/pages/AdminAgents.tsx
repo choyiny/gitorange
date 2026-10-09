@@ -1,214 +1,154 @@
 import { useState } from 'react';
-import { Link, useLocation } from 'react-router-dom';
+import { Link } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { DependabotIcon } from '@primer/octicons-react';
+import { PlusIcon } from '@primer/octicons-react';
 import { api, qk } from '@/lib/uiApi';
 import { errorMessage } from '@/lib/api';
-import { timeAgo } from '@/lib/format';
-import { usePageHead } from '@/components/ui/PageHead';
-import { Avatar } from '@/components/Avatar';
-import { Spinner } from '@/components/Spinner';
-import { AdminNav } from '@/components/AdminNav';
+import { timeAgo, fullDate } from '@/lib/format';
+import { AgentAvatar } from '@/components/AgentAvatar';
+import { InlineConfirm } from '@/components/InlineConfirm';
+import { LoadError, Notice } from '@/components/Notice';
+import { AdminFrame, RowsSkeleton } from '@/components/SetFrame';
+import { CrewIcon } from '@/components/shell/icons';
+import { EmptyState } from '@/components/ui/EmptyState';
+import { PageHead } from '@/components/ui/PageHead';
+import { Section } from '@/components/ui/Section';
 
-/** Site admin → Agents: create reviewer agents, list them, delete them. */
+/**
+ * Site admin → Agents: every reviewer agent with its repository, and the one thing the directory doesn't do:
+ * delete. Creating moved to New reviewer (`/agents/new`), reading to the directory (`/agents`).
+ */
 export default function AdminAgents() {
-  // Also at /agents until the Agents directory exists (crew redesign C10).
-  const asAgents = useLocation().pathname === '/agents';
-  usePageHead(
-    asAgents
-      ? { icon: 'crew', crumbs: [{ label: 'Agents' }], title: 'Agents' }
-      : {
-          icon: 'shield',
-          crumbs: [{ label: 'Site admin', to: '/admin' }, { label: 'Agents' }],
-          title: 'Agents',
-        }
-  );
   const qc = useQueryClient();
   const agents = useQuery({ queryKey: qk.agents, queryFn: api.agents });
-  const [form, setForm] = useState<{ handle: string; name: string } | null>(
-    null
-  );
-  const [confirm, setConfirm] = useState<string | null>(null);
-  const [flash, setFlash] = useState<{
-    kind: 'success' | 'error';
-    text: string;
-  } | null>(null);
-  const create = useMutation({
-    mutationFn: () => api.createAgent(form!),
-    onSuccess: ({ agent }) => {
-      setFlash({
-        kind: 'success',
-        text: `Created @${agent.username}. Edit AGENT.md in ${agent.repository} to say what it reviews.`,
-      });
-      setForm(null);
-      qc.invalidateQueries({ queryKey: qk.agents });
-      qc.invalidateQueries({ queryKey: qk.repos });
-    },
-    onError: (e) => setFlash({ kind: 'error', text: errorMessage(e) }),
-  });
+  const [deleted, setDeleted] = useState<string | null>(null);
   const remove = useMutation({
     mutationFn: (handle: string) => api.deleteAgent(handle),
     onSuccess: (_r, handle) => {
-      setFlash({
-        kind: 'success',
-        text: `Deleted @${handle}. It's removed from every repository; its past reviews keep its name, and its repository stays until you delete it.`,
-      });
-      setConfirm(null);
+      setDeleted(handle);
       qc.invalidateQueries({ queryKey: qk.agents });
       qc.invalidateQueries({ queryKey: qk.namespace(handle) });
     },
-    onError: (e) => setFlash({ kind: 'error', text: errorMessage(e) }),
   });
+  const list = agents.data ?? [];
 
   return (
     <>
-      <div className="container-lg px-3 py-4">
-        <AdminNav />
-        <div className="Subhead">
-          <h2
-            className="Subhead-heading d-flex flex-items-center"
-            style={{ gap: 8 }}
-          >
-            <DependabotIcon size={24} /> Agents
-          </h2>
-          <div className="Subhead-description">
-            Reviewer agents are accounts that review pull requests in the
-            repositories that invite them. Each one is defined by AGENT.md in
-            its own repository, which anyone who can push there can edit.
-          </div>
-          <div className="Subhead-actions">
-            <button
-              className="btn btn-primary btn-sm"
-              onClick={() => setForm(form ? null : { handle: '', name: '' })}
-            >
-              New agent
-            </button>
-          </div>
-        </div>
-        {flash && (
-          <div className={`flash flash-${flash.kind} mb-3`}>{flash.text}</div>
-        )}
-        {form && (
-          <form
-            className="Box p-3 mb-4 d-flex flex-wrap flex-items-end"
-            style={{ gap: 12 }}
-            onSubmit={(e) => {
-              e.preventDefault();
-              setFlash(null);
-              create.mutate();
-            }}
-          >
-            <div className="flex-1">
-              <label
-                htmlFor="agent-handle"
-                className="d-block f6 text-bold mb-1"
-              >
-                Handle
-              </label>
-              <input
-                id="agent-handle"
-                className="form-control width-full input-monospace"
-                required
-                placeholder="securityagent"
-                value={form.handle}
-                onChange={(e) => setForm({ ...form, handle: e.target.value })}
+      <PageHead
+        icon="shield"
+        crumbs={[{ label: 'Site admin', to: '/admin' }, { label: 'Agents' }]}
+        title="Agents"
+        lede="Reviewer agents are accounts that review pull requests in the repositories that invite them. Each one is defined by AGENT.md in its own repository, which anyone who can push there can edit."
+        actions={
+          <>
+            <Link className="btn" to="/agents">
+              Agents directory
+            </Link>
+            <Link className="btn primary" to="/agents/new">
+              <PlusIcon />
+              New reviewer
+            </Link>
+          </>
+        }
+      />
+      <AdminFrame>
+        <Section
+          title="Reviewer agents"
+          actions={
+            agents.data && (
+              <span className="muted small">
+                {list.length === 1 ? '1 agent' : `${list.length} agents`}
+              </span>
+            )
+          }
+        >
+          {deleted && (
+            <Notice tone="ok">
+              Deleted @{deleted}. It’s removed from every repository; its past
+              reviews keep its name, and its repository stays until you delete
+              it.
+            </Notice>
+          )}
+          <div className="panel">
+            {agents.isError ? (
+              <LoadError
+                what="the agents"
+                error={agents.error}
+                onRetry={() => void agents.refetch()}
               />
-            </div>
-            <div className="flex-1">
-              <label htmlFor="agent-name" className="d-block f6 text-bold mb-1">
-                Display name
-              </label>
-              <input
-                id="agent-name"
-                className="form-control width-full"
-                required
-                placeholder="Security Agent"
-                value={form.name}
-                onChange={(e) => setForm({ ...form, name: e.target.value })}
-              />
-            </div>
-            <button className="btn btn-primary" disabled={create.isPending}>
-              {create.isPending ? 'Creating…' : 'Create agent'}
-            </button>
-            <p className="f6 color-fg-muted width-full mb-0">
-              Creates @{form.handle || 'handle'} and its repository{' '}
-              <code>
-                {form.handle || 'handle'}/{form.handle || 'handle'}
-              </code>{' '}
-              with a starter AGENT.md, an avatar and a knowledge folder. You
-              become a collaborator on it.
-            </p>
-          </form>
-        )}
-        {agents.isPending ? (
-          <Spinner />
-        ) : agents.data!.length === 0 ? (
-          <div className="blankslate">
-            <h3 className="blankslate-heading">No agents yet.</h3>
-          </div>
-        ) : (
-          <div className="Box">
-            {agents.data!.map((a) => (
-              <div
-                key={a.id}
-                className="Box-row d-flex flex-items-center"
-                style={{ gap: 12 }}
-              >
-                <Avatar user={a} size={32} />
-                <div className="flex-1" style={{ minWidth: 0 }}>
-                  <Link
-                    to={`/${a.username}`}
-                    className="text-bold color-fg-default"
-                  >
-                    {a.username}
+            ) : agents.isPending ? (
+              <RowsSkeleton rows={3} />
+            ) : list.length === 0 ? (
+              <EmptyState
+                picture={<CrewIcon size={20} />}
+                title="No agents yet."
+                body="Create the recommended crew, or a reviewer of your own."
+                action={
+                  <Link className="btn small primary" to="/agents/new">
+                    New reviewer
                   </Link>
-                  <span className="color-fg-muted ml-2">{a.name}</span>
-                  <div className="f6 color-fg-muted">
-                    {a.repository ? (
-                      <Link to={`/${a.repository}`}>{a.repository}</Link>
-                    ) : (
-                      'Repository deleted'
-                    )}{' '}
-                    · created {timeAgo(a.createdAt)}
-                  </div>
-                  {a.configError && (
-                    <div className="f6 color-fg-attention">{a.configError}</div>
-                  )}
-                </div>
-                {confirm === a.username ? (
-                  <>
-                    <button
-                      className="btn btn-sm btn-danger"
-                      aria-label={`Delete @${a.username}`}
-                      disabled={remove.isPending}
-                      onClick={() => {
-                        setFlash(null);
-                        remove.mutate(a.username);
-                      }}
-                    >
-                      Delete @{a.username}
-                    </button>
-                    <button
-                      className="btn btn-sm"
-                      onClick={() => setConfirm(null)}
-                    >
-                      Cancel
-                    </button>
-                  </>
-                ) : (
-                  <button
-                    className="btn btn-sm btn-danger"
-                    aria-label={`Delete @${a.username}`}
-                    onClick={() => setConfirm(a.username)}
-                  >
-                    Delete
-                  </button>
-                )}
-              </div>
-            ))}
+                }
+              />
+            ) : (
+              <ul className="rowlist">
+                {list.map((a) => (
+                  <li key={a.id}>
+                    <AgentAvatar
+                      handle={a.username}
+                      color={a.color}
+                      size={40}
+                    />
+                    <div className="grow">
+                      <span className="wrap">
+                        <Link to={`/${a.username}`}>
+                          <b>{a.username}</b>
+                        </Link>{' '}
+                        <span className="muted">{a.name}</span>
+                      </span>
+                      <span className="small muted wrap">
+                        {a.repository ? (
+                          <Link to={`/${a.repository}`}>{a.repository}</Link>
+                        ) : (
+                          'Repository deleted'
+                        )}{' '}
+                        ·{' '}
+                        <span title={fullDate(a.createdAt)}>
+                          created {timeAgo(a.createdAt)}
+                        </span>
+                      </span>
+                      {a.configError && (
+                        <span className="small attention wrap">
+                          {a.configError}
+                        </span>
+                      )}
+                    </div>
+                    <div className="ctl">
+                      <InlineConfirm
+                        label="Delete"
+                        confirmLabel={`Delete @${a.username}`}
+                        pendingLabel="Deleting…"
+                        accessibleName={`Delete @${a.username}`}
+                        pending={
+                          remove.isPending && remove.variables === a.username
+                        }
+                        error={
+                          remove.isError && remove.variables === a.username
+                            ? errorMessage(remove.error)
+                            : null
+                        }
+                        onConfirm={() => {
+                          setDeleted(null);
+                          remove.mutate(a.username);
+                        }}
+                      />
+                    </div>
+                  </li>
+                ))}
+              </ul>
+            )}
           </div>
-        )}
-      </div>
+        </Section>
+      </AdminFrame>
     </>
   );
 }

@@ -46,6 +46,9 @@ import Admin from './pages/Admin';
 import AdminUsage from './pages/AdminUsage';
 import AdminAudit from './pages/AdminAudit';
 import AdminAgents from './pages/AdminAgents';
+import Agents from './pages/Agents';
+import AgentNew from './pages/AgentNew';
+import AgentBuiltin from './pages/AgentBuiltin';
 import { NotFound } from './pages/NotFound';
 
 const queryClient = new QueryClient({
@@ -111,15 +114,10 @@ const App = () => (
               <Route path="/" element={<Dashboard />} />
               {/* The Repositories board (crew redesign C1); the dashboard lists them until then. */}
               <Route path="/repos" element={<Dashboard />} />
-              {/* The Agents directory (crew redesign C10); Site admin → Agents until then. */}
-              <Route
-                path="/agents"
-                element={
-                  <AdminOnly>
-                    <AdminAgents />
-                  </AdminOnly>
-                }
-              />
+              {/* Every member reads the agents; creating them is for site admins (the page says so). */}
+              <Route path="/agents" element={<Agents />} />
+              <Route path="/agents/new" element={<AgentNew />} />
+              <Route path="/agents/:id" element={<AgentBuiltin />} />
               <Route path="/new" element={<NewRepo />} />
               <Route path="/approvals" element={<Approvals />} />
               <Route path="/approvals/:flagId" element={<Finding />} />

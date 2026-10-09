@@ -59,7 +59,12 @@ const ADMIN: NavItem<AdminSection>[] = [
     to: '/admin',
     hash: '#settings',
   },
-  { id: 'agents', label: 'Agents', icon: <CrewIcon />, to: '/agents' },
+  {
+    id: 'agents',
+    label: 'Agents',
+    icon: <CrewIcon />,
+    to: '/admin/agents',
+  },
   {
     id: 'usage',
     label: 'Usage and cost',
