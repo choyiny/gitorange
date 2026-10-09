@@ -3,15 +3,16 @@ import { Link, useNavigate } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
 import { AlertIcon, GitBranchIcon } from '@primer/octicons-react';
 import { api, qk, type RepoDetail } from '@/lib/uiApi';
-import { errorMessage } from '@/lib/api';
 import {
   decodeEntities,
   pullGraph,
   type PullGraph as Graph,
 } from '@/lib/pullGraph';
 import { renderMermaid } from '@/lib/mermaid';
-import { Spinner } from './Spinner';
+import { QueryError } from '@/components/actions/states';
+import { EmptyState } from '@/components/ui/EmptyState';
 
+// The red is the one the diagram itself draws "must change for" with (src/lib/pullGraph.ts).
 const LEGEND: { label: string; dash?: string; color?: string }[] = [
   { label: 'stacked on' },
   { label: 'waits on', dash: '6 4' },
@@ -22,23 +23,16 @@ const LEGEND: { label: string; dash?: string; color?: string }[] = [
 
 function Legend() {
   return (
-    <div
-      className="d-flex flex-wrap flex-items-center f6 color-fg-muted px-3 pt-2"
-      style={{ gap: 16 }}
-    >
+    <div className="pg-legend small muted" aria-label="How to read the arrows">
       {LEGEND.map((l) => (
-        <span
-          key={l.label}
-          className="d-inline-flex flex-items-center"
-          style={{ gap: 4 }}
-        >
+        <span key={l.label} className="pg-key">
           <svg width="28" height="8" aria-hidden>
             <line
               x1="0"
               y1="4"
               x2="28"
               y2="4"
-              stroke={l.color ?? 'currentColor'}
+              style={{ stroke: l.color ?? 'currentColor' }}
               strokeWidth="2"
               strokeDasharray={l.dash}
             />
@@ -121,15 +115,15 @@ function TargetGraph({ graph, base }: { graph: Graph; base: string }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps -- redraw when the text changes, not on every refetch
   }, [graph.source, tipsKey, base, navigate]);
   return (
-    <div className="mb-3">
-      <div
-        className="Box-row d-flex flex-items-center color-bg-subtle"
-        style={{ gap: 6 }}
-      >
-        <GitBranchIcon />{' '}
-        <strong className="wb-break-word">{graph.target}</strong>
+    <section
+      className="panel pg-target"
+      aria-label={`Landing on ${graph.target}`}
+    >
+      <header className="pg-head">
+        <GitBranchIcon size={16} />
+        <strong className="pg-branch">{graph.target}</strong>
         {graph.landed.length > 0 && (
-          <span className="f6 color-fg-muted ml-2">
+          <span className="small muted">
             recently landed:{' '}
             {graph.landed.map((l, i) => (
               <span key={l.number}>
@@ -141,22 +135,25 @@ function TargetGraph({ graph, base }: { graph: Graph; base: string }) {
             ))}
           </span>
         )}
-      </div>
+      </header>
       {graph.cycles.length > 0 && (
-        <div className="flash flash-warn mx-3 mt-3">
-          <AlertIcon /> {graph.cycles.map((c) => `#${c}`).join(', ')} depend on
-          each other in a circle (outlined in red), so none of them can land
-          until one of those dependencies is dismissed.
+        <div className="callout pg-cycle" role="status">
+          <AlertIcon size={16} />
+          <span>
+            {graph.cycles.map((c) => `#${c}`).join(', ')} depend on each other
+            in a circle (outlined in red), so none of them can land until one of
+            those dependencies is dismissed.
+          </span>
         </div>
       )}
       {status === 'failed' && (
-        <div className="f6 color-fg-muted p-3">
-          This graph couldn't be drawn.
-        </div>
+        <p className="pg-note small muted">This graph couldn't be drawn.</p>
       )}
-      {status === 'drawing' && <Spinner />}
+      {status === 'drawing' && (
+        <div className="sk sk-block" role="status" aria-label="Drawing" />
+      )}
       <div ref={ref} className="pull-graph" hidden={status !== 'drawn'} />
-    </div>
+    </section>
   );
 }
 
@@ -169,29 +166,39 @@ export function PullGraph({ repo }: { repo: RepoDetail }) {
   });
   const graphs = useMemo(() => (q.data ? pullGraph(q.data) : null), [q.data]);
   const base = `/${repo.fullName}`;
-  if (q.isError)
+  if (q.isError && !graphs)
     return (
-      <div className="flash flash-error m-3">
-        Couldn't load the graph: {errorMessage(q.error)}
+      <div className="panel">
+        <QueryError
+          error={q.error}
+          onRetry={() => void q.refetch()}
+          title="The graph did not load"
+        />
       </div>
     );
-  if (!graphs) return <Spinner />;
+  if (!graphs)
+    return (
+      <div className="pg" role="status" aria-busy="true" aria-label="Loading">
+        <div className="sk sk-line w50" />
+        <div className="sk sk-block" />
+      </div>
+    );
   if (!graphs.length)
     return (
-      <div className="blankslate">
-        <GitBranchIcon size={24} className="color-fg-muted mb-2" />
-        <h3 className="blankslate-heading">Nothing is slated to land.</h3>
-        <p>
-          Open pull requests show up here, flowing into their target branch.
-        </p>
+      <div className="panel">
+        <EmptyState
+          picture={<GitBranchIcon size={24} />}
+          title="Nothing is slated to land."
+          body="Open pull requests show up here, flowing into their target branch."
+        />
       </div>
     );
   return (
-    <>
+    <div className="pg">
       <Legend />
       {graphs.map((g) => (
         <TargetGraph key={g.target} graph={g} base={base} />
       ))}
-    </>
+    </div>
   );
 }
