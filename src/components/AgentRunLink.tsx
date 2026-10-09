@@ -12,11 +12,14 @@ export function AgentRunLink({
   number,
   kind,
   className = 'f6',
+  label = 'View run',
 }: {
   repo: RepoDetail;
   number: number;
   kind: AgentRunKind;
   className?: string;
+  /** The link's words, where several runs are linked side by side. */
+  label?: string;
 }) {
   const o = repo.owner.username;
   const q = useQuery({
@@ -33,7 +36,7 @@ export function AgentRunLink({
       style={{ gap: 4 }}
       title={`${latest.title}: steps, models, tokens, and decisions`}
     >
-      <HubotIcon size={14} /> View run
+      <HubotIcon size={14} /> {label}
     </Link>
   );
 }

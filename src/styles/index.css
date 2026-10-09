@@ -13,4 +13,5 @@
 @import './pages/code.css';
 @import './pages/commits.css';
 @import './pages/approvals.css';
+@import './pages/pull.css';
 @import './legacy.css';

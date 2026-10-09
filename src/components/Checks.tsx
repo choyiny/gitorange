@@ -1,11 +1,25 @@
 import { Link } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
-import { api, qk, type CommitRuns, type RepoDetail } from '@/lib/uiApi';
+import { CheckCircleIcon } from '@primer/octicons-react';
+import {
+  api,
+  qk,
+  type CommitRuns,
+  type RepoDetail,
+  type WorkflowRun,
+} from '@/lib/uiApi';
 import { duration } from '@/lib/format';
 import { RunStatusIcon } from './RunStatusIcon';
 import { Dropdown } from './Dropdown';
+import { RunChip } from './actions/RunChip';
+import { QueryError, RowsSkeleton } from './actions/states';
+import { EmptyState } from './ui/EmptyState';
 
-function useCommitRuns(repo: RepoDetail, sha: string | null | undefined) {
+/** A commit's workflow runs (its checks); polls while any is pending. */
+export function useCommitRuns(
+  repo: RepoDetail,
+  sha: string | null | undefined
+) {
   const o = repo.owner.username;
   return useQuery({
     queryKey: qk.commitRuns(o, repo.name, sha ?? ''),
@@ -15,7 +29,8 @@ function useCommitRuns(repo: RepoDetail, sha: string | null | undefined) {
   });
 }
 
-const STATE_ICON: Record<
+/** The status glyph for a commit's combined check state. */
+export const STATE_ICON: Record<
   NonNullable<CommitRuns['state']>,
   Parameters<typeof RunStatusIcon>[0]
 > = {
@@ -85,28 +100,30 @@ export function ChecksBadge({
         </button>
       )}
     >
-      {() => <ChecksSummary repo={repo} data={checks} compact />}
+      {() => <ChecksSummary repo={repo} data={checks} />}
     </Dropdown>
   );
 }
 
-const STATE_LABEL: Record<NonNullable<CommitRuns['state']>, string> = {
+export const STATE_LABEL: Record<NonNullable<CommitRuns['state']>, string> = {
   success: 'All checks have passed',
   failure: 'Some checks were not successful',
   pending: "Some checks haven't completed yet",
 };
 
-/** The summary of a commit's checks: the overall result, then one row per workflow run. */
-function ChecksSummary({
-  repo,
-  data,
-  compact = false,
-}: {
-  repo: RepoDetail;
-  data: CommitRuns;
-  compact?: boolean;
-}) {
-  const base = `/${repo.fullName}`;
+/** "(pull_request) · Successful in 1m 2s": what started a run, and how it went. */
+function runLine(r: WorkflowRun): string {
+  return `(${r.event === 'pull_request' ? 'pull_request' : 'push'})${
+    r.status === 'completed' && r.startedAt
+      ? ` · ${r.conclusion === 'success' ? 'Successful' : r.conclusion === 'failure' ? 'Failing' : r.conclusion === 'skipped' ? 'Skipped' : 'Cancelled'} in ${duration(r.startedAt, r.completedAt)}`
+      : r.status === 'in_progress'
+        ? ' · In progress'
+        : ' · Queued'
+  }`;
+}
+
+/** "1 failing, 2 successful checks". */
+export function checksDetail(data: CommitRuns): string {
   const failed = data.runs.filter(
     (r) => r.conclusion === 'failure' || r.conclusion === 'cancelled'
   ).length;
@@ -119,37 +136,34 @@ function ChecksSummary({
   ]
     .filter(Boolean)
     .join(', ');
+  return `${detail} check${data.runs.length === 1 ? '' : 's'}`;
+}
+
+/** The summary of a commit's checks (the badge's popover): the overall result, then one row per workflow run. */
+function ChecksSummary({ repo, data }: { repo: RepoDetail; data: CommitRuns }) {
+  const base = `/${repo.fullName}`;
   return (
     <>
       <div
-        className={`${compact ? 'px-3 py-2 border-bottom' : 'Box-row'} d-flex flex-items-center`}
+        className="px-3 py-2 border-bottom d-flex flex-items-center"
         style={{ gap: 12 }}
       >
-        <RunStatusIcon {...STATE_ICON[data.state!]} size={compact ? 16 : 20} />
+        <RunStatusIcon {...STATE_ICON[data.state!]} size={16} />
         <div>
           <div className="text-bold">{STATE_LABEL[data.state!]}</div>
-          <div className="f6 color-fg-muted">
-            {detail} check{data.runs.length === 1 ? '' : 's'}
-          </div>
+          <div className="f6 color-fg-muted">{checksDetail(data)}</div>
         </div>
       </div>
       {data.runs.map((r) => (
         <div
           key={r.id}
-          className={`${compact ? 'px-3 py-2 border-bottom' : 'Box-row py-2'} d-flex flex-items-center f6`}
+          className="px-3 py-2 border-bottom d-flex flex-items-center f6"
           style={{ gap: 8 }}
         >
           <RunStatusIcon status={r.status} conclusion={r.conclusion} />
           <span className="flex-1" style={{ minWidth: 0 }}>
             <span className="text-bold">{r.name}</span>{' '}
-            <span className="color-fg-muted">
-              ({r.event === 'pull_request' ? 'pull_request' : 'push'})
-              {r.status === 'completed' && r.startedAt
-                ? ` · ${r.conclusion === 'success' ? 'Successful' : r.conclusion === 'failure' ? 'Failing' : r.conclusion === 'skipped' ? 'Skipped' : 'Cancelled'} in ${duration(r.startedAt, r.completedAt)}`
-                : r.status === 'in_progress'
-                  ? ' · In progress'
-                  : ' · Queued'}
-            </span>
+            <span className="color-fg-muted">{runLine(r)}</span>
           </span>
           <Link
             to={`${base}/actions/runs/${r.runNumber}`}
@@ -163,7 +177,10 @@ function ChecksSummary({
   );
 }
 
-/** The checks box on a pull request: one row per workflow run for its head commit. */
+/**
+ * A pull request's checks: the head commit's workflow runs, the overall result first, then one row per run with
+ * its "Details" link. Says so when nothing ran, and offers a retry when the list didn't load.
+ */
 export function ChecksBox({
   repo,
   sha,
@@ -173,10 +190,60 @@ export function ChecksBox({
 }) {
   const q = useCommitRuns(repo, sha);
   const data = q.data;
-  if (!data?.state) return null;
+  const base = `/${repo.fullName}`;
+  if (!sha)
+    return (
+      <div className="panel">
+        <EmptyState
+          picture={<CheckCircleIcon size={20} />}
+          title="No commit to check"
+          body="The branch is gone, so there are no checks to show."
+        />
+      </div>
+    );
+  if (q.isError && !data)
+    return (
+      <div className="panel">
+        <QueryError
+          error={q.error}
+          title="The checks did not load"
+          onRetry={() => void q.refetch()}
+        />
+      </div>
+    );
+  if (!data) return <RowsSkeleton rows={2} />;
+  if (!data.state || !data.runs.length)
+    return (
+      <div className="panel">
+        <EmptyState
+          picture={<CheckCircleIcon size={20} />}
+          title="No checks ran on this commit"
+          body="Workflows in .github/workflows run on every push and show up here."
+        />
+      </div>
+    );
   return (
-    <div className="Box mb-3">
-      <ChecksSummary repo={repo} data={data} />
-    </div>
+    <section className="panel checks-box" aria-label="Checks">
+      <div className="checks-head">
+        <RunStatusIcon {...STATE_ICON[data.state]} size={20} />
+        <div>
+          <p className="checks-title">{STATE_LABEL[data.state]}</p>
+          <p className="muted small">{checksDetail(data)}</p>
+        </div>
+      </div>
+      <ul className="checks-list">
+        {data.runs.map((r) => (
+          <li key={r.id}>
+            <RunChip status={r.status} conclusion={r.conclusion} />
+            <span className="checks-name">
+              <b>{r.name}</b> <span className="muted small">{runLine(r)}</span>
+            </span>
+            <Link to={`${base}/actions/runs/${r.runNumber}`} className="small">
+              Details
+            </Link>
+          </li>
+        ))}
+      </ul>
+    </section>
   );
 }

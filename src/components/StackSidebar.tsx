@@ -1,6 +1,12 @@
 import { Fragment, type ReactNode } from 'react';
 import { Link } from 'react-router-dom';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
+import {
+  AlertIcon,
+  CheckIcon,
+  GitBranchIcon,
+  SyncIcon,
+} from '@primer/octicons-react';
 import { errorMessage } from '@/lib/api';
 import { api, type RepoDetail, type StackNode } from '@/lib/uiApi';
 import { AgentRunLink } from './AgentRunLink';
@@ -15,6 +21,11 @@ function joined(items: ReactNode[]) {
   ));
 }
 
+/**
+ * How this pull request stacks with other open ones (Clef works it out): what it builds on or lands after, what
+ * builds on it, what it waits on or must account for, and pairs it couldn't check. People with write access can
+ * unstack it, dismiss a dependency and retry the check.
+ */
 export function StackSidebar({
   repo,
   number,
@@ -44,7 +55,8 @@ export function StackSidebar({
   const control = (label: string, onClick: () => void, title: string) =>
     repo.permissions.write ? (
       <button
-        className="btn-link ml-1"
+        type="button"
+        className="btn quiet small"
         title={title}
         disabled={unstack.isPending || dismiss.isPending}
         onClick={onClick}
@@ -66,73 +78,90 @@ export function StackSidebar({
     !stack.unchecked.length &&
     !stack.pending.length;
   return (
-    <div className="border-bottom pb-3 mb-3">
-      <div className="d-flex flex-items-center flex-justify-between mb-2">
-        <span className="text-bold color-fg-muted">Stack</span>
-        <AgentRunLink repo={repo} number={number} kind="stack_discovery" />
+    <div className="pr-stack">
+      <div className="pr-stack-head">
+        <GitBranchIcon />
+        <b>Stack</b>
+        <span className="grow" />
+        <AgentRunLink
+          repo={repo}
+          number={number}
+          kind="stack_discovery"
+          className="small"
+        />
       </div>
       {empty && stack.checking && (
-        <div className="color-fg-muted">
-          Checking against other open pull requests…
-        </div>
+        <p className="muted">
+          <span className="spinner" aria-hidden="true" /> Checking against other
+          open pull requests…
+        </p>
       )}
       {empty && !stack.checking && (
-        <div className="color-fg-muted">
-          Independent of other open pull requests.
-        </div>
+        <p className="muted">Independent of other open pull requests.</p>
       )}
       {stack.pending.length > 0 && (
-        <p className="color-fg-muted mb-2">
+        <p className="muted">
           Checking against {joined(stack.pending.map(link))}…
         </p>
       )}
       {stack.parent && (
-        <p className="mb-2">
-          {stack.parent.kind === 'ordered_after' ? (
-            <>
-              Lands after {link(stack.parent.number)} so{' '}
-              {stack.parent.forPr
-                ? link(stack.parent.forPr)
-                : 'another pull request'}{' '}
-              can build on both: {stack.parent.reason}
-            </>
-          ) : (
-            <>
-              Builds on {link(stack.parent.number)}: {stack.parent.reason}
-            </>
-          )}
+        <div className="pr-stack-line">
+          <p>
+            {stack.parent.kind === 'ordered_after' ? (
+              <>
+                Lands after {link(stack.parent.number)} so{' '}
+                {stack.parent.forPr
+                  ? link(stack.parent.forPr)
+                  : 'another pull request'}{' '}
+                can build on both: {stack.parent.reason}
+              </>
+            ) : (
+              <>
+                Builds on {link(stack.parent.number)}: {stack.parent.reason}
+              </>
+            )}
+          </p>
           {control(
             'Unstack',
             () => unstack.mutate(),
             'Retarget to the land target and stop building on it'
           )}
-        </p>
+        </div>
       )}
       {stack.children.length > 0 && (
-        <p className="mb-2">Built on by {joined(stack.children.map(link))}</p>
+        <p>Built on by {joined(stack.children.map(link))}</p>
       )}
       {stack.waitsOn.map((d) => (
-        <p key={`w${d.number}`} className="mb-2">
-          Waits on {link(d.number)}: {d.reason}
+        <div key={`w${d.number}`} className="pr-stack-line">
+          <p>
+            Waits on {link(d.number)}: {d.reason}
+          </p>
           {control(
             'Dismiss',
             () => dismiss.mutate(d.number),
             'Stop waiting on it'
           )}
-        </p>
+        </div>
       ))}
       {stack.mustAccountFor.map((d) => (
         <div
           key={`m${d.number}`}
-          className={`${d.accounted ? 'border rounded-2' : 'flash flash-warn'} p-2 mb-2`}
+          className={`pr-stack-must${d.accounted ? ' done' : ''}`}
         >
-          {d.accounted && (
-            <span className="Label Label--success mr-1">accounted for</span>
-          )}
-          Must change for {link(d.number)}
-          {d.landed ? ' (landed)' : ''}: {d.reason}
+          <p>
+            {d.accounted ? (
+              <span className="chip good">
+                <CheckIcon size={12} />
+                accounted for
+              </span>
+            ) : (
+              <AlertIcon className="pr-warn" />
+            )}{' '}
+            Must change for {link(d.number)}
+            {d.landed ? ' (landed)' : ''}: {d.reason}
+          </p>
           {d.instructions && !d.accounted && (
-            <div className="mt-1">{d.instructions}</div>
+            <p className="pr-stack-how">{d.instructions}</p>
           )}
           {!d.accounted &&
             control(
@@ -143,33 +172,37 @@ export function StackSidebar({
         </div>
       ))}
       {(unstack.isError || dismiss.isError) && (
-        <p className="color-fg-danger f6 mb-2">
+        <p className="ap-error" role="alert">
           {errorMessage(unstack.error ?? dismiss.error)}
         </p>
       )}
       {stack.cycleWith.length > 0 && (
-        <p className="color-fg-danger mb-2">
-          Depends in a circle on {joined(stack.cycleWith.map(link))}; a person
-          decides the order.
+        <p className="pr-bad">
+          <AlertIcon /> Depends in a circle on{' '}
+          {joined(stack.cycleWith.map(link))}; a person decides the order.
         </p>
       )}
       {stack.unchecked.length > 0 && (
-        <p className="mb-2">
-          Couldn't check against {joined(stack.unchecked.map(link))}.{' '}
+        <div className="pr-stack-line">
+          <p>
+            Couldn&apos;t check against {joined(stack.unchecked.map(link))}.
+          </p>
           {repo.permissions.write && (
             <button
-              className="btn-link"
+              type="button"
+              className="btn quiet small"
               disabled={retry.isPending}
               onClick={() => retry.mutate()}
             >
+              <SyncIcon size={14} />
               Retry
             </button>
           )}
-          {retry.isError && (
-            <span className="color-fg-danger f6 d-block">
-              {errorMessage(retry.error)}
-            </span>
-          )}
+        </div>
+      )}
+      {retry.isError && (
+        <p className="ap-error" role="alert">
+          {errorMessage(retry.error)}
         </p>
       )}
     </div>
