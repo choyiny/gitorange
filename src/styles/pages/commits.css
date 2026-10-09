@@ -214,19 +214,6 @@
   color: var(--bad);
 }
 
-/* The diffs sit in the same panels as everything else. */
-.commit-view .Box {
-  background: var(--surface);
-  border-color: var(--line);
-  border-radius: var(--r);
-}
-.commit-view .file-header {
-  background: var(--surface-2);
-  border-bottom-color: var(--line);
-  border-radius: var(--r) var(--r) 0 0;
-  color: var(--ink);
-}
-
 @media (max-width: 640px) {
   .commitlist > li {
     flex-wrap: wrap;

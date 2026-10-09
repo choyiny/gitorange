@@ -33,6 +33,7 @@ import CommitView from './pages/CommitView';
 import Pulls from './pages/Pulls';
 import PullNew from './pages/PullNew';
 import PullView from './pages/PullView';
+import Session from './pages/Session';
 import RepoSettings from './pages/RepoSettings';
 import RepoActions from './pages/RepoActions';
 import RepoInsights from './pages/RepoInsights';
@@ -169,6 +170,7 @@ const App = () => (
                 <Route path="compare/*" element={<PullNew />} />
                 <Route path="pull/:number" element={<PullView />} />
                 <Route path="pull/:number/:tab" element={<PullView />} />
+                <Route path="session/:id" element={<Session />} />
                 <Route path="actions" element={<RepoActions />} />
                 <Route path="actions/runs/:number" element={<RunView />} />
                 <Route path="actions/agent/:id" element={<AgentRunView />} />

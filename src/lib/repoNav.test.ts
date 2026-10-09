@@ -24,6 +24,7 @@ describe('repoTabOf', () => {
       ['pull', '3', 'files'],
       ['compare'],
       ['compare', 'main...feat'],
+      ['session', 's-a3e258a5a3'],
     ])
       expect(repoTabOf(rest, false)).toBe('pulls');
   });
@@ -120,6 +121,15 @@ describe('repoBand (the default trail for a repository page)', () => {
     expect(repoBand(['compare', 'a...b'], base, false).title).toBe(
       'New pull request'
     );
+    expect(repoBand(['session', 's-a3e258a5a3'], base, false)).toEqual({
+      tab: 'pulls',
+      icon: 'pull',
+      crumbs: [
+        { label: 'Pull requests', to: '/o/r/pulls' },
+        { label: 'Session' },
+      ],
+      title: 'Session',
+    });
     expect(repoBand(['commit', 'abcdef1234567'], base, false)).toEqual({
       tab: 'code',
       icon: 'commit',

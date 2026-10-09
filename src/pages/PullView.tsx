@@ -1,28 +1,22 @@
-import { FileList } from '@/components/FileList';
-import { Fragment, useState } from 'react';
-import { Link, NavLink, useOutletContext, useParams } from 'react-router-dom';
+import { Link, useOutletContext, useParams } from 'react-router-dom';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import {
-  CheckIcon,
+  ChecklistIcon,
   CommentDiscussionIcon,
   FileDiffIcon,
   GitCommitIcon,
-  GitMergeIcon,
-  GitPullRequestClosedIcon,
-  AlertIcon,
-  GitBranchIcon,
-  SparkleFillIcon,
+  type Icon,
 } from '@primer/octicons-react';
 import {
   api,
   qk,
-  type Comment,
+  type FileDiff,
   type PullDetail,
+  type QueueTarget,
   type RepoDetail,
 } from '@/lib/uiApi';
 import { useCurrentUser } from '@/lib/auth';
-import { ApiError, errorMessage } from '@/lib/api';
-import { blocking, reasonText } from '@/lib/pullState';
+import { ApiError } from '@/lib/api';
 import {
   anchoredReviewer,
   earlierEntries,
@@ -30,323 +24,113 @@ import {
   timelineSlots,
 } from '@/lib/reviewTimeline';
 import {
-  canRetryRebase,
-  rebasedFirst,
-  rebaseHeadline,
-} from '@/lib/rebaseStatus';
-import { fullDate, timeAgo } from '@/lib/format';
-import { Avatar } from '@/components/Avatar';
+  pullTab,
+  queueSpot,
+  type PullTab,
+  type QueueSpot,
+} from '@/lib/pullPage';
 import { CommitList } from '@/components/CommitList';
 import { DiffTotals, DiffView } from '@/components/DiffView';
-import { MarkdownEditor } from '@/components/CommentForm';
-import { Markdown } from '@/components/Markdown';
-import { ChecksBox } from '@/components/Checks';
-import { AutoMergeStatus, useAction } from '@/components/AutoMergeReview';
+import { ChecksBox, useCommitRuns } from '@/components/Checks';
+import { LoadError } from '@/components/code/LoadError';
+import { useEnter } from '@/components/code/useEnter';
+import { QueryError, RowsSkeleton } from '@/components/actions/states';
+import { EmptyState } from '@/components/ui/EmptyState';
+import { Section } from '@/components/ui/Section';
+import { Skeleton } from '@/components/ui/Skeleton';
+import { usePageHead } from '@/components/ui/PageHead';
+import { PullHeader } from '@/components/pull/PullHeader';
 import {
-  AgentReview,
-  EarlierReview,
-  PersonApprovals,
-  ReviewersSidebar,
-} from '@/components/ReviewersBox';
-import { PullStateLabel, PullStateReasons } from '@/components/PullStateLabel';
-import { PullEventItem } from '@/components/PullEvents';
-import { Spinner } from '@/components/Spinner';
-import { StackSidebar } from '@/components/StackSidebar';
-import { NotFound } from './NotFound';
-import { PrStateBadge } from './PrIcons';
+  ClosedBox,
+  MergedBox,
+  OpenBox,
+  PausedBanner,
+} from '@/components/pull/MergeBox';
+import {
+  ClefRead,
+  FixerSection,
+  OrderSection,
+  WhySection,
+} from '@/components/pull/Sections';
+import { Conversation } from '@/components/pull/Conversation';
+import { PullSide } from '@/components/pull/PullSide';
+import { NOT_FOUND_HEAD, NotFound } from './NotFound';
 
-function TimelineComment({
-  c,
-  me,
-  label,
-}: {
-  c: Pick<Comment, 'author' | 'body' | 'createdAt'>;
-  me: boolean;
-  label?: string;
-}) {
-  return (
-    <div className="d-flex mb-3" style={{ gap: 16 }}>
-      <Link to={`/${c.author.username}`} className="d-none d-md-block">
-        <Avatar user={c.author} size={40} />
-      </Link>
-      <div
-        className={`timeline-comment comment-arrow flex-1 ${me ? 'current-user' : ''}`}
-        style={{ minWidth: 0 }}
-      >
-        <div className="timeline-comment-header">
-          <Link
-            to={`/${c.author.username}`}
-            className="text-bold color-fg-default"
-          >
-            {c.author.username}
-          </Link>
-          <span title={fullDate(c.createdAt)}>
-            commented {timeAgo(c.createdAt)}
-          </span>
-          <span className="flex-1" />
-          {label && <span className="Label">{label}</span>}
-        </div>
-        <div className="p-3">
-          {c.body.trim() ? (
-            <Markdown source={c.body} />
-          ) : (
-            <p className="color-fg-muted fst-italic mb-0">
-              No description provided.
-            </p>
-          )}
-        </div>
-      </div>
-    </div>
-  );
+/** How often the page follows work in progress (inventory: 3s while reviewing or resolving, 5s near merging). */
+function pollInterval(d: PullDetail | undefined): number | false {
+  if (!d) return false;
+  // Follow AI resolving a rebase conflict (a rebase run's push pings the page live).
+  if (d.rebase?.status === 'resolving') return 3000;
+  // Follow the auto-merge review, and the merge it leads to.
+  const review = d.review;
+  if (
+    review &&
+    ((review.status !== null &&
+      review.status !== 'done' &&
+      review.status !== 'failed') ||
+      (review.status === null &&
+        review.agentsInvited &&
+        d.pull.state === 'open') ||
+      review.reviewers.some((r) => r.status === 'reviewing'))
+  )
+    return 3000;
+  if (
+    review?.autoMerge.state === 'ready' ||
+    review?.autoMerge.state === 'waiting'
+  )
+    return 5000;
+  return false;
 }
 
-function TimelineEvent({
-  icon,
-  bg,
-  children,
-}: {
-  icon: React.ReactNode;
-  bg?: string;
-  children: React.ReactNode;
-}) {
+/** The changed files as a list that jumps to each one's diff. */
+function FileJump({ files }: { files: FileDiff[] }) {
   return (
-    <div className="TimelineItem ml-md-4 pl-md-3" style={{ marginLeft: 0 }}>
-      <div
-        className="TimelineItem-badge"
-        style={
-          bg
-            ? { background: bg, color: 'var(--fgColor-onEmphasis)' }
-            : undefined
-        }
-      >
-        {icon}
-      </div>
-      <div
-        className="TimelineItem-body f6 d-flex flex-items-center flex-wrap"
-        style={{ gap: 4 }}
-      >
-        {children}
-      </div>
-    </div>
-  );
-}
-
-function MergeBox({
-  repo,
-  d,
-  onDone,
-}: {
-  repo: RepoDetail;
-  d: PullDetail;
-  onDone: () => Promise<unknown>;
-}) {
-  const pr = d.pull;
-  const [confirming, setConfirming] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  // Not an error: landing rebased the branch first and now waits for its checks (or review) on the new head.
-  const [notice, setNotice] = useState<string | null>(null);
-  const [busy, setBusy] = useState(false);
-  const open = () => {
-    setError(null);
-    setNotice(null);
-    setConfirming(true);
-  };
-  // Review isn't satisfied yet: merging records this person's approval of the commit shown here.
-  const needsApproval = !!d.review?.verdict && !d.review.verdict.satisfied;
-  const changesRequested = !!d.review?.verdict?.reasons.some(
-    (r) => r.kind === 'agent_changes_requested'
-  );
-  const merge = async () => {
-    setBusy(true);
-    setError(null);
-    setNotice(null);
-    try {
-      await api.mergePull(repo.owner.username, repo.name, pr.number, {
-        // The commit this page shows: a push since loading is refused (409), never merged or approved unseen.
-        ...(d.headSha ? { headSha: d.headSha } : {}),
-        ...(needsApproval ? { approve: true } : {}),
-      });
-      setConfirming(false);
-      onDone();
-    } catch (e) {
-      const msg = errorMessage(e);
-      // landPull rebased and pushed the branch, then stopped: it lands once the new head's checks pass.
-      if (e instanceof ApiError && rebasedFirst(e.status, e.body))
-        setNotice(msg);
-      else setError(msg);
-      if (e instanceof ApiError && e.status === 409) {
-        // The branch moved: reload so the page shows the new commits, and close the confirm so the next
-        // click can't approve or merge a commit nobody looked at. The error stays visible below.
-        setConfirming(false);
-        void Promise.resolve(onDone()).catch(() => {});
-      }
-    } finally {
-      setBusy(false);
-    }
-  };
-  const rebase = d.rebase;
-  const conflict = rebase?.status === 'conflict';
-  const resolving = rebase?.status === 'resolving';
-  const behind = rebase?.status === 'behind';
-  // Not landable as it stands: grey instead of green.
-  const held = conflict || resolving || (!rebase && !d.headBranchExists);
-  const headline = rebase ? rebaseHeadline(rebase, pr.headRef) : null;
-  // A stopped rebase (AI failed on a commit, and the like): a person with merge permission may try it again.
-  const retry = useAction(onDone);
-  const messages = (
-    <>
-      {error && <div className="flash flash-error mb-2">{error}</div>}
-      {notice && <div className="flash mb-2">{notice}</div>}
-    </>
-  );
-  const confirmBox = (
-    <div className="Box-row">
-      {messages}
-      {needsApproval && (
-        <p className="f6 mb-2">
-          Review isn&apos;t satisfied (
-          {d.pullState?.reasons.filter(blocking).map(reasonText).join('; ') ||
-            'not approved'}
-          ). Merging records your approval of this commit.
-          {changesRequested &&
-            ' Approval does not override an agent’s change request: dismiss it first, or the merge is refused.'}
-        </p>
-      )}
-      <p className="f6 color-fg-muted mb-2">
-        {behind ? (
-          <>
-            GitOrange rebases this branch onto <code>{rebase.onto}</code> first.
-            If the rebased commits need checks, it lands once they pass.
-          </>
-        ) : (
-          <>
-            <code>{pr.baseRef}</code> moves to this branch&apos;s head: its
-            commits land as they are, keeping history linear.
-          </>
-        )}
-      </p>
-      <div className="d-flex" style={{ gap: 8 }}>
-        <button className="btn btn-primary" disabled={busy} onClick={merge}>
-          {busy
-            ? behind
-              ? 'Rebasing and merging…'
-              : 'Merging…'
-            : needsApproval
-              ? 'Confirm approve and merge'
-              : 'Confirm rebase and merge'}
-        </button>
-        <button className="btn" onClick={() => setConfirming(false)}>
-          Cancel
-        </button>
-      </div>
-    </div>
-  );
-  return (
-    <div className="d-flex mb-3" style={{ gap: 16 }}>
-      <div
-        className={`merge-box-icon d-none d-md-flex ${held ? 'color-bg-neutral-emphasis' : 'color-bg-success-emphasis'}`}
-      >
-        <GitMergeIcon size={24} />
-      </div>
-      <div
-        className="Box flex-1"
-        style={{
-          minWidth: 0,
-          borderColor: held ? undefined : 'var(--borderColor-success-emphasis)',
-        }}
-      >
-        {d.pullState && d.pullState.state !== 'ready' && (
-          <div className="Box-row">
-            <div className="d-flex flex-items-center mb-1" style={{ gap: 8 }}>
-              <PullStateLabel state={d.pullState} />
-            </div>
-            <PullStateReasons state={d.pullState} />
-          </div>
-        )}
-        <div className="Box-row d-flex flex-items-start" style={{ gap: 12 }}>
-          {(!rebase && d.headBranchExists) || resolving ? (
-            <Spinner size={16} />
-          ) : conflict || !rebase ? (
-            <AlertIcon size={24} className="color-fg-attention" />
-          ) : (
-            <CheckIcon size={24} className="color-fg-success" />
-          )}
-          <div className="flex-1" style={{ minWidth: 0 }}>
-            <h3 className="f5">
-              {headline?.title ??
-                (d.headBranchExists
-                  ? 'Checking the branch…'
-                  : `The ${pr.headRef} branch is gone`)}
-            </h3>
-            {headline && (
-              <p className="f6 color-fg-muted mb-0">{headline.detail}</p>
-            )}
-            {(conflict || resolving) && rebase.files.length > 0 && (
-              <FileList paths={rebase.files} />
-            )}
-            {d.canMerge && canRetryRebase(rebase) && (
-              <div className="mt-2">
-                {retry.error && (
-                  <div className="flash flash-error mb-2">{retry.error}</div>
-                )}
-                <button
-                  className="btn btn-sm"
-                  disabled={retry.busy}
-                  onClick={() =>
-                    retry.run(() =>
-                      api.retryRebase(repo.owner.username, repo.name, pr.number)
-                    )
-                  }
-                >
-                  {retry.busy ? 'Starting the rebase…' : 'Try the rebase again'}
-                </button>
-              </div>
-            )}
-          </div>
-        </div>
-        {d.review && d.review.autoMerge.state !== 'off' && (
-          <AutoMergeStatus repo={repo} d={d} onChange={onDone} />
-        )}
-        {d.review && <PersonApprovals repo={repo} d={d} onChange={onDone} />}
-        {d.canMerge &&
-          d.mergeable &&
-          (confirming ? (
-            confirmBox
-          ) : (
-            <div className="Box-row">
-              {messages}
-              <button className="btn btn-primary" onClick={open}>
-                {needsApproval ? 'Approve and merge' : 'Rebase and merge'}
-              </button>
-            </div>
+    <div className="table-wrap pr-filejump">
+      <table className="table">
+        <caption className="sr">Changed files</caption>
+        <thead>
+          <tr>
+            <th scope="col">File</th>
+            <th scope="col">Added</th>
+            <th scope="col">Removed</th>
+          </tr>
+        </thead>
+        <tbody>
+          {files.map((f) => (
+            <tr key={f.path}>
+              <td className="mono small">
+                <a href={`#diff-${encodeURIComponent(f.path)}`}>{f.path}</a>
+              </td>
+              <td className="mono ds-add">
+                {f.binary ? '' : `+${f.additions}`}
+              </td>
+              <td className="mono ds-del">
+                {f.binary ? '' : `−${f.deletions}`}
+              </td>
+            </tr>
           ))}
-        {!d.canMerge && (
-          <div className="Box-row f6 color-fg-muted">
-            Only those with write access to this repository can merge pull
-            requests.
-          </div>
-        )}
-      </div>
+        </tbody>
+      </table>
     </div>
   );
 }
 
-function Conversation({
+/** The Conversation tab: why, order, what Clef read, Fixer, the conversation itself, and the side panels. */
+function ConversationTab({
   repo,
   d,
+  spot,
+  target,
+  queue,
   refresh,
 }: {
   repo: RepoDetail;
   d: PullDetail;
+  spot: QueueSpot | null;
+  target: QueueTarget | null;
+  queue: { loading: boolean; error: unknown; retry: () => void };
   refresh: () => Promise<unknown>;
 }) {
-  const me = useCurrentUser()!;
-  const pr = d.pull;
-  const [body, setBody] = useState('');
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const [branchDeleted, setBranchDeleted] = useState(false);
-  const canEdit = d.canMerge || pr.author.id === me.id;
   // GitOrange's events, and each requested agent's review, between the comments they happened between.
   const slots = timelineSlots(
     d.comments,
@@ -354,283 +138,120 @@ function Conversation({
     d.review ? reviewEntries(d.review.reviewers) : [],
     d.review ? earlierEntries(d.review.earlier) : []
   );
-  // "Review the flags" jumps to the first review with a finding for a person, else to the sidebar.
+  // "Review the flags" jumps to the first review with a finding for a person, else to the side panel.
   const anchored = anchoredReviewer(slots);
-  const slot = (i: number) => (
-    <>
-      {slots[i].map((x) =>
-        x.kind === 'event' ? (
-          <PullEventItem
-            key={x.event.id}
-            e={x.event}
-            repoPath={`/${repo.fullName}`}
-          />
-        ) : x.kind === 'earlier' ? (
-          <EarlierReview key={x.review.id} repo={repo} r={x.review} />
-        ) : (
-          <AgentReview
-            key={x.review.id}
-            repo={repo}
-            d={d}
-            r={x.review}
-            anchor={anchored === x.review.id}
-            onChange={refresh}
-          />
-        )
-      )}
-    </>
-  );
-  const send = async (andState?: 'open' | 'closed') => {
-    setBusy(true);
-    setError(null);
-    try {
-      if (body.trim())
-        await api.comment(repo.owner.username, repo.name, pr.number, body);
-      if (andState)
-        await api.updatePull(repo.owner.username, repo.name, pr.number, {
-          state: andState,
-        });
-      setBody('');
-      refresh();
-    } catch (e) {
-      setError(errorMessage(e));
-    } finally {
-      setBusy(false);
-    }
-  };
-  const deleteBranch = async () => {
-    await api.deleteBranch(repo.owner.username, repo.name, pr.headRef);
-    setBranchDeleted(true);
-    refresh();
-  };
   return (
-    <div className="d-flex flex-column flex-md-row" style={{ gap: 24 }}>
-      <div className="flex-1" style={{ minWidth: 0 }}>
-        <TimelineComment
-          c={{ author: pr.author, body: pr.body, createdAt: pr.createdAt }}
-          me={pr.author.id === me.id}
-          label="Author"
-        />
-        {d.comments.map((c, i) => (
-          <Fragment key={c.id}>
-            {/* Events and agent reviews sit in the timeline where they happened. */}
-            {slot(i)}
-            <TimelineComment
-              c={c}
-              me={c.author.id === me.id}
-              label={c.author.id === pr.author.id ? 'Author' : undefined}
-            />
-          </Fragment>
-        ))}
-        {slot(d.comments.length)}
-        {pr.state === 'merged' && (
-          <>
-            <TimelineEvent
-              icon={<GitMergeIcon />}
-              bg="var(--bgColor-done-emphasis)"
-            >
-              {pr.mergedBy ? (
-                <>
-                  <Avatar user={pr.mergedBy} size={20} />
-                  <strong>{pr.mergedBy.username}</strong> merged commit{' '}
-                </>
-              ) : (
-                <>
-                  <SparkleFillIcon className="color-fg-done" />
-                  <strong>Auto-merge</strong> merged commit{' '}
-                </>
-              )}
-              <Link
-                to={`/${repo.fullName}/commit/${pr.mergeCommitSha}`}
-                className="text-mono-sm text-bold"
-              >
-                {pr.mergeCommitSha!.slice(0, 7)}
-              </Link>{' '}
-              into <code>{pr.baseRef}</code> {timeAgo(pr.mergedAt!)}
-            </TimelineEvent>
-            <div className="d-flex mb-3 mt-2" style={{ gap: 16 }}>
-              <div className="merge-box-icon d-none d-md-flex color-bg-done-emphasis">
-                <GitMergeIcon size={24} />
+    <div className="cols pr-cols">
+      <div className="col">
+        <WhySection repo={repo} d={d} />
+        {d.pull.state === 'open' &&
+          (queue.error && !target ? (
+            <Section title="Order">
+              <div className="panel">
+                <QueryError
+                  error={queue.error}
+                  title="The merge queue did not load"
+                  onRetry={queue.retry}
+                />
               </div>
+            </Section>
+          ) : queue.loading ? (
+            <Section title="Order">
               <div
-                className="Box flex-1 p-3 d-flex flex-items-center"
-                style={{ gap: 12 }}
-              >
-                <div className="flex-1">
-                  <h3 className="f5">
-                    Pull request successfully merged and closed
-                  </h3>
-                  <p className="f6 color-fg-muted mb-0">
-                    {d.headBranchExists && !branchDeleted ? (
-                      <>
-                        You’re all set — the <code>{pr.headRef}</code> branch
-                        can be safely deleted.
-                      </>
-                    ) : pr.mergedAutomatically && !branchDeleted ? (
-                      <>
-                        The <code>{pr.headRef}</code> branch was deleted
-                        automatically.
-                      </>
-                    ) : (
-                      <>
-                        The <code>{pr.headRef}</code> branch has been deleted.
-                      </>
-                    )}
-                  </p>
-                </div>
-                {d.canMerge &&
-                  d.headBranchExists &&
-                  !branchDeleted &&
-                  pr.headRef !== repo.defaultBranch && (
-                    <button className="btn" onClick={deleteBranch}>
-                      Delete branch
-                    </button>
-                  )}
-              </div>
-            </div>
-          </>
-        )}
-        {pr.state === 'closed' && (
-          <TimelineEvent
-            icon={<GitPullRequestClosedIcon />}
-            bg="var(--bgColor-closed-emphasis)"
-          >
-            This pull request was closed {timeAgo(pr.closedAt!)}
-          </TimelineEvent>
-        )}
-        {pr.state === 'open' && <ChecksBox repo={repo} sha={d.headSha} />}
-        {pr.state === 'open' && <MergeBox repo={repo} d={d} onDone={refresh} />}
-        <div className="border-top pt-3 mt-3 d-flex" style={{ gap: 16 }}>
-          <Avatar
-            user={{ username: me.username ?? me.name }}
-            size={40}
-            className="d-none d-md-block"
-          />
-          <div className="flex-1">
-            <h3 className="f4 mb-2">Add a comment</h3>
-            {error && <div className="flash flash-error mb-2">{error}</div>}
-            <MarkdownEditor
-              value={body}
-              onChange={setBody}
-              placeholder="Use Markdown to format your comment"
-            />
-            <div className="d-flex flex-justify-end mt-2" style={{ gap: 8 }}>
-              {canEdit && pr.state === 'open' && (
-                <button
-                  className="btn d-inline-flex flex-items-center"
-                  style={{ gap: 4 }}
-                  disabled={busy}
-                  onClick={() => send('closed')}
-                >
-                  <GitPullRequestClosedIcon className="color-fg-closed" />{' '}
-                  {body.trim() ? 'Close with comment' : 'Close pull request'}
-                </button>
-              )}
-              {canEdit && pr.state === 'closed' && d.headBranchExists && (
-                <button
-                  className="btn"
-                  disabled={busy}
-                  onClick={() => send('open')}
-                >
-                  Reopen pull request
-                </button>
-              )}
-              <button
-                className="btn btn-primary"
-                disabled={busy || !body.trim()}
-                onClick={() => send()}
-              >
-                Comment
-              </button>
-            </div>
-          </div>
-        </div>
+                className="sk sk-line w50"
+                role="status"
+                aria-label="Loading"
+              />
+            </Section>
+          ) : (
+            <OrderSection repo={repo} d={d} spot={spot} target={target} />
+          ))}
+        <ClefRead repo={repo} d={d} />
+        <FixerSection repo={repo} d={d} />
+        <Conversation
+          repo={repo}
+          d={d}
+          slots={slots}
+          anchored={anchored}
+          refresh={refresh}
+        />
       </div>
-      <aside className="col-md-3 f6">
-        {d.review && (
-          <ReviewersSidebar
-            repo={repo}
-            d={d}
-            anchor={anchored === null}
-            onChange={refresh}
-          />
-        )}
-        {d.stack && (
-          <StackSidebar repo={repo} number={pr.number} stack={d.stack} />
-        )}
-        <div className="border-bottom pb-3 mb-3">
-          <div className="text-bold color-fg-muted mb-2">Participants</div>
-          <div className="d-flex flex-wrap" style={{ gap: 4 }}>
-            {[
-              pr.author,
-              ...d.comments.map((c) => c.author),
-              ...(pr.mergedBy ? [pr.mergedBy] : []),
-            ]
-              .filter((u, i, all) => all.findIndex((x) => x.id === u.id) === i)
-              .map((u) => (
-                <Link key={u.id} to={`/${u.username}`}>
-                  <Avatar user={u} size={26} />
-                </Link>
-              ))}
-          </div>
-        </div>
-      </aside>
+      <PullSide repo={repo} d={d} anchored={anchored} refresh={refresh} />
     </div>
   );
 }
 
+/**
+ * A pull request (`/:owner/:repo/pull/:number[/:tab]`): what happens next in plain words, why the change exists, the
+ * order it lands in, what Clef read and Fixer did, the conversation with each reviewer agent's review, and the
+ * developer's tabs (commits, files, checks).
+ */
 export default function PullView() {
   const repo = useOutletContext<RepoDetail>();
   const me = useCurrentUser()!;
   const qc = useQueryClient();
-  const { number = '0', tab = '' } = useParams();
+  const { number = '', tab: tabParam } = useParams();
   const num = Number(number);
+  const tab = pullTab(tabParam);
+  const valid = Number.isInteger(num) && num > 0 && tab !== null;
   const o = repo.owner.username;
+  const base = `/${repo.fullName}`;
   const q = useQuery({
     queryKey: qk.pull(o, repo.name, num),
     queryFn: () => api.pull(o, repo.name, num),
-    refetchInterval: (query) => {
-      const d = query.state.data;
-      if (!d) return false;
-      // Follow AI resolving a rebase conflict (a rebase run's push pings the page live).
-      if (d.rebase?.status === 'resolving') return 3000;
-      // Follow the auto-merge review, and the merge it leads to.
-      const review = d.review;
-      if (
-        review &&
-        ((review.status !== null &&
-          review.status !== 'done' &&
-          review.status !== 'failed') ||
-          (review.status === null &&
-            review.agentsInvited &&
-            d.pull.state === 'open') ||
-          review.reviewers.some((r) => r.status === 'reviewing'))
-      )
-        return 3000;
-      if (
-        review?.autoMerge.state === 'ready' ||
-        review?.autoMerge.state === 'waiting'
-      )
-        return 5000;
-      return false;
-    },
+    enabled: valid,
+    refetchInterval: (query) => pollInterval(query.state.data),
+  });
+  const d = q.data;
+  const open = d?.pull.state === 'open';
+  const queue = useQuery({
+    queryKey: qk.queue(o, repo.name),
+    queryFn: () => api.queue(o, repo.name),
+    enabled: open,
   });
   const commits = useQuery({
     queryKey: qk.pullCommits(o, repo.name, num),
     queryFn: () => api.pullCommits(o, repo.name, num),
-    enabled: tab === 'commits',
+    enabled: valid && tab === 'commits',
   });
   const files = useQuery({
     queryKey: qk.pullFiles(o, repo.name, num),
     queryFn: () => api.pullFiles(o, repo.name, num),
-    enabled: tab === 'files',
+    enabled: valid && tab === 'files',
   });
-  const [editing, setEditing] = useState(false);
-  const [title, setTitle] = useState('');
-  if (q.error instanceof ApiError && q.error.status === 404)
-    return <NotFound />;
-  if (!q.data) return <Spinner />;
-  const d = q.data;
+  // The head commit's checks: the side panel follows them while open; the Checks tab on any pull request.
+  const checks = useCommitRuns(
+    repo,
+    open || tab === 'checks' ? d?.headSha : null
+  );
+  const missing =
+    !valid || (q.error instanceof ApiError && q.error.status === 404);
+  const entering = useEnter(!!d);
+  usePageHead(
+    missing
+      ? NOT_FOUND_HEAD
+      : {
+          icon: 'pull',
+          crumbs: [
+            { label: 'Pull requests', to: `${base}/pulls` },
+            { label: `#${num}` },
+          ],
+          title: `#${num}`,
+          tab: 'pulls',
+          documentTitle: d ? `${d.pull.title} · #${num}` : `#${num}`,
+        }
+  );
+  if (missing) return <NotFound />;
+  if (q.isError && !d)
+    return (
+      <LoadError
+        what="this pull request"
+        error={q.error}
+        onRetry={() => void q.refetch()}
+        retrying={q.isFetching}
+      />
+    );
+  if (!d || !tab) return <Skeleton kind="detail" />;
   const pr = d.pull;
   // Resolves once the pull request itself has reloaded, so callers can show the new state.
   const refresh = () => {
@@ -641,142 +262,151 @@ export default function PullView() {
     void qc.invalidateQueries({ queryKey: ['namespace'] });
     return qc.invalidateQueries({ queryKey: qk.pull(o, repo.name, num) });
   };
-  const base = `/${repo.fullName}/pull/${num}`;
   const canEdit = d.canMerge || pr.author.id === me.id;
+  const paused = queue.data?.find((t) => t.paused)?.paused ?? null;
+  const spot = queueSpot(queue.data, num);
+  const target = spot
+    ? (queue.data?.find((t) => t.target === spot.target) ?? null)
+    : null;
+  const tabs: { id: PullTab; label: string; icon: Icon; count?: number }[] = [
+    {
+      id: 'conversation',
+      label: 'Conversation',
+      icon: CommentDiscussionIcon,
+      count: d.comments.length,
+    },
+    {
+      id: 'commits',
+      label: 'Commits',
+      icon: GitCommitIcon,
+      count: d.commitCount,
+    },
+    {
+      id: 'files',
+      label: 'Files changed',
+      icon: FileDiffIcon,
+      count: files.data?.length,
+    },
+    {
+      id: 'checks',
+      label: 'Checks',
+      icon: ChecklistIcon,
+      count: checks.data?.runs.length,
+    },
+  ];
+  const tabHref = (t: PullTab) =>
+    `${base}/pull/${num}${t === 'conversation' ? '' : `/${t}`}`;
   return (
-    <div className="container-xl px-3 px-md-4 px-lg-5 pb-6">
-      <div className="mb-3">
-        {editing ? (
-          <div className="d-flex" style={{ gap: 8 }}>
-            <input
-              className="form-control input-lg flex-1"
-              value={title}
-              autoFocus
-              onChange={(e) => setTitle(e.target.value)}
+    // Route changes start fresh; a new head also clears an open merge confirmation.
+    <div key={pr.id} className={`pr-page ${entering}`}>
+      <PullHeader repo={repo} d={d} canEdit={canEdit} onSaved={refresh} />
+      {open && paused && (
+        <PausedBanner repo={repo} paused={paused} onDone={refresh} />
+      )}
+      {pr.state === 'open' ? (
+        <OpenBox
+          key={d.headSha}
+          repo={repo}
+          d={d}
+          spot={spot}
+          onFilesTab={tab === 'files'}
+          onDone={refresh}
+        />
+      ) : pr.state === 'merged' ? (
+        <MergedBox repo={repo} d={d} onDone={refresh} />
+      ) : (
+        <ClosedBox repo={repo} d={d} canEdit={canEdit} onDone={refresh} />
+      )}
+      <nav className="pr-tabs" aria-label="Pull request">
+        {tabs.map((t) => (
+          <Link
+            key={t.id}
+            to={tabHref(t.id)}
+            aria-current={tab === t.id ? 'page' : undefined}
+          >
+            <t.icon size={16} />
+            {t.label}
+            {t.count !== undefined && <span className="count">{t.count}</span>}
+          </Link>
+        ))}
+      </nav>
+      {tab === 'conversation' && (
+        <ConversationTab
+          repo={repo}
+          d={d}
+          spot={spot}
+          target={target}
+          queue={{
+            loading: open && queue.isPending,
+            error: queue.error,
+            retry: () => void queue.refetch(),
+          }}
+          refresh={refresh}
+        />
+      )}
+      {tab === 'commits' &&
+        (commits.isError && !commits.data ? (
+          <div className="panel">
+            <QueryError
+              error={commits.error}
+              title="The commits did not load"
+              onRetry={() => void commits.refetch()}
             />
-            <button
-              className="btn"
-              onClick={async () => {
-                await api.updatePull(o, repo.name, num, { title });
-                setEditing(false);
-                refresh();
-              }}
-            >
-              Save
-            </button>
-            <button className="btn-link" onClick={() => setEditing(false)}>
-              Cancel
-            </button>
+          </div>
+        ) : !commits.data ? (
+          <RowsSkeleton rows={4} />
+        ) : !commits.data.length ? (
+          <div className="panel">
+            <EmptyState
+              picture={<GitCommitIcon size={20} />}
+              title="No commits to show"
+              body={`Nothing on ${pr.headRef} is ahead of ${pr.baseRef}.`}
+            />
           </div>
         ) : (
-          <div className="d-flex flex-items-start" style={{ gap: 8 }}>
-            <h2
-              className="f1 text-normal flex-1"
-              style={{ wordBreak: 'break-word' }}
-            >
-              {pr.title}{' '}
-              <span className="color-fg-muted f1-light">#{pr.number}</span>
-            </h2>
-            {canEdit && (
-              <button
-                className="btn btn-sm mt-2"
-                onClick={() => {
-                  setTitle(pr.title);
-                  setEditing(true);
-                }}
-              >
-                Edit
-              </button>
-            )}
-          </div>
-        )}
-        <div
-          className="d-flex flex-items-center flex-wrap mt-2 pb-3 border-bottom f5"
-          style={{ gap: 8 }}
-        >
-          <PrStateBadge state={pr.state} />
-          <span className="color-fg-muted">
-            {/* Like GitHub: a merged PR credits whoever merged it; otherwise the author. */}
-            <Link
-              to={`/${(pr.mergedBy ?? pr.author).username}`}
-              className="text-bold color-fg-muted"
-            >
-              {(pr.mergedBy ?? pr.author).username}
-            </Link>{' '}
-            {pr.state === 'merged' ? (
-              <>
-                merged {d.commitCount} commit{d.commitCount === 1 ? '' : 's'}{' '}
-                into{' '}
-              </>
-            ) : (
-              <>
-                wants to merge {d.commitCount} commit
-                {d.commitCount === 1 ? '' : 's'} into{' '}
-              </>
-            )}
-            <span className="branch-name">{pr.baseRef}</span> from{' '}
-            <Link
-              to={`/${repo.fullName}/tree/${pr.headRef}`}
-              className="branch-name"
-            >
-              <GitBranchIcon size={12} /> {pr.headRef}
-            </Link>
-          </span>
-        </div>
-      </div>
-      <nav className="tabnav">
-        <div className="tabnav-tabs">
-          <NavLink
-            end
-            to={base}
-            className={({ isActive }) =>
-              `tabnav-tab d-inline-flex flex-items-center${isActive ? ' selected' : ''}`
-            }
-            style={{ gap: 6 }}
-          >
-            <CommentDiscussionIcon /> Conversation{' '}
-            <span className="Counter">{d.comments.length}</span>
-          </NavLink>
-          <NavLink
-            to={`${base}/commits`}
-            className={({ isActive }) =>
-              `tabnav-tab d-inline-flex flex-items-center${isActive ? ' selected' : ''}`
-            }
-            style={{ gap: 6 }}
-          >
-            <GitCommitIcon /> Commits{' '}
-            <span className="Counter">{d.commitCount}</span>
-          </NavLink>
-          <NavLink
-            to={`${base}/files`}
-            className={({ isActive }) =>
-              `tabnav-tab d-inline-flex flex-items-center${isActive ? ' selected' : ''}`
-            }
-            style={{ gap: 6 }}
-          >
-            <FileDiffIcon /> Files changed{' '}
-            {files.data && <span className="Counter">{files.data.length}</span>}
-          </NavLink>
-        </div>
-      </nav>
-      {tab === 'files' && files.data && (
-        <div className="d-flex flex-justify-end f6 mb-2">
-          <DiffTotals files={files.data} />
-        </div>
-      )}
-      {tab === '' && <Conversation repo={repo} d={d} refresh={refresh} />}
-      {tab === 'commits' &&
-        (commits.data ? (
           <CommitList
             commits={[...commits.data].reverse()}
-            base={`/${repo.fullName}`}
+            base={base}
             repo={repo}
           />
-        ) : (
-          <Spinner />
         ))}
       {tab === 'files' &&
-        (files.data ? <DiffView files={files.data} /> : <Spinner />)}
+        (files.isError && !files.data ? (
+          <div className="panel">
+            <QueryError
+              error={files.error}
+              title="The changes did not load"
+              onRetry={() => void files.refetch()}
+            />
+          </div>
+        ) : !files.data ? (
+          <RowsSkeleton rows={4} />
+        ) : (
+          <Section
+            title={`${files.data.length} ${files.data.length === 1 ? 'file' : 'files'} changed`}
+            actions={<DiffTotals files={files.data} />}
+          >
+            {files.data.length > 1 && <FileJump files={files.data} />}
+            <DiffView files={files.data} />
+          </Section>
+        ))}
+      {tab === 'checks' && (
+        <Section
+          title="Checks"
+          actions={
+            d.headSha ? (
+              <span className="muted small">
+                on{' '}
+                <Link to={`${base}/commit/${d.headSha}`} className="mono">
+                  {d.headSha.slice(0, 7)}
+                </Link>
+              </span>
+            ) : undefined
+          }
+        >
+          <ChecksBox repo={repo} sha={d.headSha} />
+        </Section>
+      )}
     </div>
   );
 }

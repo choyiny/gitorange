@@ -66,6 +66,7 @@ export function repoTabOf(rest: string[], agentRepo: boolean): RepoTabId {
     case 'pulls':
     case 'pull':
     case 'compare':
+    case 'session':
       return 'pulls';
     case 'actions':
       return 'actions';
@@ -137,6 +138,8 @@ export function repoBand(
       return item('pull', TABS.pulls, `#${id ?? ''}`);
     case 'compare':
       return item('pull', TABS.pulls, 'New pull request');
+    case 'session':
+      return item('pull', TABS.pulls, 'Session');
     case 'actions':
       if (id === 'runs' && rest[2])
         return item('play', TABS.actions, `Run #${rest[2]}`);

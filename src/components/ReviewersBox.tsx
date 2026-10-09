@@ -1,11 +1,9 @@
-import { useState } from 'react';
+import { useState, type CSSProperties } from 'react';
 import { withVia } from '@/lib/via';
 import { Link } from 'react-router-dom';
 import {
   AlertIcon,
   CheckCircleIcon,
-  ChevronDownIcon,
-  ChevronRightIcon,
   FileDiffIcon,
   ShieldCheckIcon,
   SkipIcon,
@@ -30,13 +28,18 @@ import {
   type ShownStatus,
 } from '@/lib/reviewTimeline';
 import { Avatar } from './Avatar';
-import { Spinner } from './Spinner';
+import { AgentAvatar } from './AgentAvatar';
 import { AgentRunLink } from './AgentRunLink';
+import { Chip } from './ui/Chip';
+import { PendingButton } from './ui/PendingButton';
+import { PanelError } from './approvals/Panels';
+import { useAgentDirectory } from './actions/RunActor';
 import {
   Flag,
   REVIEW_ANCHOR,
   serverChangesRequester,
   useAction,
+  type FlagDecision,
 } from './AutoMergeReview';
 
 export const REVIEWER_STATUS: Record<
@@ -59,7 +62,7 @@ function StatusIcon({ status }: { status: ReviewerStatus }) {
   const className = REVIEWER_STATUS[status].className;
   switch (status) {
     case 'reviewing':
-      return <Spinner size={14} />;
+      return <span className="spinner" aria-hidden="true" />;
     case 'approved':
       return <CheckCircleIcon size={14} className={className} />;
     case 'flagged':
@@ -84,9 +87,51 @@ function useCanAct(d: PullDetail) {
   return d.pull.state === 'open' && d.canMerge && !!me;
 }
 
+/** An agent's name and colour (AGENT.md's, else its preset's or a stable one), by its handle. */
+function useAgentLook() {
+  const lookup = useAgentDirectory();
+  return (agent: { username: string; name: string }) => {
+    const known = lookup(agent.username);
+    return {
+      handle: agent.username,
+      // The directory's name, else the account's; the handle when neither says more.
+      name: known.name !== agent.username ? known.name : agent.name,
+      color: known.color,
+    };
+  };
+}
+
+/** The agent's avatar and name as a conversation entry's header shows them. */
+function EntryHeader({
+  handle,
+  name,
+  color,
+  status,
+  children,
+}: {
+  handle: string;
+  name: string;
+  color: string;
+  status: ReviewerStatus;
+  children: React.ReactNode;
+}) {
+  return (
+    <header className="pr-card-head">
+      <span className="pr-card-mini">
+        <AgentAvatar handle={handle} color={color} status={status} size={20} />
+      </span>
+      <Link to={`/${handle}`} className="pr-who" title={`@${handle}`}>
+        {name}
+      </Link>
+      {children}
+    </header>
+  );
+}
+
 /**
- * One requested agent's review of the head commit, as a conversation entry: the agent as author, what it
- * did, its summary, its findings with their controls, and the agent commit it reviewed at.
+ * One requested agent's review of the head commit, as a conversation entry: the agent (its robot in the state its
+ * review is in) as author, what it did, its summary, its findings with their controls, and the agent commit it
+ * reviewed at.
  */
 export function AgentReview({
   repo,
@@ -103,128 +148,156 @@ export function AgentReview({
   onChange: () => Promise<unknown> | void;
 }) {
   const canAct = useCanAct(d);
+  const look = useAgentLook()(r.agent);
   const { busy, error, run } = useAction(onChange);
   // Decisions confirmed by the server but not yet in the reloaded page.
   const [approved, setApproved] = useState<Set<string>>(new Set());
   const [approving, setApproving] = useState<string | null>(null);
   const [requested, setRequested] = useState<Map<string, string>>(new Map());
   const [requesting, setRequesting] = useState<string | null>(null);
+  // The finding the last decision was about: its error shows there, the review's own above.
+  const [acted, setActed] = useState<string | null>(null);
   const o = repo.owner.username;
   const n = d.pull.number;
   const at = reviewTime(r);
+  const filesHref = `/${repo.fullName}/pull/${n}/files`;
   return (
-    <div className="d-flex mb-3" style={{ gap: 16 }} id={reviewEntryId(r)}>
-      <Link to={`/${r.agent.username}`} className="d-none d-md-block">
-        <Avatar user={r.agent} size={40} />
-      </Link>
-      <div
-        className="timeline-comment comment-arrow flex-1"
-        style={{ minWidth: 0 }}
-        id={anchor ? REVIEW_ANCHOR : undefined}
+    <div
+      className="pr-entry"
+      id={reviewEntryId(r)}
+      style={{ '--agent': look.color } as CSSProperties}
+    >
+      <Link
+        to={`/${look.handle}`}
+        className="pr-entry-ava"
+        tabIndex={-1}
+        aria-hidden="true"
       >
-        <div className="timeline-comment-header flex-wrap">
-          <Avatar user={r.agent} size={20} className="d-md-none" />
-          <Link
-            to={`/${r.agent.username}`}
-            className="text-bold color-fg-default"
-          >
-            @{r.agent.username}
-          </Link>
-          <span className="d-inline-flex flex-items-center" style={{ gap: 4 }}>
+        <AgentAvatar
+          handle={look.handle}
+          color={look.color}
+          status={r.status}
+          size={40}
+        />
+      </Link>
+      <article
+        className="pr-card agent"
+        id={anchor ? REVIEW_ANCHOR : undefined}
+        aria-label={`${look.name}'s review`}
+      >
+        <EntryHeader {...look} status={r.status}>
+          <span className="pr-verb">
             <StatusIcon status={r.status} />
             {reviewVerb(r)}
           </span>
-          <span title={fullDate(at)}>{timeAgo(at)}</span>
-          <span className="flex-1" />
+          <time dateTime={at} title={fullDate(at)} className="muted">
+            {timeAgo(at)}
+          </time>
+          <span className="grow" />
           {!r.invited && (
             <span
-              className="Label"
+              className="chip off"
               title="Removed from this repository: its review no longer counts"
             >
               removed
             </span>
           )}
-          <span className="Label">Agent</span>
-        </div>
-        <div className="p-2 p-sm-3">
-          {r.summary && <p className="mb-0">{r.summary}</p>}
+          <span className="chip off">Agent</span>
+        </EntryHeader>
+        <div className="pr-card-body">
+          {r.summary && <p>{r.summary}</p>}
           {r.status === 'failed' && (
-            <div
-              className="flash flash-error mt-2 f6 d-flex flex-items-center"
-              style={{ gap: 8 }}
-            >
-              <span className="flex-1">{r.error ?? 'The review failed.'}</span>
+            <div className="pr-failed" role="alert">
+              <span>{r.error ?? 'The review failed.'}</span>
               {canAct && r.invited && (
-                <button
-                  className="btn btn-sm"
-                  disabled={busy}
-                  aria-label={`Retry @${r.agent.username}'s review`}
-                  onClick={() =>
-                    run(() => api.retryReviewer(o, repo.name, n, r.id))
-                  }
+                <PendingButton
+                  className="small"
+                  pending={busy && acted === null}
+                  pendingLabel="Starting…"
+                  aria-label={`Retry ${look.name}'s review`}
+                  onClick={() => {
+                    setActed(null);
+                    void run(() => api.retryReviewer(o, repo.name, n, r.id));
+                  }}
                 >
-                  {busy ? 'Starting…' : 'Retry'}
-                </button>
+                  Retry
+                </PendingButton>
               )}
             </div>
           )}
-          {error && <div className="flash flash-error mt-2 f6">{error}</div>}
-          {r.flags.length > 0 && <div className="mt-2" />}
-          {r.flags.map((f) => {
-            const localNote = requested.get(f.id);
-            return (
-              <Flag
-                key={f.id}
-                f={f}
-                approver={
-                  f.approvedAt
-                    ? {
-                        label: withVia(
-                          f.approvedBy?.username ?? 'a former user',
-                          f.approvedVia
-                        ),
-                        user: f.approvedBy,
-                      }
-                    : approved.has(f.id)
-                      ? { label: 'you', user: null }
-                      : null
-                }
-                changesRequester={
-                  localNote !== undefined
-                    ? { label: 'you', user: null, note: localNote || null }
-                    : serverChangesRequester(f)
-                }
-                canApprove={canAct}
-                approving={approving === f.id}
-                requestingChanges={requesting === f.id}
-                investigating={r.status === 'reviewing'}
-                onApprove={async () => {
-                  setApproving(f.id);
-                  await run(async () => {
-                    await api.approveFlag(o, repo.name, n, f.id);
-                    setApproved((x) => new Set(x).add(f.id));
-                  });
-                  setApproving(null);
-                }}
-                onRequestChanges={async (note) => {
-                  setRequesting(f.id);
-                  const ok = await run(
-                    async () => {
-                      await api.requestFlagChanges(o, repo.name, n, f.id, note);
-                      setRequested((m) => new Map(m).set(f.id, note.trim()));
-                    },
-                    { sendingNote: true }
-                  );
-                  setRequesting(null);
-                  return ok;
-                }}
-              />
-            );
-          })}
-          <div
-            className="d-flex flex-items-center flex-wrap f6 color-fg-muted mt-2"
-            style={{ gap: 12 }}
-          >
+          {acted === null && <PanelError error={error} />}
+          {r.flags.length > 0 && (
+            <div className="pr-flags">
+              {r.flags.map((f) => {
+                const localNote = requested.get(f.id);
+                return (
+                  <Flag
+                    key={f.id}
+                    f={f}
+                    pull={n}
+                    agentName={look.name}
+                    filesHref={filesHref}
+                    approver={
+                      f.approvedAt
+                        ? {
+                            label: withVia(
+                              f.approvedBy?.username ?? 'a former user',
+                              f.approvedVia ?? f.decidedVia
+                            ),
+                            user: f.approvedBy,
+                          }
+                        : approved.has(f.id)
+                          ? { label: 'you', user: null }
+                          : null
+                    }
+                    changesRequester={
+                      localNote !== undefined
+                        ? { label: 'you', user: null, note: localNote || null }
+                        : serverChangesRequester(f)
+                    }
+                    canApprove={canAct}
+                    approving={approving === f.id}
+                    requestingChanges={requesting === f.id}
+                    investigating={r.status === 'reviewing'}
+                    error={acted === f.id ? error : null}
+                    onApprove={async (decision: FlagDecision) => {
+                      setActed(f.id);
+                      setApproving(f.id);
+                      const ok = await run(async () => {
+                        await api.approveFlag(o, repo.name, n, f.id, decision);
+                        setApproved((x) => new Set(x).add(f.id));
+                      });
+                      setApproving(null);
+                      return ok;
+                    }}
+                    onRequestChanges={async (note, teach) => {
+                      setActed(f.id);
+                      setRequesting(f.id);
+                      const ok = await run(
+                        async () => {
+                          await api.requestFlagChanges(
+                            o,
+                            repo.name,
+                            n,
+                            f.id,
+                            note,
+                            teach
+                          );
+                          setRequested((m) =>
+                            new Map(m).set(f.id, note.trim())
+                          );
+                        },
+                        { sendingNote: true }
+                      );
+                      setRequesting(null);
+                      return ok;
+                    }}
+                  />
+                );
+              })}
+            </div>
+          )}
+          <footer className="pr-card-foot">
             <span>
               of <code>{d.review!.headSha.slice(0, 7)}</code>
             </span>
@@ -237,11 +310,10 @@ export function AgentReview({
               (r.agentRepository ? (
                 <Link
                   to={`/${r.agentRepository}/commit/${r.agentSha}`}
-                  className="Link--muted"
                   title="The agent's commit this review used"
                 >
                   AGENT.md @{' '}
-                  <span className="text-mono">{r.agentSha.slice(0, 7)}</span>
+                  <span className="mono">{r.agentSha.slice(0, 7)}</span>
                 </Link>
               ) : (
                 <span title="The agent's commit this review used">
@@ -249,24 +321,34 @@ export function AgentReview({
                 </span>
               ))}
             <AgentRunLink repo={repo} number={n} kind="review" />
-          </div>
+          </footer>
         </div>
-      </div>
+      </article>
     </div>
   );
 }
 
 /** A finding as history: who decided it, if anyone, and no controls. */
-function ReadOnlyFlag({ f }: { f: ReviewFlag }) {
+function ReadOnlyFlag({
+  f,
+  pull,
+  agentName,
+}: {
+  f: ReviewFlag;
+  pull: number;
+  agentName: string;
+}) {
   return (
     <Flag
       f={f}
+      pull={pull}
+      agentName={agentName}
       approver={
         f.approvedAt
           ? {
               label: withVia(
                 f.approvedBy?.username ?? 'a former user',
-                f.approvedVia
+                f.approvedVia ?? f.decidedVia
               ),
               user: f.approvedBy,
             }
@@ -286,66 +368,79 @@ function ReadOnlyFlag({ f }: { f: ReviewFlag }) {
 /** An agent's review of an earlier head commit, read-only where it happened: its findings no longer count. */
 export function EarlierReview({
   repo,
+  pull,
   r,
 }: {
   repo: RepoDetail;
+  pull: number;
   r: EarlierReviewRow & { status: ShownStatus };
 }) {
+  const look = useAgentLook()(r.agent);
   const at = reviewTime(r);
   const n = r.flags.length;
   return (
-    <div className="d-flex mb-3" style={{ gap: 16 }}>
-      <Link to={`/${r.agent.username}`} className="d-none d-md-block">
-        <Avatar user={r.agent} size={40} />
-      </Link>
-      <div
-        className="timeline-comment comment-arrow flex-1 color-bg-subtle"
-        style={{ minWidth: 0 }}
+    <div
+      className="pr-entry"
+      style={{ '--agent': look.color } as CSSProperties}
+    >
+      <Link
+        to={`/${look.handle}`}
+        className="pr-entry-ava"
+        tabIndex={-1}
+        aria-hidden="true"
       >
-        <div className="timeline-comment-header flex-wrap">
-          <Avatar user={r.agent} size={20} className="d-md-none" />
-          <Link
-            to={`/${r.agent.username}`}
-            className="text-bold color-fg-default"
-          >
-            @{r.agent.username}
-          </Link>
-          <span className="d-inline-flex flex-items-center" style={{ gap: 4 }}>
+        <AgentAvatar
+          handle={look.handle}
+          color={look.color}
+          status={r.status}
+          size={40}
+        />
+      </Link>
+      <article
+        className="pr-card agent earlier"
+        aria-label={`${look.name}'s review of an earlier commit`}
+      >
+        <EntryHeader {...look} status={r.status}>
+          <span className="pr-verb">
             <StatusIcon status={r.status} />
             {earlierVerb(r)} on{' '}
-            <Link
-              to={`/${repo.fullName}/commit/${r.headSha}`}
-              className="Link--secondary text-mono"
-            >
+            <Link to={`/${repo.fullName}/commit/${r.headSha}`} className="mono">
               {r.headSha.slice(0, 7)}
             </Link>
             , an earlier commit
           </span>
-          <span title={fullDate(at)}>{timeAgo(at)}</span>
-          <span className="flex-1" />
-          <span className="Label">Agent</span>
-        </div>
-        <div className="p-2 p-sm-3">
-          {r.summary && <p className="mb-0 color-fg-muted">{r.summary}</p>}
+          <time dateTime={at} title={fullDate(at)} className="muted">
+            {timeAgo(at)}
+          </time>
+          <span className="grow" />
+          <span className="chip off">Agent</span>
+        </EntryHeader>
+        <div className="pr-card-body">
+          {r.summary && <p className="muted">{r.summary}</p>}
           {r.status === 'failed' && (
-            <div className="flash flash-error mt-2 f6">
-              {r.error ?? 'The review failed.'}
+            <div className="pr-failed">
+              <span>{r.error ?? 'The review failed.'}</span>
             </div>
           )}
           {n > 0 && (
-            <details className="mt-2">
-              <summary className="f6 color-fg-muted">
+            <details className="pr-earlier">
+              <summary>
                 {n} finding{n === 1 ? '' : 's'} on this earlier commit
               </summary>
-              <div className="mt-2">
+              <div className="pr-flags">
                 {r.flags.map((f) => (
-                  <ReadOnlyFlag key={f.id} f={f} />
+                  <ReadOnlyFlag
+                    key={f.id}
+                    f={f}
+                    pull={pull}
+                    agentName={look.name}
+                  />
                 ))}
               </div>
             </details>
           )}
         </div>
-      </div>
+      </article>
     </div>
   );
 }
@@ -377,74 +472,74 @@ export function PersonApprovals({
   );
   const o = repo.owner.username;
   return (
-    <div className="Box-row">
-      <div className="d-flex flex-items-center flex-wrap" style={{ gap: 8 }}>
+    <div className="pr-row">
+      <span className="pr-row-icon">
+        <ShieldCheckIcon className={d.approvals.length ? 'pr-ok' : 'muted'} />
+      </span>
+      <div className="pr-row-main">
         {d.approvals.length ? (
-          <>
+          <p className="pr-people">
             {d.approvals.map((a) => (
-              <span
-                key={a.user.id}
-                className="d-inline-flex flex-items-center f6"
-                style={{ gap: 4 }}
-                title={fullDate(a.createdAt)}
-              >
-                <Avatar user={a.user} size={16} />{' '}
+              <span key={a.user.id} title={fullDate(a.createdAt)}>
+                <Avatar user={a.user} size={16} />
                 {withVia(a.user.username, a.via)}
               </span>
             ))}
-            <span className="f6 color-fg-success">approved this commit</span>
-          </>
+            <span className="pr-ok">approved this commit</span>
+          </p>
         ) : (
-          <span className="f6 color-fg-muted">
-            No person has approved this commit.
-          </span>
+          <p className="muted">No person has approved this commit.</p>
         )}
-        <span className="flex-1" />
         {canAct && !mine && changeRequested && (
-          <span className="f6 color-fg-attention">
+          <p className="pr-warn small">
             Approving does not override an agent&apos;s change request: dismiss
             it, or push a fix.
-          </span>
+          </p>
         )}
-        {canAct &&
-          (mine ? (
-            <button
-              className="btn btn-sm"
-              disabled={busy}
-              onClick={() =>
-                run(() => api.withdrawApproval(o, repo.name, d.pull.number))
-              }
-            >
-              Withdraw approval
-            </button>
-          ) : (
-            <button
-              className="btn btn-sm btn-primary"
-              disabled={busy || !d.headSha}
-              aria-label="Approve this commit"
-              title={
-                outstanding
-                  ? 'Approving lets this commit land past findings for a person and failed or unfinished agent reviews. It does not override an agent’s change request: that needs a new commit or a Dismiss.'
-                  : 'Approve this commit. Approval does not override an agent’s change request: dismiss it, or push a fix.'
-              }
-              onClick={() =>
-                run(() =>
-                  api.approvePull(o, repo.name, d.pull.number, d.headSha!)
-                )
-              }
-            >
-              <ShieldCheckIcon /> Approve
-            </button>
-          ))}
+        <PanelError error={error} />
       </div>
-      {error && <div className="flash flash-error mt-2 f6">{error}</div>}
+      {canAct &&
+        (mine ? (
+          <PendingButton
+            className="small"
+            pending={busy}
+            pendingLabel="Withdrawing…"
+            onClick={() =>
+              run(() => api.withdrawApproval(o, repo.name, d.pull.number))
+            }
+          >
+            Withdraw approval
+          </PendingButton>
+        ) : (
+          <PendingButton
+            className="small"
+            pending={busy}
+            pendingLabel="Approving…"
+            disabled={!d.headSha}
+            aria-label="Approve this commit"
+            title={
+              outstanding
+                ? 'Approving stands over findings from unguarded agents and failed or unfinished reviews. Guarded findings still need a decision with a reason; an agent’s change request needs a new commit or a Dismiss.'
+                : 'Approve this commit. Guarded findings still need a decision with a reason; an agent’s change request needs a new commit or a Dismiss.'
+            }
+            onClick={() =>
+              run(() =>
+                api.approvePull(o, repo.name, d.pull.number, d.headSha!)
+              )
+            }
+          >
+            <ShieldCheckIcon size={14} />
+            Approve
+          </PendingButton>
+        ))}
     </div>
   );
 }
 
 /**
- * The sidebar's Reviewers: where the review of the head commit stands, each requested agent's status
- * (its review is in the conversation), the agents it didn't need, and the people who approved.
+ * The side panel's Reviews: where the review of the head commit stands, each requested agent with its robot in
+ * the state its review is in (its review is in the conversation), the agents it didn't need, and the people who
+ * approved.
  */
 export function ReviewersSidebar({
   repo,
@@ -460,9 +555,8 @@ export function ReviewersSidebar({
 }) {
   const review = d.review!;
   const canAct = useCanAct(d);
+  const lookOf = useAgentLook();
   const { busy, error, run } = useAction(onChange);
-  const [showOthers, setShowOthers] = useState(false);
-  const [showFiles, setShowFiles] = useState(false);
   const requested: Reviewer[] = reviewEntries(review.reviewers);
   const others = review.reviewers.filter((r) => !requested.includes(r));
   const progress =
@@ -472,34 +566,40 @@ export function ReviewersSidebar({
         ? 'Asking which agents this concerns…'
         : null;
   return (
-    <div
-      className="border-bottom pb-3 mb-3"
+    <section
+      className="panel pad pr-reviews"
       id={anchor ? REVIEW_ANCHOR : undefined}
+      aria-labelledby="pr-reviews-title"
     >
-      <div className="d-flex flex-items-center mb-2" style={{ gap: 4 }}>
-        <span className="text-bold color-fg-muted">Reviewers</span>
-        <span className="color-fg-muted">
+      <div className="pr-panel-head">
+        <h2 id="pr-reviews-title">Reviews</h2>
+        <span className="muted small">
           of <code>{review.headSha.slice(0, 7)}</code>
         </span>
-        <span className="flex-1" />
-        <AgentRunLink repo={repo} number={d.pull.number} kind="review" />
+        <span className="grow" />
+        <AgentRunLink
+          repo={repo}
+          number={d.pull.number}
+          kind="review"
+          className="small"
+        />
       </div>
-      {error && <div className="flash flash-error mb-2">{error}</div>}
+      <PanelError error={error} />
       {progress && (
-        <div
-          className="d-flex flex-items-center color-fg-muted mb-2"
-          style={{ gap: 8 }}
-        >
-          <Spinner size={14} /> {progress}
-        </div>
+        <p className="pr-progress">
+          <span className="spinner" aria-hidden="true" /> {progress}
+        </p>
       )}
       {review.status === 'failed' && (
-        <div className="flash flash-error mb-2">
-          <div>The review failed: {review.errorMessage ?? 'unknown error'}</div>
+        <div className="pr-failed" role="alert">
+          <span>
+            The review failed: {review.errorMessage ?? 'unknown error'}
+          </span>
           {canAct && (
-            <button
-              className="btn btn-sm mt-2"
-              disabled={busy}
+            <PendingButton
+              className="small"
+              pending={busy}
+              pendingLabel="Starting…"
               onClick={() =>
                 run(() =>
                   api.retryReview(repo.owner.username, repo.name, d.pull.number)
@@ -507,12 +607,12 @@ export function ReviewersSidebar({
               }
             >
               Try the review again
-            </button>
+            </PendingButton>
           )}
         </div>
       )}
       {!review.agentsInvited && !review.reviewers.length && (
-        <p className="color-fg-muted mb-2">
+        <p className="muted small">
           No agent reviews this repository, so a person approves each commit.{' '}
           {d.canMerge && (
             <Link to={`/${repo.fullName}/settings`}>Invite agents</Link>
@@ -522,50 +622,56 @@ export function ReviewersSidebar({
       {review.agentsInvited &&
         review.status === 'done' &&
         !requested.length && (
-          <p className="color-fg-muted mb-2">
+          <p className="muted small">
             No invited agent was needed for this commit, so a person approves
             it.
           </p>
         )}
       {requested.length > 0 && (
-        <ul className="list-style-none">
+        <ul className="pr-reviewers">
           {requested.map((r) => {
-            const s = REVIEWER_STATUS[r.status];
+            const look = lookOf(r.agent);
             return (
-              <li
-                key={r.id}
-                className="d-flex flex-items-center mb-2"
-                style={{ gap: 6 }}
-              >
-                <Avatar user={r.agent} size={20} />
-                <Link
-                  to={`/${r.agent.username}`}
-                  className="color-fg-default text-bold Truncate"
-                  style={{ minWidth: 0 }}
-                >
-                  <span className="Truncate-text">@{r.agent.username}</span>
-                </Link>
-                {!r.invited && (
-                  <span
-                    className="Label"
-                    title="Removed from this repository: its review no longer counts"
-                  >
-                    removed
+              <li key={r.id}>
+                <AgentAvatar
+                  handle={look.handle}
+                  color={look.color}
+                  status={r.status}
+                  size={32}
+                />
+                <span className="pr-rv-main">
+                  <span className="pr-rv-name">
+                    <Link to={`/${look.handle}`} title={`@${look.handle}`}>
+                      {look.name}
+                    </Link>
+                    {!r.invited && (
+                      <span
+                        className="chip off"
+                        title="Removed from this repository: its review no longer counts"
+                      >
+                        removed
+                      </span>
+                    )}
                   </span>
-                )}
-                <span className="flex-1" />
+                  {r.probability !== null && (
+                    <span
+                      className="muted small"
+                      title="Clef's probability that this change concerns the agent"
+                    >
+                      Requested at Clef {pct(r.probability)}
+                    </span>
+                  )}
+                </span>
                 <a
                   href={`#${reviewEntryId(r)}`}
-                  className={`d-inline-flex flex-items-center flex-shrink-0 ${s.className}`}
-                  style={{ gap: 4 }}
-                  title={`Go to @${r.agent.username}'s review${
+                  className="pr-rv-state"
+                  title={`Go to ${look.name}'s review${
                     r.probability !== null
                       ? ` (requested at Clef ${pct(r.probability)})`
                       : ''
                   }`}
                 >
-                  <StatusIcon status={r.status} />
-                  {s.label}
+                  <Chip status={r.status} />
                 </a>
               </li>
             );
@@ -573,33 +679,25 @@ export function ReviewersSidebar({
         </ul>
       )}
       {others.length > 0 && (
-        <div>
-          <button
-            className="btn-link color-fg-muted"
-            onClick={() => setShowOthers((v) => !v)}
-          >
-            {showOthers ? <ChevronDownIcon /> : <ChevronRightIcon />} Not needed
-            ({others.length})
-          </button>
-          {showOthers && (
-            <ul className="list-style-none mt-1">
-              {others.map((r) => (
-                <li
-                  key={r.id}
-                  className="d-flex flex-items-center mb-1"
-                  style={{ gap: 6 }}
-                >
-                  <Avatar user={r.agent} size={16} />
-                  <Link
-                    to={`/${r.agent.username}`}
-                    className="Truncate"
-                    style={{ minWidth: 0 }}
-                  >
-                    <span className="Truncate-text">@{r.agent.username}</span>
+        <details className="pr-notneeded">
+          <summary>Not needed ({others.length})</summary>
+          <ul>
+            {others.map((r) => {
+              const look = lookOf(r.agent);
+              return (
+                <li key={r.id}>
+                  <AgentAvatar
+                    handle={look.handle}
+                    color={look.color}
+                    status="not_needed"
+                    size={20}
+                  />
+                  <Link to={`/${look.handle}`} title={`@${look.handle}`}>
+                    {look.name}
                   </Link>
-                  <span className="flex-1" />
+                  <span className="grow" />
                   <span
-                    className="color-fg-muted flex-shrink-0"
+                    className="muted small"
                     title={
                       r.probability !== null
                         ? "Clef's probability that this change concerns the agent"
@@ -611,59 +709,27 @@ export function ReviewersSidebar({
                       : (r.summary ?? '')}
                   </span>
                 </li>
-              ))}
-            </ul>
-          )}
-        </div>
+              );
+            })}
+          </ul>
+        </details>
       )}
       {d.approvals.length > 0 && (
-        <div className="mt-2">
-          <div className="color-fg-muted mb-1">Approved by</div>
-          <ul className="list-style-none">
+        <div className="pr-approved">
+          <h3 className="pr-subhead">Approved by</h3>
+          <ul>
             {d.approvals.map((a) => (
-              <li
-                key={a.user.id}
-                className="d-flex flex-items-center mb-1"
-                style={{ gap: 6 }}
-                title={fullDate(a.createdAt)}
-              >
+              <li key={a.user.id} title={fullDate(a.createdAt)}>
                 <Avatar user={a.user} size={20} />
-                <Link to={`/${a.user.username}`} className="color-fg-default">
-                  {a.user.username}
-                </Link>
-                {a.via && (
-                  <span className="f6 color-fg-muted">via {a.via}</span>
-                )}
-                <span className="flex-1" />
-                <CheckCircleIcon size={14} className="color-fg-success" />
+                <Link to={`/${a.user.username}`}>{a.user.username}</Link>
+                {a.via && <span className="muted small">via {a.via}</span>}
+                <span className="grow" />
+                <CheckCircleIcon size={14} className="pr-ok" />
               </li>
             ))}
           </ul>
         </div>
       )}
-      {review.files.length > 0 && (
-        <div className="mt-2">
-          <button
-            className="btn-link color-fg-muted"
-            onClick={() => setShowFiles((v) => !v)}
-          >
-            {showFiles ? <ChevronDownIcon /> : <ChevronRightIcon />} What the
-            agents read
-          </button>
-          {showFiles && (
-            <ul className="ml-3 mt-1" style={{ wordBreak: 'break-word' }}>
-              {review.files.map((f) => (
-                <li key={f.path}>
-                  <code>{f.path}</code>{' '}
-                  <span className="color-fg-success">+{f.additions}</span>{' '}
-                  <span className="color-fg-danger">−{f.deletions}</span>{' '}
-                  {f.summary}
-                </li>
-              ))}
-            </ul>
-          )}
-        </div>
-      )}
-    </div>
+    </section>
   );
 }

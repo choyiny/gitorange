@@ -18,4 +18,5 @@
 @import './pages/repos.css';
 @import './pages/new-repo.css';
 @import './pages/approvals.css';
+@import './pages/pull.css';
 @import './legacy.css';
