@@ -2,15 +2,19 @@
 export const USERNAME_RE =
   /^[a-zA-Z0-9](?:[a-zA-Z0-9]|-(?=[a-zA-Z0-9])){0,38}$/;
 
-/** First path segments owned by the SPA and worker. */
+/** First path segments owned by the SPA (src/App.tsx) and worker (/api, /mcp). */
 export const RESERVED_USERNAMES = new Set([
   'admin',
+  'agents',
   'api',
   'approvals',
   'invite',
   'login',
   'logout',
+  'mcp',
   'new',
+  'oauth',
+  'repos',
   'settings',
   'setup',
   'assets',

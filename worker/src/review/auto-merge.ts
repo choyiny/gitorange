@@ -7,7 +7,7 @@ import {
 } from '../db/app.schema';
 import type { GitService } from '../git/service';
 import { findRepoById, gitFor } from '../lib/repos';
-import { landPull } from '../merge/land';
+import { landPull, mergingPause } from '../merge/land';
 import { resolutionConfigured } from '../merge/resolution';
 import { rebaseTips, rebaseView } from '../merge/rebase';
 import { landTargetOf } from '../lib/land-target';
@@ -18,7 +18,8 @@ import { hasInvitedAgents } from './keys';
 /**
  * - off: no agent is invited to the repository (a person approves and merges), or the PR isn't open.
  * - disabled: turned off for this pull request.
- * - waiting: review, approvals, checks, AI resolving a rebase conflict, or stack discovery in progress.
+ * - waiting: merging is paused on the repository; review, approvals, checks, AI resolving a rebase conflict, or stack
+ *   discovery in progress.
  * - blocked: failed checks or a failed review, a rebase conflict, or nothing to merge.
  * - ready: merges now.
  */
@@ -45,6 +46,9 @@ export async function autoMergeStatus(
 
   const waiting: string[] = [];
   const blocked: string[] = [];
+  // Landing refuses until someone resumes merging (landPull).
+  if (await mergingPause(db, pr.repositoryId))
+    waiting.push('Merging is paused');
 
   const review = await reviewGateFor(db, resolutionConfigured(env), pr, head);
   for (const r of review.reasons)

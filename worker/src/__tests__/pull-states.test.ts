@@ -122,8 +122,18 @@ describe('pull request state rules', () => {
         'agent_changes_requested',
         'agent_review_failed',
         'needs_approval',
+        'merging_paused',
       ].sort()
     );
+  });
+
+  it('waits while merging is paused, behind whatever needs someone', () => {
+    expect(reasonState({ kind: 'merging_paused' })).toBe('waiting');
+    expect(decideState([{ kind: 'merging_paused' }]).state).toBe('waiting');
+    expect(
+      decideState([{ kind: 'merging_paused' }, { kind: 'needs_approval' }])
+        .state
+    ).toBe('human_review');
   });
 
   it("puts agents' review reasons in whose move they make", () => {

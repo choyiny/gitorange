@@ -1,4 +1,6 @@
 import { describe, expect, it } from 'vitest';
+import appRoutes from '../../../src/App.tsx?raw';
+import { isReservedUsername } from '../lib/usernames';
 import {
   addMember,
   bootstrapAdmin,
@@ -48,6 +50,30 @@ describe('first-run setup', () => {
       json: {
         name: 'X',
         username: 'settings',
+        email: 'x@example.com',
+        password: 'password123',
+      },
+    });
+    expect(res.status).toBe(400);
+  });
+
+  it('reserves the first path segment of every web app and worker route', async () => {
+    // The web app's top-level routes (src/App.tsx), plus what the worker serves at the root.
+    const routes = [
+      ...new Set(
+        [...appRoutes.matchAll(/path="\/([^/":*]+)/g)].map((m) => m[1])
+      ),
+    ];
+    expect(routes).toEqual(
+      expect.arrayContaining(['repos', 'agents', 'oauth', 'approvals'])
+    );
+    for (const name of [...routes, 'api', 'mcp'])
+      expect(isReservedUsername(name), name).toBe(true);
+    const t = makeEnv();
+    const res = await call(t, '/api/setup', {
+      json: {
+        name: 'X',
+        username: 'repos',
         email: 'x@example.com',
         password: 'password123',
       },

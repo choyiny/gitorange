@@ -83,7 +83,12 @@ export async function repoSessions(
   db: DrizzleDB,
   git: GitService,
   repo: Repository,
-  opts: { id?: string; openOnly?: boolean } = {}
+  opts: {
+    id?: string;
+    openOnly?: boolean;
+    /** The open pull requests' states by id, when the caller already computed them (the Live page's queue). */
+    states?: Map<string, PullState>;
+  } = {}
 ): Promise<SessionSummary[]> {
   // Only what grouping and display need (not the descriptions, which can be long); open ones are read in full below.
   const rows = await db
@@ -135,8 +140,8 @@ export async function repoSessions(
       .flatMap((g) => g.pulls.filter((p) => p.state === 'open'))
       .map((p) => p.id)
   );
-  let states = new Map<string, PullState>();
-  if (openIds.size)
+  let states = opts.states ?? new Map<string, PullState>();
+  if (openIds.size && !opts.states)
     try {
       const open = (
         await db
