@@ -1,0 +1,241 @@
+/* Commits and a single commit. Ported from docs/design/crew/repo.css (Commits). Tokens only. The commit list is
+   also used by pull requests, so its rules do not depend on a page class. */
+
+.commit-days {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 22px;
+  min-width: 0;
+}
+.daylabel {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--muted);
+}
+.daylabel > svg {
+  flex: none;
+}
+.commitlist {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  min-width: 0;
+}
+.commitlist > li {
+  display: flex;
+  gap: 12px;
+  align-items: center;
+  padding: 10px 14px;
+  border-top: 1px solid var(--line);
+}
+.commitlist > li:first-child {
+  border-top: 0;
+}
+.cl-main {
+  flex: 1;
+  min-width: 0;
+  display: grid;
+  gap: 3px;
+}
+.cl-top {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  flex-wrap: wrap;
+  min-width: 0;
+}
+.cl-subj {
+  font-weight: 600;
+  color: var(--ink);
+  overflow-wrap: anywhere;
+}
+.cl-subj:hover {
+  color: var(--accent);
+}
+.cl-by {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  column-gap: 6px;
+  row-gap: 2px;
+}
+.cl-by .text-bold {
+  font-weight: 600;
+}
+.cl-side {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  flex: none;
+}
+.shabtn {
+  font-size: 12px;
+  padding: 3px 8px;
+  border: 1px solid var(--line-2);
+  border-radius: 6px;
+  color: var(--ink-2);
+}
+.shabtn:hover {
+  color: var(--ink);
+  background: var(--surface-3);
+  text-decoration: none;
+}
+
+/* The rest of a message: prose, then trailers (Dismissed-Finding, Co-Authored-By) kept quiet and apart. */
+.commit-body {
+  margin: 4px 0 0;
+  padding: 0;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  font-family: var(--mono);
+  font-size: 12.5px;
+  line-height: 1.55;
+  color: var(--ink-2);
+  background: none;
+  border: 0;
+}
+.trailers {
+  margin: 6px 0 0;
+  padding: 6px 0 0;
+  display: grid;
+  gap: 2px;
+  border-top: 1px dashed var(--line-2);
+  font-family: var(--mono);
+  font-size: 11.5px;
+  color: var(--muted);
+  min-width: 0;
+}
+.trailers > div {
+  display: flex;
+  gap: 8px;
+  min-width: 0;
+}
+.trailers dt {
+  flex: none;
+  color: var(--faint);
+}
+.trailers dt::after {
+  content: ':';
+}
+.trailers dd {
+  margin: 0;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.trailers a {
+  color: var(--muted);
+  text-decoration: underline;
+}
+.co-authors {
+  color: var(--ink-2);
+}
+
+/* ---------- Paging ---------- */
+.pager {
+  display: flex;
+  justify-content: center;
+  gap: 8px;
+}
+
+/* ---------- One commit ---------- */
+.commitbox {
+  min-width: 0;
+}
+.cb-message {
+  padding: 14px 16px;
+  border-bottom: 1px solid var(--line);
+}
+.cb-message .commit-body {
+  margin-top: 0;
+}
+.cb-foot {
+  display: flex;
+  align-items: center;
+  gap: 10px 14px;
+  flex-wrap: wrap;
+  padding: 10px 16px;
+  background: var(--surface-2);
+  border-radius: 0 0 var(--r) var(--r);
+  font-size: 13px;
+}
+.commitbox > .cb-foot:first-child {
+  border-radius: var(--r);
+}
+.cb-who {
+  display: inline-flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 4px 6px;
+  min-width: 0;
+}
+.cb-who .text-bold {
+  font-weight: 600;
+}
+.cb-parents {
+  display: inline-flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 4px 6px;
+}
+.cb-sha {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
+}
+.cb-sha .muted {
+  white-space: nowrap;
+}
+.cb-sha .mono {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.file-summary {
+  max-height: 320px;
+  overflow: auto;
+}
+.file-summary .table td {
+  padding: 6px 14px;
+  overflow-wrap: anywhere;
+}
+.file-summary .table th:not(:first-child),
+.file-summary .table td:not(:first-child) {
+  width: 1%;
+  white-space: nowrap;
+  text-align: right;
+}
+.fs-add {
+  color: var(--ok);
+}
+.fs-del {
+  color: var(--bad);
+}
+
+/* The diffs sit in the same panels as everything else. */
+.commit-view .Box {
+  background: var(--surface);
+  border-color: var(--line);
+  border-radius: var(--r);
+}
+.commit-view .file-header {
+  background: var(--surface-2);
+  border-bottom-color: var(--line);
+  border-radius: var(--r) var(--r) 0 0;
+  color: var(--ink);
+}
+
+@media (max-width: 640px) {
+  .commitlist > li {
+    flex-wrap: wrap;
+    align-items: flex-start;
+  }
+  .cl-main {
+    flex-basis: 100%;
+  }
+  .cb-sha {
+    flex-basis: 100%;
+  }
+}
