@@ -1,99 +1,171 @@
 import { useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { api, qk } from '@/lib/uiApi';
+import { KeyIcon } from '@primer/octicons-react';
+import { api, qk, type Token } from '@/lib/uiApi';
 import { errorMessage } from '@/lib/api';
 import { timeAgo } from '@/lib/format';
-import { usePageHead } from '@/components/ui/PageHead';
+import { PageHead } from '@/components/ui/PageHead';
+import { EmptyState } from '@/components/ui/EmptyState';
+import { PendingButton } from '@/components/ui/PendingButton';
 import { CopyButton } from '@/components/CopyButton';
-import { Spinner } from '@/components/Spinner';
-import { SettingsNav } from '@/components/SettingsNav';
+import { InlineConfirm } from '@/components/InlineConfirm';
+import { LoadError } from '@/components/Notice';
+import { RowsSkeleton, SettingsFrame } from '@/components/SetFrame';
 
-export default function SettingsTokens() {
-  usePageHead({
-    icon: 'key',
-    crumbs: [
-      { label: 'Settings', to: '/settings/tokens' },
-      { label: 'Personal access tokens' },
-    ],
-    title: 'Personal access tokens',
+/** "Expires Nov 4, 2026", "Expired" or "No expiration". */
+function expiryText(t: Token): string {
+  if (!t.expiresAt) return 'No expiration';
+  const at = new Date(t.expiresAt);
+  return at < new Date() ? 'Expired' : `Expires ${at.toLocaleDateString()}`;
+}
+
+function TokenRow({ token }: { token: Token }) {
+  const qc = useQueryClient();
+  const remove = useMutation({
+    mutationFn: () => api.deleteToken(token.id),
+    onSuccess: () => qc.invalidateQueries({ queryKey: qk.tokens }),
   });
+  return (
+    <li>
+      <KeyIcon className="ic" />
+      <div className="grow">
+        <b>{token.name}</b>
+        <span className="muted small">
+          {token.lastUsedAt
+            ? `Last used ${timeAgo(token.lastUsedAt)}`
+            : 'Never used'}
+          {' · '}
+          {expiryText(token)}
+        </span>
+      </div>
+      <div className="ctl">
+        <InlineConfirm
+          label="Delete"
+          confirmLabel="Delete token"
+          pendingLabel="Deleting…"
+          accessibleName={`Delete token ${token.name}`}
+          pending={remove.isPending}
+          error={remove.isError ? errorMessage(remove.error) : null}
+          onConfirm={() => remove.mutate()}
+        />
+      </div>
+    </li>
+  );
+}
+
+/** Settings → Access tokens: generate a personal access token and delete the ones you no longer need. */
+export default function SettingsTokens() {
   const qc = useQueryClient();
   const tokens = useQuery({ queryKey: qk.tokens, queryFn: api.tokens });
   const [name, setName] = useState('');
   const [days, setDays] = useState('30');
   const [created, setCreated] = useState<string | null>(null);
-  const [error, setError] = useState<string | null>(null);
   const create = useMutation({
     mutationFn: () =>
       api.createToken({
-        name,
+        name: name.trim(),
         expiresInDays: days === 'never' ? null : Number(days),
       }),
     onSuccess: (r) => {
       setCreated(r.plaintext);
       setName('');
-      qc.invalidateQueries({ queryKey: qk.tokens });
+      return qc.invalidateQueries({ queryKey: qk.tokens });
     },
-    onError: (e) => setError(errorMessage(e)),
   });
-  const remove = useMutation({
-    mutationFn: (id: string) => api.deleteToken(id),
-    onSuccess: () => qc.invalidateQueries({ queryKey: qk.tokens }),
-  });
+
   return (
     <>
-      <div
-        className="container-lg px-3 py-4 d-flex flex-column flex-md-row"
-        style={{ gap: 24 }}
-      >
-        <SettingsNav />
-        <div className="flex-1">
-          <div className="Subhead">
-            <h2 className="Subhead-heading">Personal access tokens</h2>
-            <div className="Subhead-description">
-              Tokens you have generated that can be used to access git over
-              HTTPS. Use a token as your password when you clone or push.
-            </div>
+      <PageHead
+        icon="key"
+        crumbs={[
+          { label: 'Settings', to: '/settings/tokens' },
+          { label: 'Personal access tokens' },
+        ]}
+        title="Personal access tokens"
+        lede="A token is a password for git over HTTPS and for Git LFS. Use it when you clone or push."
+      />
+      <SettingsFrame>
+        <section className="panel" aria-label="Your tokens">
+          <div className="pad">
+            <h2>Your tokens</h2>
+            <p className="small muted">
+              Tokens you have generated. A deleted token stops working at once.
+            </p>
           </div>
+          {tokens.isPending ? (
+            <div className="pad">
+              <RowsSkeleton rows={2} />
+            </div>
+          ) : tokens.isError ? (
+            <div className="pad">
+              <LoadError
+                what="your tokens"
+                error={tokens.error}
+                onRetry={() => tokens.refetch()}
+              />
+            </div>
+          ) : tokens.data.length === 0 ? (
+            <EmptyState
+              picture={<KeyIcon size={20} />}
+              title="You have no personal access tokens."
+              body="Generate one below to use git over HTTPS."
+            />
+          ) : (
+            <ul className="rowlist">
+              {tokens.data.map((t) => (
+                <TokenRow key={t.id} token={t} />
+              ))}
+            </ul>
+          )}
+
           {created && (
-            <div className="flash flash-success mb-3">
-              <p className="mb-2">
-                Make sure to copy your personal access token now. You won't be
-                able to see it again!
+            <div className="newtoken" role="status">
+              <p>
+                <b>Copy your new token now.</b> You won&apos;t be able to see it
+                again.
               </p>
-              <div className="d-flex flex-items-center" style={{ gap: 8 }}>
-                <code className="f5 text-mono">{created}</code>
-                <CopyButton text={created} />
+              <div className="copyrow">
+                <input
+                  className="form-control"
+                  readOnly
+                  value={created}
+                  aria-label="Your new token"
+                  onFocus={(e) => e.currentTarget.select()}
+                />
+                <CopyButton
+                  text={created}
+                  className="btn small"
+                  label="Copy the token"
+                />
               </div>
             </div>
           )}
-          {error && <div className="flash flash-error mb-3">{error}</div>}
+
           <form
-            className="Box p-3 mb-4"
+            className="formpad"
             onSubmit={(e) => {
               e.preventDefault();
-              setError(null);
+              setCreated(null);
               create.mutate();
             }}
           >
-            <h3 className="f4 mb-3">Generate new token</h3>
-            <div
-              className="d-flex flex-wrap flex-items-end"
-              style={{ gap: 12 }}
-            >
-              <div className="flex-1">
-                <label className="d-block f6 text-bold mb-1">Note</label>
+            <h3 className="formtitle">Generate a new token</h3>
+            <div className="frow">
+              <div className="fld grow2">
+                <label htmlFor="tok-name">Note</label>
                 <input
-                  className="form-control width-full"
+                  id="tok-name"
+                  className="form-control"
                   required
-                  placeholder="What's this token for?"
+                  placeholder="What is this token for?"
                   value={name}
                   onChange={(e) => setName(e.target.value)}
                 />
               </div>
-              <div>
-                <label className="d-block f6 text-bold mb-1">Expiration</label>
+              <div className="fld">
+                <label htmlFor="tok-exp">Expiration</label>
                 <select
+                  id="tok-exp"
                   className="form-select"
                   value={days}
                   onChange={(e) => setDays(e.target.value)}
@@ -105,51 +177,19 @@ export default function SettingsTokens() {
                   <option value="never">No expiration</option>
                 </select>
               </div>
-              <button className="btn btn-primary" disabled={create.isPending}>
+              <PendingButton
+                type="submit"
+                className="primary"
+                pending={create.isPending}
+                pendingLabel="Generating…"
+                error={create.isError ? errorMessage(create.error) : null}
+              >
                 Generate token
-              </button>
+              </PendingButton>
             </div>
           </form>
-          {tokens.isPending ? (
-            <Spinner />
-          ) : tokens.data!.length === 0 ? (
-            <p className="color-fg-muted">
-              You have no personal access tokens.
-            </p>
-          ) : (
-            <div className="Box">
-              {tokens.data!.map((t) => (
-                <div
-                  key={t.id}
-                  className="Box-row d-flex flex-items-center"
-                  style={{ gap: 12 }}
-                >
-                  <div className="flex-1">
-                    <div className="text-bold">{t.name}</div>
-                    <div className="f6 color-fg-muted">
-                      {t.lastUsedAt
-                        ? `Last used ${timeAgo(t.lastUsedAt)}`
-                        : 'Never used'}{' '}
-                      ·{' '}
-                      {t.expiresAt
-                        ? new Date(t.expiresAt) < new Date()
-                          ? 'Expired'
-                          : `Expires ${new Date(t.expiresAt).toLocaleDateString()}`
-                        : 'No expiration'}
-                    </div>
-                  </div>
-                  <button
-                    className="btn btn-sm btn-danger"
-                    onClick={() => remove.mutate(t.id)}
-                  >
-                    Delete
-                  </button>
-                </div>
-              ))}
-            </div>
-          )}
-        </div>
-      </div>
+        </section>
+      </SettingsFrame>
     </>
   );
 }

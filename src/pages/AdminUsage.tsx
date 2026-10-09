@@ -6,19 +6,16 @@ import {
   useQuery,
   useQueryClient,
 } from '@tanstack/react-query';
-import {
-  AlertIcon,
-  CreditCardIcon,
-  GraphIcon,
-  InfoIcon,
-  SyncIcon,
-} from '@primer/octicons-react';
+import { GraphIcon, SyncIcon } from '@primer/octicons-react';
 import { api, qk, type UsageLine, type UsageReport } from '@/lib/uiApi';
 import { errorMessage } from '@/lib/api';
 import { timeAgo } from '@/lib/format';
-import { usePageHead } from '@/components/ui/PageHead';
-import { AdminNav } from '@/components/AdminNav';
-import { Spinner } from '@/components/Spinner';
+import { PageHead } from '@/components/ui/PageHead';
+import { Chip } from '@/components/ui/Chip';
+import { Section } from '@/components/ui/Section';
+import { PendingButton } from '@/components/ui/PendingButton';
+import { LoadError, Notice } from '@/components/Notice';
+import { AdminFrame, RowsSkeleton } from '@/components/SetFrame';
 
 const thisMonth = () => new Date().toISOString().slice(0, 7);
 
@@ -47,10 +44,10 @@ function Card({
   detail: string;
 }) {
   return (
-    <div className="Box p-3">
-      <div className="f6 color-fg-muted">{label}</div>
-      <div className="f1 text-bold lh-condensed mt-1">{value}</div>
-      <div className="f6 color-fg-muted">{detail}</div>
+    <div className="stat">
+      <span>{label}</span>
+      <b>{value}</b>
+      <span>{detail}</span>
     </div>
   );
 }
@@ -75,20 +72,14 @@ function DailyChart({ report }: { report: UsageReport }) {
   const gap = 2;
   const bw = W / days.length - gap;
   return (
-    <figure className="m-0">
+    <figure className="daily">
       <svg
         viewBox={`0 0 ${W} ${H + 18}`}
         width="100%"
         role="img"
         aria-label="Estimated cost per day"
       >
-        <line
-          x1={0}
-          x2={W}
-          y1={H}
-          y2={H}
-          stroke="var(--borderColor-muted, #d1d9e0)"
-        />
+        <line x1={0} x2={W} y1={H} y2={H} className="axis" />
         {days.map((d, i) => {
           const v = byDay.get(d) ?? 0;
           const h = max > 0 ? Math.max(v > 0 ? 2 : 0, (v / max) * (H - 4)) : 0;
@@ -105,7 +96,7 @@ function DailyChart({ report }: { report: UsageReport }) {
                   width={bw}
                   height={h}
                   rx={Math.min(4, bw / 2)}
-                  fill="var(--fgColor-accent, #0969da)"
+                  className="bar"
                   pointerEvents="none"
                 />
               )}
@@ -115,7 +106,7 @@ function DailyChart({ report }: { report: UsageReport }) {
                   y={H + 14}
                   textAnchor="middle"
                   fontSize={10}
-                  fill="var(--fgColor-muted, #59636e)"
+                  className="tick"
                 >
                   {Number(d.slice(8))}
                 </text>
@@ -124,7 +115,7 @@ function DailyChart({ report }: { report: UsageReport }) {
           );
         })}
       </svg>
-      <figcaption className="f6 color-fg-muted">
+      <figcaption className="small muted">
         Highest day: {usd(max)}. Days without a bar have no recorded cost yet.
       </figcaption>
     </figure>
@@ -133,83 +124,69 @@ function DailyChart({ report }: { report: UsageReport }) {
 
 function StatusLabel({ line }: { line: UsageLine }) {
   if (line.status === 'measured')
-    return (
-      <span className="Label Label--secondary">
-        {SOURCE_LABEL[line.source]}
-      </span>
-    );
+    return <Chip tone="off">{SOURCE_LABEL[line.source]}</Chip>;
   return (
-    <span className="Label Label--attention">
+    <Chip tone="warn">
       {line.status === 'not-configured' ? 'Not configured' : 'Unavailable'}
-    </span>
+    </Chip>
   );
 }
 
 function LinesTable({ lines }: { lines: UsageLine[] }) {
   const products = [...new Set(lines.map((l) => l.productLabel))];
   return (
-    <div className="Box mb-4" style={{ overflowX: 'auto' }}>
-      <table className="width-full f6" style={{ borderCollapse: 'collapse' }}>
+    <div className="table-wrap">
+      <table className="table usage">
         <thead>
-          <tr className="color-bg-subtle text-left">
-            <th className="p-2">Metric</th>
-            <th className="p-2 text-right">GitOrange usage</th>
-            <th className="p-2">Included (whole account)</th>
-            <th className="p-2 text-right">List price</th>
-            <th className="p-2 text-right">With allowance</th>
-            <th className="p-2 text-right">Projected</th>
+          <tr>
+            <th>Metric</th>
+            <th className="r">GitOrange usage</th>
+            <th>Included (whole account)</th>
+            <th className="r">List price</th>
+            <th className="r">With allowance</th>
+            <th className="r">Projected</th>
           </tr>
         </thead>
         {products.map((p) => (
           <tbody key={p}>
-            <tr className="border-top">
-              <th colSpan={6} className="p-2 text-left">
-                {p}
-              </th>
+            <tr className="group">
+              <th colSpan={6}>{p}</th>
             </tr>
             {lines
               .filter((l) => l.productLabel === p)
               .map((l) => (
-                <tr key={l.metric} className="border-top">
-                  <td className="p-2" style={{ minWidth: 220 }}>
+                <tr key={l.metric}>
+                  <td className="metric">
                     <div>{l.label}</div>
-                    <div className="mt-1">
+                    <div className="note">
                       <StatusLabel line={l} />
                     </div>
                     {l.reason && (
-                      <div className="color-fg-attention mt-1">{l.reason}</div>
+                      <div className="note attention">{l.reason}</div>
                     )}
-                    {l.note && (
-                      <div className="color-fg-muted mt-1">{l.note}</div>
-                    )}
+                    {l.note && <div className="note muted">{l.note}</div>}
                     {l.billedFrom && (
-                      <div className="color-fg-muted mt-1">
+                      <div className="note muted">
                         Cloudflare bills this from {l.billedFrom}.
                       </div>
                     )}
                     {l.resources.length > 1 && (
-                      <div className="color-fg-muted mt-1">
+                      <div className="note muted">
                         {l.resources
                           .map((r) => `${r.resource}: ${qty(r.quantity)}`)
                           .join(' · ')}
                       </div>
                     )}
                   </td>
-                  <td className="p-2 text-right text-mono">
+                  <td className="r mono">
                     {l.status === 'measured'
                       ? `${qty(l.quantity)} ${l.unit}`
                       : '—'}
                   </td>
-                  <td className="p-2 color-fg-muted">{l.includedLabel}</td>
-                  <td className="p-2 text-right text-mono">
-                    {usd(l.listCost)}
-                  </td>
-                  <td className="p-2 text-right text-mono">
-                    {usd(l.dedicatedCost)}
-                  </td>
-                  <td className="p-2 text-right text-mono">
-                    {usd(l.projectedListCost)}
-                  </td>
+                  <td className="muted">{l.includedLabel}</td>
+                  <td className="r mono">{usd(l.listCost)}</td>
+                  <td className="r mono">{usd(l.dedicatedCost)}</td>
+                  <td className="r mono">{usd(l.projectedListCost)}</td>
                 </tr>
               ))}
           </tbody>
@@ -229,40 +206,31 @@ function Breakdown({
   empty: string;
 }) {
   return (
-    <div className="Box mb-4">
-      <div className="Box-header py-2">
-        <h3 className="Box-title f5">{title}</h3>
+    <div className="panel">
+      <div className="pad">
+        <h3 className="group-title">{title}</h3>
       </div>
       {rows.length === 0 ? (
-        <div className="Box-row color-fg-muted f6">{empty}</div>
+        <p className="pad topline small muted">{empty}</p>
       ) : (
-        rows.map((r) => (
-          <div
-            key={r.key}
-            className="Box-row py-2 d-flex flex-items-baseline f6"
-            style={{ gap: 12 }}
-          >
-            <div
-              className="flex-1 min-width-0"
-              style={{ overflowWrap: 'anywhere' }}
-            >
-              {r.key}
-              <div className="color-fg-muted">{r.detail}</div>
-            </div>
-            <div className="text-mono">{usd(r.cost)}</div>
-          </div>
-        ))
+        <ul className="rowlist">
+          {rows.map((r) => (
+            <li key={r.key} className="split">
+              <div className="grow">
+                <span className="wrap">{r.key}</span>
+                <span className="small muted">{r.detail}</span>
+              </div>
+              <span className="mono">{usd(r.cost)}</span>
+            </li>
+          ))}
+        </ul>
       )}
     </div>
   );
 }
 
+/** Site admin → Usage and cost: what this deployment uses on Cloudflare, and what that would cost. */
 export default function AdminUsage() {
-  usePageHead({
-    icon: 'shield',
-    crumbs: [{ label: 'Site admin', to: '/admin' }, { label: 'Usage & cost' }],
-    title: 'Usage & cost',
-  });
   const qc = useQueryClient();
   const [params, setParams] = useSearchParams();
   const month = params.get('month') || thisMonth();
@@ -272,7 +240,7 @@ export default function AdminUsage() {
     placeholderData: keepPreviousData,
   });
   const [syncMsg, setSyncMsg] = useState<{
-    kind: 'success' | 'error';
+    kind: 'ok' | 'bad';
     text: string;
   } | null>(null);
   const sync = useMutation({
@@ -282,55 +250,28 @@ export default function AdminUsage() {
         Object.keys(e).some((k) => !k.endsWith(':unconfigured'))
       );
       setSyncMsg({
-        kind: 'success',
+        kind: 'ok',
         text: failed
           ? `Synced ${r.days.length} days; some metrics were unavailable (see below).`
           : `Synced ${r.days.length} days.`,
       });
       qc.invalidateQueries({ queryKey: ['usage'] });
     },
-    onError: (e) => setSyncMsg({ kind: 'error', text: errorMessage(e) }),
+    onError: (e) => setSyncMsg({ kind: 'bad', text: errorMessage(e) }),
   });
   const r = report.data;
 
   return (
     <>
-      <div className="container-lg px-3 py-4">
-        <AdminNav />
-        <div className="Subhead">
-          <h2
-            className="Subhead-heading d-flex flex-items-center"
-            style={{ gap: 8 }}
-          >
-            <CreditCardIcon size={24} /> Usage &amp; cost
-          </h2>
-          <div
-            className="Subhead-actions d-flex flex-items-center"
-            style={{ gap: 8 }}
-          >
-            <input
-              type="month"
-              className="form-control input-sm"
-              aria-label="Month"
-              value={month}
-              max={thisMonth()}
-              onChange={(e) =>
-                e.target.value && setParams({ month: e.target.value })
-              }
-            />
-            <button
-              type="button"
-              className="btn btn-sm"
-              disabled={sync.isPending || (r && !r.analyticsConfigured)}
-              onClick={() => {
-                setSyncMsg(null);
-                sync.mutate();
-              }}
-            >
-              <SyncIcon /> {sync.isPending ? 'Syncing…' : 'Sync now'}
-            </button>
-          </div>
-          <div className="Subhead-description">
+      <PageHead
+        icon="shield"
+        crumbs={[
+          { label: 'Site admin', to: '/admin' },
+          { label: 'Usage and cost' },
+        ]}
+        title="Usage and cost"
+        lede={
+          <>
             What this GitOrange deployment uses on Cloudflare, and what it would
             cost. Estimates from Cloudflare analytics (filtered to this
             deployment’s own Worker, Durable Objects, Workflows, D1 database, R2
@@ -344,36 +285,56 @@ export default function AdminUsage() {
                 {timeAgo(r.lastSync.completedAt)}.
               </>
             )}
-          </div>
-        </div>
-        {syncMsg && (
-          <div className={`flash flash-${syncMsg.kind} mb-3`}>
-            {syncMsg.text}
-          </div>
-        )}
+          </>
+        }
+        actions={
+          <>
+            <input
+              type="month"
+              className="form-control"
+              aria-label="Month"
+              value={month}
+              max={thisMonth()}
+              onChange={(e) =>
+                e.target.value && setParams({ month: e.target.value })
+              }
+            />
+            <PendingButton
+              className="small"
+              pending={sync.isPending}
+              pendingLabel="Syncing…"
+              disabled={r ? !r.analyticsConfigured : false}
+              onClick={() => {
+                setSyncMsg(null);
+                sync.mutate();
+              }}
+            >
+              <SyncIcon size={14} /> Sync now
+            </PendingButton>
+          </>
+        }
+      />
+      <AdminFrame>
+        {syncMsg && <Notice tone={syncMsg.kind}>{syncMsg.text}</Notice>}
         {report.isPending ? (
-          <Spinner />
-        ) : report.error ? (
-          <div className="flash flash-error">{errorMessage(report.error)}</div>
+          <RowsSkeleton rows={4} />
+        ) : report.isError ? (
+          <LoadError
+            what="the usage report"
+            error={report.error}
+            onRetry={() => report.refetch()}
+          />
         ) : r ? (
           <>
             {!r.analyticsConfigured && (
-              <div className="flash flash-warn mb-3">
-                <AlertIcon /> Cloudflare analytics are not set up, so only what
-                GitOrange records itself (Actions runners, Workers AI calls,
-                emails) is shown. Add the <code>CF_ANALYTICS_TOKEN</code>{' '}
-                secret: an account API token with{' '}
-                <strong>Account Analytics: Read</strong>.
-              </div>
+              <Notice tone="warn">
+                Cloudflare analytics are not set up, so only what GitOrange
+                records itself (Actions runners, Workers AI calls, emails) is
+                shown. Add the <code>CF_ANALYTICS_TOKEN</code> secret: an
+                account API token with <b>Account Analytics: Read</b>.
+              </Notice>
             )}
-            <div
-              className="mb-4"
-              style={{
-                display: 'grid',
-                gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))',
-                gap: 16,
-              }}
-            >
+            <div className="stats">
               <Card
                 label="GitOrange usage at list price"
                 value={usd(r.totals.listCost)}
@@ -395,37 +356,35 @@ export default function AdminUsage() {
                 detail="Per account, not counted above"
               />
             </div>
-            <div className="flash mb-4 f6">
-              <InfoIcon /> Included allowances and the plan fee belong to the
-              whole Cloudflare account. If anything else runs on it, the
-              allowances are shared and the real bill for GitOrange’s usage is
-              somewhere between the two figures above.
-            </div>
+            <Notice tone="info">
+              Included allowances and the plan fee belong to the whole
+              Cloudflare account. If anything else runs on it, the allowances
+              are shared and the real bill for GitOrange’s usage is somewhere
+              between the two figures above.
+            </Notice>
 
-            <h3 className="f4 mb-2 d-flex flex-items-center" style={{ gap: 6 }}>
-              <GraphIcon /> Estimated cost per day
-            </h3>
-            <div className="Box p-3 mb-4">
-              <DailyChart report={r} />
-            </div>
-
-            <h3 className="f4 mb-2">By product</h3>
-            <LinesTable lines={r.lines} />
-
-            <div
-              style={{
-                display: 'grid',
-                gridTemplateColumns: 'repeat(auto-fit, minmax(300px, 1fr))',
-                gap: 16,
-              }}
+            <Section
+              title={
+                <>
+                  <GraphIcon size={16} /> Estimated cost per day
+                </>
+              }
             >
-              <div>
-                <h3 className="f4 mb-2">
-                  Actions: {qty(r.actions.minutes)} runner minutes,{' '}
-                  {usd(r.actions.cost)}
-                </h3>
+              <div className="panel pad">
+                <DailyChart report={r} />
+              </div>
+            </Section>
+
+            <Section title="By product">
+              <LinesTable lines={r.lines} />
+            </Section>
+
+            <div className="usage-cols">
+              <Section
+                title={`Actions: ${qty(r.actions.minutes)} runner minutes, ${usd(r.actions.cost)}`}
+              >
                 {r.actions.running > 0 && (
-                  <p className="f6 color-fg-muted">
+                  <p className="small muted">
                     {r.actions.running} runner(s) running now are counted up to
                     this moment.
                   </p>
@@ -448,13 +407,12 @@ export default function AdminUsage() {
                     cost: x.cost,
                   }))}
                 />
-              </div>
-              <div>
-                <h3 className="f4 mb-2">
-                  Workers AI: {qty(r.ai.requests)} calls, {usd(r.ai.cost)}
-                </h3>
+              </Section>
+              <Section
+                title={`Workers AI: ${qty(r.ai.requests)} calls, ${usd(r.ai.cost)}`}
+              >
                 {r.ai.unreportedRequests > 0 && (
-                  <p className="f6 color-fg-muted">
+                  <p className="small muted">
                     {r.ai.unreportedRequests} call(s) reported no token counts
                     and are not priced.
                   </p>
@@ -477,60 +435,64 @@ export default function AdminUsage() {
                     cost: x.cost,
                   }))}
                 />
-              </div>
+              </Section>
             </div>
 
             {r.gateway && (
-              <>
-                <h3 className="f4 mb-2">
-                  AI Gateway <code>{r.gateway.id}</code> (whole gateway)
-                </h3>
-                <div className="Box p-3 mb-4 f6">
+              <Section
+                title={
+                  <>
+                    AI Gateway <code>{r.gateway.id}</code> (whole gateway)
+                  </>
+                }
+              >
+                <div className="panel pad small">
                   {r.gateway.status === 'measured' ? (
-                    <>
+                    <p>
                       {qty(r.gateway.requests ?? 0)} requests
                       {r.gateway.estimatedCost !== null &&
                         `, ${usd(r.gateway.estimatedCost)} by the gateway’s own estimate`}
                       .
-                    </>
+                    </p>
                   ) : (
-                    <span className="color-fg-attention">
+                    <p className="attention">
                       {r.gateway.status === 'not-configured'
                         ? 'Not configured.'
                         : 'Unavailable.'}{' '}
                       {r.gateway.reason}
-                    </span>
+                    </p>
                   )}
-                  <div className="color-fg-muted mt-1">
+                  <p className="muted">
                     For the whole gateway, which other apps or a dev instance
                     may share; not added to GitOrange’s totals. GitOrange’s own
                     AI cost is the Workers AI section above.
-                  </div>
+                  </p>
                 </div>
-              </>
+              </Section>
             )}
 
-            <h3 className="f4 mb-2">Not measured</h3>
-            <ul className="f6 color-fg-muted ml-4 mb-4">
-              {r.notMeasured.map((n) => (
-                <li key={n}>{n}</li>
-              ))}
-            </ul>
-            <p className="f6 color-fg-muted">
-              Workers Paid list prices, last checked {r.prices.checkedOn}:{' '}
-              {r.prices.sources.map((s, i) => (
-                <span key={s}>
-                  {i > 0 && ', '}
-                  <a href={s} target="_blank" rel="noreferrer">
-                    {new URL(s).pathname.split('/').filter(Boolean)[0]}
-                  </a>
-                </span>
-              ))}
-              .
-            </p>
+            <Section title="Not measured">
+              <ul className="plain-bullets small muted">
+                {r.notMeasured.map((n) => (
+                  <li key={n}>{n}</li>
+                ))}
+              </ul>
+              <p className="small muted">
+                Workers Paid list prices, last checked {r.prices.checkedOn}:{' '}
+                {r.prices.sources.map((s, i) => (
+                  <span key={s}>
+                    {i > 0 && ', '}
+                    <a href={s} target="_blank" rel="noreferrer">
+                      {new URL(s).pathname.split('/').filter(Boolean)[0]}
+                    </a>
+                  </span>
+                ))}
+                .
+              </p>
+            </Section>
           </>
         ) : null}
-      </div>
+      </AdminFrame>
     </>
   );
 }

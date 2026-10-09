@@ -4,8 +4,9 @@ import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { api } from '@/lib/uiApi';
 import { signIn, signOut, useSession } from '@/lib/auth';
 import { errorMessage } from '@/lib/api';
-import { Spinner } from '@/components/Spinner';
-import { AuthShell, FlashError } from './AuthShell';
+import { PendingButton } from '@/components/ui/PendingButton';
+import { Notice } from '@/components/Notice';
+import { AuthLoading, AuthShell, FlashError } from './AuthShell';
 import { useAppName } from '@/lib/appName';
 
 export default function AcceptInvite() {
@@ -23,14 +24,14 @@ export default function AcceptInvite() {
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
 
-  if (invite.isPending) return <Spinner />;
+  if (invite.isPending) return <AuthLoading />;
   if (invite.error) {
     return (
-      <AuthShell title="Invitation not found">
-        <div className="flash flash-warn mb-3">
+      <AuthShell title="Invitation not found" docTitle="Invitation not found">
+        <Notice tone="warn">
           This invitation is invalid, has expired, or was already used.
-        </div>
-        <Link to="/login" className="btn btn-block">
+        </Notice>
+        <Link to="/login" className="btn block">
           Go to sign in
         </Link>
       </AuthShell>
@@ -57,57 +58,78 @@ export default function AcceptInvite() {
     }
   };
   return (
-    <AuthShell title={`Join ${appName}`} wide>
-      <p className="color-fg-muted text-center mb-3">
-        {invite.data.inviter ? (
+    <AuthShell
+      title={`Join ${appName}`}
+      docTitle="Join"
+      lede={
+        invite.data.inviter ? (
           <>
-            <strong className="color-fg-default">@{invite.data.inviter}</strong>{' '}
-            invited you to join.
+            <b>@{invite.data.inviter}</b> invited you to join.
           </>
         ) : (
           'You have been invited to join.'
-        )}
-      </p>
+        )
+      }
+      wide
+    >
       <FlashError message={error} />
-      <form className="auth-form-body" onSubmit={submit}>
-        <label>Email address</label>
-        <input
-          className="form-control input-block mt-1 mb-3"
-          value={invite.data.email}
-          disabled
-        />
-        <label htmlFor="name">Full name</label>
-        <input
-          id="name"
-          className="form-control input-block mt-1 mb-3"
-          required
-          value={form.name}
-          onChange={set('name')}
-          autoFocus
-        />
-        <label htmlFor="username">Username</label>
-        <input
-          id="username"
-          className="form-control input-block mt-1 mb-3"
-          required
-          value={form.username}
-          onChange={set('username')}
-        />
-        <label htmlFor="password">Password</label>
-        <input
-          id="password"
-          type="password"
-          minLength={8}
-          className="form-control input-block mt-1 mb-1"
-          required
-          value={form.password}
-          onChange={set('password')}
-          autoComplete="new-password"
-        />
-        <p className="note mb-3">Make sure it's at least 8 characters.</p>
-        <button className="btn btn-primary btn-block" disabled={busy}>
-          {busy ? 'Creating account…' : 'Create account'}
-        </button>
+      <form className="auth-fields" onSubmit={submit}>
+        <div className="fld">
+          <label htmlFor="invite-email">Email address</label>
+          <input
+            id="invite-email"
+            className="form-control"
+            value={invite.data.email}
+            disabled
+          />
+        </div>
+        <div className="fld">
+          <label htmlFor="name">Full name</label>
+          <input
+            id="name"
+            className="form-control"
+            required
+            value={form.name}
+            onChange={set('name')}
+            autoFocus
+          />
+        </div>
+        <div className="fld">
+          <label htmlFor="username">Username</label>
+          <input
+            id="username"
+            className="form-control"
+            required
+            value={form.username}
+            onChange={set('username')}
+            autoComplete="username"
+          />
+        </div>
+        <div className="fld">
+          <label htmlFor="password">Password</label>
+          <input
+            id="password"
+            type="password"
+            minLength={8}
+            className="form-control"
+            required
+            value={form.password}
+            onChange={set('password')}
+            autoComplete="new-password"
+            aria-describedby="password-hint"
+          />
+          <p id="password-hint" className="hint">
+            Make sure it is at least 8 characters.
+          </p>
+        </div>
+        <PendingButton
+          type="submit"
+          className="primary block"
+          pending={busy}
+          pendingLabel="Creating account…"
+        >
+          Create account
+        </PendingButton>
       </form>
     </AuthShell>
   );

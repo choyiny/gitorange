@@ -11,9 +11,11 @@ import { api, qk } from '@/lib/uiApi';
 import { apiFetch } from '@/lib/api';
 import { useCurrentUser } from '@/lib/auth';
 import { Avatar } from '@/components/Avatar';
-import { Logo } from '@/components/Logo';
-import { Spinner } from '@/components/Spinner';
+import { Notice } from '@/components/Notice';
+import { PendingButton } from '@/components/ui/PendingButton';
+import { RowsSkeleton } from '@/components/SetFrame';
 import { useAppName } from '@/lib/appName';
+import { AuthShell } from './AuthShell';
 
 type PublicClient = {
   client_id: string;
@@ -21,6 +23,16 @@ type PublicClient = {
   client_uri?: string;
   logo_uri?: string;
 };
+
+/** The host of a client's home page, or null when it is not a URL. */
+function hostOf(uri: string | undefined): string | null {
+  if (!uri) return null;
+  try {
+    return new URL(uri).host;
+  } catch {
+    return null;
+  }
+}
 
 /** OAuth consent: posts the decision with the signed query and follows the returned redirect. */
 export default function OAuthConsent() {
@@ -44,12 +56,12 @@ export default function OAuthConsent() {
 
   if (!params.has('sig') || !clientId)
     return (
-      <div className="container-sm px-3 py-6">
-        <div className="flash flash-error">
+      <AuthShell title="Authorization link" docTitle="Authorize">
+        <Notice tone="bad">
           This authorization link is incomplete or has expired. Start the
           connection again from your app.
-        </div>
-      </div>
+        </Notice>
+      </AuthShell>
     );
 
   const name = client.data?.client_name || 'An application';
@@ -91,114 +103,118 @@ export default function OAuthConsent() {
   const writes = tools.data?.tools.filter((t) => !t.annotations.readOnlyHint);
 
   return (
-    <div className="container-sm px-3 py-6" style={{ maxWidth: 480 }}>
-      <div
-        className="d-flex flex-items-center flex-justify-center mb-4"
-        style={{ gap: 16 }}
-      >
+    <AuthShell
+      title={
+        <>
+          <b>{name}</b> wants to access your {appName} account
+        </>
+      }
+      docTitle="Authorize"
+      hideBrand
+      wide
+    >
+      <div className="consent-marks" aria-hidden="true">
         {client.data?.logo_uri ? (
           <img
             src={client.data.logo_uri}
             alt=""
-            width={48}
-            height={48}
-            className="rounded-2"
+            width={44}
+            height={44}
+            className="consent-logo"
           />
         ) : (
-          <span className="circle color-bg-subtle p-3 d-inline-flex">
-            <PlugIcon size={24} />
+          <span className="consent-logo plug">
+            <PlugIcon size={22} />
           </span>
         )}
-        <SyncIcon className="color-fg-muted" />
-        <Logo size={48} />
+        <SyncIcon className="muted" />
+        <img src="/logo.png" alt="" width={44} height={44} />
       </div>
-      <h1 className="f3 text-normal text-center mb-4">
-        <strong>{name}</strong> wants to access your {appName} account
-      </h1>
       {client.isLoading ? (
-        <Spinner />
+        <RowsSkeleton rows={3} />
       ) : client.isError ? (
-        <div className="flash flash-error mb-3">
+        <Notice tone="bad">
           This app isn&apos;t registered with {appName}. Start the connection
           again from your app.
-        </div>
+        </Notice>
       ) : (
-        <div className="Box mb-3">
+        <ul className="rowlist perms">
           {user && (
-            <div
-              className="Box-row d-flex flex-items-center"
-              style={{ gap: 12 }}
-            >
+            <li>
               <Avatar user={user as { username: string }} size={32} />
-              <div className="f6">
-                Signed in as <strong>{user.username}</strong>. {name} will act
-                as you.
+              <div className="grow">
+                <span className="small">
+                  Signed in as <b>{user.username}</b>. {name} will act as you.
+                </span>
               </div>
-            </div>
+            </li>
           )}
-          <div className="Box-row d-flex" style={{ gap: 12 }}>
-            <EyeIcon className="color-fg-muted mt-1" />
-            <div>
-              <div className="text-bold">Read your repositories</div>
-              <div className="f6 color-fg-muted">
+          <li className="top">
+            <EyeIcon className="ic" />
+            <div className="grow">
+              <b>Read your repositories</b>
+              <span className="small muted">
                 {readOnly?.map((t) => t.title).join(', ') ||
                   'See the repositories you can see'}
                 . Includes private repositories you have access to.
-              </div>
+              </span>
             </div>
-          </div>
-          <div className="Box-row d-flex" style={{ gap: 12 }}>
-            <PencilIcon className="color-fg-muted mt-1" />
-            <div>
-              <div className="text-bold">Make changes</div>
-              <div className="f6 color-fg-muted">
+          </li>
+          <li className="top">
+            <PencilIcon className="ic" />
+            <div className="grow">
+              <b>Make changes</b>
+              <span className="small muted">
                 {writes?.map((t) => t.title).join(', ') ||
                   'Create repositories'}{' '}
                 as you.
-              </div>
+              </span>
             </div>
-          </div>
+          </li>
           {(scopes.includes('profile') || scopes.includes('email')) && (
-            <div className="Box-row d-flex" style={{ gap: 12 }}>
-              <PersonIcon className="color-fg-muted mt-1" />
-              <div>
-                <div className="text-bold">Know who you are</div>
-                <div className="f6 color-fg-muted">
+            <li className="top">
+              <PersonIcon className="ic" />
+              <div className="grow">
+                <b>Know who you are</b>
+                <span className="small muted">
                   Your name, username
                   {scopes.includes('email') ? ', and email address' : ''}.
-                </div>
+                </span>
               </div>
-            </div>
+            </li>
           )}
           {scopes.includes('offline_access') && (
-            <div className="Box-row f6 color-fg-muted">
+            <li className="small muted">
               Stays connected until you disconnect it in Settings → MCP server.
-            </div>
+            </li>
           )}
-        </div>
+        </ul>
       )}
-      {error && <div className="flash flash-error mb-3">{error}</div>}
-      <div className="d-flex" style={{ gap: 8 }}>
+      {error && <Notice tone="bad">{error}</Notice>}
+      <div className="consent-actions">
         <button
-          className="btn flex-1"
+          type="button"
+          className="btn"
           disabled={busy !== null}
           onClick={() => decide(false)}
         >
           {busy === 'deny' ? 'Cancelling…' : 'Cancel'}
         </button>
-        <button
-          className="btn btn-primary flex-1"
+        <PendingButton
+          className="primary"
+          pending={busy === 'allow'}
+          pendingLabel="Authorizing…"
           disabled={busy !== null || client.isError || client.isLoading}
           onClick={() => decide(true)}
         >
-          {busy === 'allow' ? 'Authorizing…' : `Authorize ${name}`}
-        </button>
+          Authorize {name}
+        </PendingButton>
       </div>
-      {client.data?.client_uri && (
-        <p className="f6 color-fg-muted text-center mt-3 mb-0">
-          From {new URL(client.data.client_uri).host}
+      {hostOf(client.data?.client_uri) && (
+        <p className="auth-foot plain">
+          From {hostOf(client.data?.client_uri)}
         </p>
       )}
-    </div>
+    </AuthShell>
   );
 }

@@ -1,0 +1,126 @@
+/* The pages outside the shell (setup, sign in, invitation, authorization) and the not-found page. One card,
+   centred on the theme's chrome colour like HQ's sign-in. Tokens only. */
+
+/* `.app` brings the chrome tokens and background; here it becomes a scrollable stage for the card. */
+.app.auth-page {
+  align-items: flex-start;
+  justify-content: center;
+  overflow-y: auto;
+  padding: 24px 16px;
+  box-sizing: border-box;
+}
+.auth-card {
+  margin: auto;
+  width: min(100%, 400px);
+  box-sizing: border-box;
+  display: grid;
+  gap: 16px;
+  padding: 28px;
+  background: var(--surface);
+  color: var(--ink);
+  border: 1px solid var(--chrome-edge);
+  border-radius: 18px;
+  box-shadow: var(--sh-lg);
+}
+.auth-card.wide {
+  width: min(100%, 440px);
+}
+:root[data-skin='dev'] .auth-card {
+  border-radius: 6px;
+  box-shadow: none;
+}
+.auth-brand {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  color: var(--ink);
+}
+.auth-title {
+  font-size: 20px;
+  font-weight: 700;
+  letter-spacing: -0.02em;
+  line-height: 1.25;
+}
+.auth-lede {
+  color: var(--ink-2);
+  font-size: 14px;
+}
+.auth-fields {
+  display: grid;
+  gap: 14px;
+}
+.auth-foot {
+  text-align: center;
+  font-size: 12.5px;
+  color: var(--muted);
+  padding-top: 14px;
+  border-top: 1px solid var(--line);
+}
+.auth-foot.plain {
+  border: 0;
+  padding: 0;
+}
+.auth-card a:not(.btn) {
+  color: var(--accent);
+}
+
+/* ---------- Authorizing an app ---------- */
+.consent-marks {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 16px;
+}
+.consent-logo {
+  width: 44px;
+  height: 44px;
+  border-radius: 10px;
+  object-fit: cover;
+}
+.consent-logo.plug {
+  display: grid;
+  place-items: center;
+  background: var(--surface-3);
+  color: var(--ink-2);
+}
+.rowlist.perms {
+  border: 1px solid var(--line);
+  border-radius: var(--r);
+  background: var(--surface-2);
+}
+.consent-actions {
+  display: flex;
+  gap: 8px;
+}
+.consent-actions .btn {
+  flex: 1;
+  justify-content: center;
+}
+
+/* ---------- Not found ---------- */
+.notfound {
+  display: grid;
+  justify-items: center;
+  gap: 10px;
+  padding: 56px 16px;
+  text-align: center;
+}
+.nf-code {
+  font-size: 56px;
+  font-weight: 600;
+  line-height: 1;
+  letter-spacing: -0.04em;
+  color: var(--faint);
+}
+.notfound h2 {
+  font-size: 20px;
+  font-weight: 700;
+}
+.notfound p {
+  max-width: 46ch;
+  color: var(--ink-2);
+}
+.notfound .actions {
+  justify-content: center;
+  margin-top: 6px;
+}

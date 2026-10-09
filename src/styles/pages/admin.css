@@ -1,0 +1,202 @@
+/* Site admin: people and team, setup checks, instance settings, usage and cost. Uses the frame and row lists from
+   account.css. Tokens only. */
+
+.adm-people {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 22px;
+  min-width: 0;
+}
+.setbody .section {
+  grid-template-columns: minmax(0, 1fr);
+}
+.num {
+  margin-left: 2px;
+}
+
+/* ---------- Setup checks ---------- */
+.rowlist > li.check {
+  align-items: flex-start;
+  flex-wrap: nowrap;
+}
+.st {
+  flex: none;
+  margin-top: 2px;
+}
+.st.bad {
+  color: var(--bad);
+}
+.st.warn {
+  color: var(--warn);
+}
+.st.ok {
+  color: var(--ok);
+}
+.check-body {
+  flex: 1;
+  min-width: 0;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 6px;
+}
+.check-title {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+.check-title b {
+  overflow-wrap: anywhere;
+}
+.howfix {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 4px;
+}
+.howfix ol {
+  margin: 0;
+  list-style: decimal;
+  padding-left: 20px;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 8px;
+}
+.codebox {
+  display: flex;
+  align-items: flex-start;
+  gap: 4px;
+  margin-top: 4px;
+  background: var(--surface-2);
+  border: 1px solid var(--line);
+  border-radius: var(--r-sm);
+}
+.codebox pre {
+  flex: 1;
+  min-width: 0;
+  margin: 0;
+  padding: 8px 10px;
+  overflow-x: auto;
+  white-space: pre;
+  font-size: 12.5px;
+}
+.gw-test {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 8px;
+  margin-top: 4px;
+}
+.gw-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+.fold {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 12px 16px;
+  background: none;
+  border: 0;
+  text-align: left;
+  color: var(--ink);
+  cursor: pointer;
+}
+.fold .grow {
+  flex: 1;
+}
+.fold + .rowlist {
+  border-top: 1px solid var(--line);
+}
+
+/* ---------- Instance settings ---------- */
+.group-title {
+  font-size: 14px;
+  font-weight: 700;
+}
+.rowlist > li.setting {
+  display: block;
+  padding: 14px 16px;
+}
+.setting form {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 6px;
+}
+.setting-label {
+  font-size: 13.5px;
+  font-weight: 600;
+}
+.setting-input {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+.setting-input .short {
+  width: 110px;
+}
+.setting-input .wide {
+  flex: 1 1 220px;
+  min-width: 0;
+}
+.check-inline {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  margin-left: 6px;
+}
+.saved {
+  color: var(--ok);
+}
+.rowlist > li.setting-foot {
+  display: block;
+  padding: 12px 16px;
+}
+
+/* ---------- Usage and cost ---------- */
+.stats {
+  align-items: stretch;
+}
+.usage-cols {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 300px), 1fr));
+  gap: 22px;
+  align-items: start;
+}
+.table.usage .r {
+  text-align: right;
+  white-space: nowrap;
+}
+.table.usage .group th {
+  background: var(--surface-2);
+  font-size: 12.5px;
+}
+.table.usage td.metric {
+  min-width: 220px;
+}
+.table.usage .note {
+  margin-top: 4px;
+  font-size: 12.5px;
+}
+.daily {
+  margin: 0;
+  display: grid;
+  gap: 6px;
+}
+.daily .axis {
+  stroke: var(--line-2);
+}
+.daily .bar {
+  fill: var(--accent);
+}
+.daily .tick {
+  fill: var(--muted);
+}
+.plain-bullets {
+  margin: 0;
+  padding-left: 20px;
+  display: grid;
+  gap: 4px;
+}

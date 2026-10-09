@@ -1,22 +1,18 @@
 import { useEffect, useRef, useState } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { CheckCircleIcon, MailIcon } from '@primer/octicons-react';
 import { api, qk, type AlternateEmail } from '@/lib/uiApi';
 import { errorMessage } from '@/lib/api';
-import { usePageHead } from '@/components/ui/PageHead';
-import { Spinner } from '@/components/Spinner';
-import { SettingsNav } from '@/components/SettingsNav';
+import { PageHead } from '@/components/ui/PageHead';
+import { Chip } from '@/components/ui/Chip';
+import { PendingButton } from '@/components/ui/PendingButton';
+import { InlineConfirm } from '@/components/InlineConfirm';
+import { LoadError, Notice } from '@/components/Notice';
+import { RowsSkeleton, SettingsFrame } from '@/components/SetFrame';
 
 /** Settings → Emails: the addresses whose commits are linked to your profile. */
 export default function SettingsEmails() {
-  usePageHead({
-    icon: 'mail',
-    crumbs: [
-      { label: 'Settings', to: '/settings/tokens' },
-      { label: 'Emails' },
-    ],
-    title: 'Emails',
-  });
   const qc = useQueryClient();
   const emails = useQuery({ queryKey: qk.emails, queryFn: api.emails });
   const [email, setEmail] = useState('');
@@ -38,13 +34,16 @@ export default function SettingsEmails() {
       setLabel('');
       setError(null);
       sentNotice(r.email.email, r.emailed);
-      refresh();
+      return refresh();
     },
     onError: (e) => setError(errorMessage(e)),
   });
   const remove = useMutation({
     mutationFn: (id: string) => api.deleteEmail(id),
-    onSuccess: refresh,
+    onSuccess: () => {
+      setError(null);
+      return refresh();
+    },
     onError: (e) => setError(errorMessage(e)),
   });
   const resend = useMutation({
@@ -52,116 +51,132 @@ export default function SettingsEmails() {
     onSuccess: (r) => {
       setError(null);
       sentNotice(r.email.email, r.emailed);
-      refresh();
+      return refresh();
     },
     onError: (e) => setError(errorMessage(e)),
   });
   const data = emails.data;
+
   return (
     <>
-      <div
-        className="container-lg px-3 py-4 d-flex flex-column flex-md-row"
-        style={{ gap: 24 }}
-      >
-        <SettingsNav />
-        <div className="flex-1" style={{ minWidth: 0 }}>
-          <div className="Subhead">
-            <h2 className="Subhead-heading">Emails</h2>
-            <div className="Subhead-description">
-              Commits whose author or committer email is one of these are linked
-              to your profile. Add the addresses you set as{' '}
-              <code>user.email</code> in git. Other addresses must be verified
-              before they count.
-            </div>
+      <PageHead
+        icon="mail"
+        crumbs={[
+          { label: 'Settings', to: '/settings/tokens' },
+          { label: 'Emails' },
+        ]}
+        title="Emails"
+        lede={
+          <>
+            Commits whose author or committer email is one of these are linked
+            to your profile. Add the addresses you set as{' '}
+            <code>user.email</code> in git. Other addresses must be verified
+            before they count.
+          </>
+        }
+      />
+      <SettingsFrame>
+        {data && !data.emailConfigured && (
+          <Notice tone="warn">
+            This instance cannot send email, so verification links can&apos;t be
+            delivered and new addresses stay unverified. Ask a site admin to
+            configure email sending.
+          </Notice>
+        )}
+        {notice && <Notice tone="info">{notice}</Notice>}
+        {error && <Notice tone="bad">{error}</Notice>}
+        <section className="panel" aria-label="Your email addresses">
+          <div className="pad">
+            <h2>Email addresses</h2>
           </div>
-          {data && !data.emailConfigured && (
-            <div className="flash flash-warn mb-3">
-              This instance cannot send email, so verification links can't be
-              delivered and new addresses stay unverified. Ask a site admin to
-              configure email sending.
+          {emails.isPending ? (
+            <div className="pad">
+              <RowsSkeleton rows={2} />
             </div>
-          )}
-          {notice && <div className="flash mb-3">{notice}</div>}
-          {error && <div className="flash flash-error mb-3">{error}</div>}
-          {!data ? (
-            <Spinner />
+          ) : emails.isError ? (
+            <div className="pad">
+              <LoadError
+                what="your email addresses"
+                error={emails.error}
+                onRetry={() => emails.refetch()}
+              />
+            </div>
           ) : (
-            <>
-              <div className="Box mb-4">
-                <div
-                  className="Box-row d-flex flex-items-center flex-wrap"
-                  style={{ gap: 8 }}
-                >
-                  <span className="text-bold text-break">{data.primary}</span>
-                  <span className="Label Label--accent">Primary</span>
-                  <span className="f6 color-fg-muted">Your account email.</span>
+            <ul className="rowlist">
+              <li>
+                <MailIcon className="ic" />
+                <div className="grow">
+                  <b className="wrap">{data!.primary}</b>
+                  <span className="muted small">Your account email.</span>
                 </div>
-                {data.alternates.map((e) => (
-                  <EmailRow
-                    key={e.id}
-                    e={e}
-                    onRemove={() => remove.mutate(e.id)}
-                    onResend={() => resend.mutate(e.id)}
-                    resending={resend.isPending && resend.variables === e.id}
-                  />
-                ))}
-              </div>
-              <form
-                className="Box p-3"
-                onSubmit={(ev) => {
-                  ev.preventDefault();
-                  setNotice(null);
-                  add.mutate();
-                }}
-              >
-                <h3 className="f4 mb-3">Add email address</h3>
-                <div
-                  className="d-flex flex-wrap flex-items-end"
-                  style={{ gap: 12 }}
-                >
-                  <div className="flex-1" style={{ minWidth: 220 }}>
-                    <label
-                      className="d-block f6 text-bold mb-1"
-                      htmlFor="email-address"
-                    >
-                      Email address
-                    </label>
-                    <input
-                      id="email-address"
-                      type="email"
-                      className="form-control width-full"
-                      required
-                      maxLength={254}
-                      placeholder="you@work.example"
-                      value={email}
-                      onChange={(ev) => setEmail(ev.target.value)}
-                    />
-                  </div>
-                  <div style={{ minWidth: 160 }}>
-                    <label
-                      className="d-block f6 text-bold mb-1"
-                      htmlFor="email-label"
-                    >
-                      Label <span className="text-normal">(optional)</span>
-                    </label>
-                    <input
-                      id="email-label"
-                      className="form-control width-full"
-                      maxLength={40}
-                      placeholder="Work, Personal…"
-                      value={label}
-                      onChange={(ev) => setLabel(ev.target.value)}
-                    />
-                  </div>
-                  <button className="btn btn-primary" disabled={add.isPending}>
-                    Add
-                  </button>
+                <div className="ctl">
+                  <Chip tone="info">Primary</Chip>
                 </div>
-              </form>
-            </>
+              </li>
+              {data!.alternates.map((e) => (
+                <EmailRow
+                  key={e.id}
+                  e={e}
+                  onRemove={() => remove.mutate(e.id)}
+                  removing={remove.isPending && remove.variables === e.id}
+                  onResend={() => resend.mutate(e.id)}
+                  resending={resend.isPending && resend.variables === e.id}
+                />
+              ))}
+            </ul>
           )}
-        </div>
-      </div>
+          <form
+            className="formpad"
+            onSubmit={(ev) => {
+              ev.preventDefault();
+              setNotice(null);
+              add.mutate();
+            }}
+          >
+            <h3 className="formtitle">Add an email address</h3>
+            <div className="frow">
+              <div className="fld grow2">
+                <label htmlFor="email-address">Email address</label>
+                <input
+                  id="email-address"
+                  type="email"
+                  className="form-control"
+                  required
+                  maxLength={254}
+                  placeholder="you@work.example"
+                  value={email}
+                  onChange={(ev) => setEmail(ev.target.value)}
+                />
+              </div>
+              <div className="fld">
+                <label htmlFor="email-label">
+                  Label <span className="muted">(optional)</span>
+                </label>
+                <input
+                  id="email-label"
+                  className="form-control"
+                  maxLength={40}
+                  placeholder="Work, Personal…"
+                  value={label}
+                  onChange={(ev) => setLabel(ev.target.value)}
+                />
+              </div>
+              <PendingButton
+                type="submit"
+                className="primary"
+                pending={add.isPending}
+                pendingLabel="Adding…"
+              >
+                Add
+              </PendingButton>
+            </div>
+            <p className="small muted">
+              We send a link to verify it. Open the link while you are signed
+              in.
+            </p>
+          </form>
+        </section>
+      </SettingsFrame>
     </>
   );
 }
@@ -169,11 +184,13 @@ export default function SettingsEmails() {
 function EmailRow({
   e,
   onRemove,
+  removing,
   onResend,
   resending,
 }: {
   e: AlternateEmail;
   onRemove: () => void;
+  removing: boolean;
   onResend: () => void;
   resending: boolean;
 }) {
@@ -184,7 +201,7 @@ function EmailRow({
     mutationFn: () => api.updateEmail(e.id, { label: label.trim() || null }),
     onSuccess: () => {
       setEditing(false);
-      qc.invalidateQueries({ queryKey: qk.emails });
+      return qc.invalidateQueries({ queryKey: qk.emails });
     },
   });
   const expired =
@@ -192,90 +209,100 @@ function EmailRow({
     (!e.verificationExpiresAt ||
       new Date(e.verificationExpiresAt) < new Date());
   return (
-    <div
-      className="Box-row d-flex flex-items-center flex-wrap"
-      style={{ gap: 8 }}
-    >
-      <span className="text-bold text-break">{e.email}</span>
-      {e.verified ? (
-        <span className="Label Label--success">Verified</span>
-      ) : (
-        <span
-          className="Label Label--attention"
-          title={
-            expired
-              ? 'The link expired; anyone may now claim this address. Resend to keep it.'
-              : 'Open the link we emailed to verify'
-          }
-        >
-          Unverified{expired ? ' · link expired' : ''}
-        </span>
-      )}
-      {editing ? (
-        <form
-          className="d-flex flex-items-center"
-          style={{ gap: 4 }}
-          onSubmit={(ev) => {
-            ev.preventDefault();
-            save.mutate();
-          }}
-        >
-          <input
-            className="form-control input-sm"
-            maxLength={40}
-            placeholder="Label"
-            aria-label="Label"
-            value={label}
-            autoFocus
-            onChange={(ev) => setLabel(ev.target.value)}
-          />
-          <button className="btn btn-sm" disabled={save.isPending}>
-            Save
-          </button>
-          <button
-            type="button"
-            className="btn-link f6"
-            onClick={() => setEditing(false)}
+    <li>
+      <MailIcon className="ic" />
+      <div className="grow">
+        <b className="wrap">{e.email}</b>
+        <div className="muted small">
+          {editing ? (
+            <form
+              className="labelform"
+              onSubmit={(ev) => {
+                ev.preventDefault();
+                save.mutate();
+              }}
+            >
+              <input
+                className="form-control input-sm"
+                maxLength={40}
+                placeholder="Label"
+                aria-label={`Label for ${e.email}`}
+                value={label}
+                autoFocus
+                onChange={(ev) => setLabel(ev.target.value)}
+              />
+              <PendingButton
+                type="submit"
+                className="small"
+                pending={save.isPending}
+                error={save.isError ? errorMessage(save.error) : null}
+              >
+                Save
+              </PendingButton>
+              <button
+                type="button"
+                className="btn small quiet"
+                onClick={() => setEditing(false)}
+              >
+                Cancel
+              </button>
+            </form>
+          ) : (
+            <button
+              type="button"
+              className="linkish"
+              onClick={() => {
+                setLabel(e.label ?? '');
+                setEditing(true);
+              }}
+            >
+              {e.label ? `Label: ${e.label}` : 'Add label'}
+            </button>
+          )}
+        </div>
+      </div>
+      <div className="ctl">
+        {e.verified ? (
+          <Chip tone="good" icon={<CheckCircleIcon size={12} />}>
+            Verified
+          </Chip>
+        ) : (
+          <Chip
+            tone="warn"
+            title={
+              expired
+                ? 'The link expired; anyone may now claim this address. Resend to keep it.'
+                : 'Open the link we emailed to verify'
+            }
           >
-            Cancel
-          </button>
-        </form>
-      ) : (
-        <button
-          type="button"
-          className="btn-link f6 color-fg-muted"
-          onClick={() => {
-            setLabel(e.label ?? '');
-            setEditing(true);
-          }}
-        >
-          {e.label ? <span className="Label">{e.label}</span> : 'Add label'}
-        </button>
-      )}
-      <span className="flex-1" />
-      {!e.verified && (
-        <button className="btn btn-sm" onClick={onResend} disabled={resending}>
-          Resend
-        </button>
-      )}
-      <button className="btn btn-sm btn-danger" onClick={onRemove}>
-        Delete
-      </button>
-    </div>
+            Unverified{expired ? ' · link expired' : ''}
+          </Chip>
+        )}
+        {!e.verified && (
+          <PendingButton
+            className="small"
+            pending={resending}
+            pendingLabel="Sending…"
+            onClick={onResend}
+          >
+            Resend
+          </PendingButton>
+        )}
+        <InlineConfirm
+          label="Delete"
+          confirmLabel="Delete address"
+          pendingLabel="Deleting…"
+          accessibleName={`Delete ${e.email}`}
+          pending={removing}
+          onConfirm={onRemove}
+        />
+      </div>
+    </li>
   );
 }
 
 /** `/settings/emails/verify?token=…`, the link in the verification email. */
 export function VerifyEmail() {
-  usePageHead({
-    icon: 'mail',
-    crumbs: [
-      { label: 'Settings', to: '/settings/tokens' },
-      { label: 'Emails', to: '/settings/emails' },
-      { label: 'Verify email' },
-    ],
-    title: 'Verify email',
-  });
   const [params] = useSearchParams();
   const token = params.get('token') ?? '';
   const qc = useQueryClient();
@@ -292,25 +319,36 @@ export function VerifyEmail() {
   }, [token, verify]);
   return (
     <>
-      <div className="container-md px-3 py-6">
-        <div className="Box p-4">
+      <PageHead
+        icon="mail"
+        crumbs={[
+          { label: 'Settings', to: '/settings/tokens' },
+          { label: 'Emails', to: '/settings/emails' },
+          { label: 'Verify email' },
+        ]}
+        title="Verify email"
+      />
+      <SettingsFrame>
+        <section className="panel pad verify" aria-live="polite">
           {!token ? (
-            <p>This verification link is incomplete.</p>
+            <Notice tone="warn">This verification link is incomplete.</Notice>
           ) : verify.isSuccess ? (
-            <p>
-              <strong>{verify.data.email}</strong> is verified. Commits authored
-              with it are now linked to your profile.
-            </p>
+            <Notice tone="ok">
+              <b>{verify.data.email}</b> is verified. Commits authored with it
+              are now linked to your profile.
+            </Notice>
           ) : verify.isError ? (
-            <p className="color-fg-danger">{errorMessage(verify.error)}</p>
+            <Notice tone="bad">{errorMessage(verify.error)}</Notice>
           ) : (
-            <Spinner />
+            <RowsSkeleton rows={1} />
           )}
-          <Link to="/settings/emails" className="btn btn-sm mt-2">
-            Back to email settings
-          </Link>
-        </div>
-      </div>
+          <div className="actions">
+            <Link to="/settings/emails" className="btn small">
+              Back to email settings
+            </Link>
+          </div>
+        </section>
+      </SettingsFrame>
     </>
   );
 }
