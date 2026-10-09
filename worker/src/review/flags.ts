@@ -6,8 +6,18 @@ import {
   prReviewFlags,
   type PullRequest,
 } from '../db/app.schema';
+import { users } from '../db/auth.schema';
 import type { GitService } from '../git/service';
+import { recordAudit } from '../lib/audit';
 import { maybeAutoMerge } from './auto-merge';
+
+/** A finding's title (its `value.title`), for the audit log. */
+function flagTitle(value: unknown): string {
+  const title = (value as { title?: unknown } | null)?.title;
+  return typeof title === 'string' && title.trim()
+    ? title.trim().slice(0, 200)
+    : 'Finding';
+}
 
 /** The longest note a person can leave when requesting changes on a flag. */
 export const CHANGES_NOTE_MAX = 1000;
@@ -73,6 +83,8 @@ export async function decideFlag(
     .select({
       id: prReviewFlags.id,
       kind: prReviewFlags.kind,
+      value: prReviewFlags.value,
+      agent: users.username,
       headSha: prClassifications.headSha,
     })
     .from(prReviewFlags)
@@ -80,6 +92,7 @@ export async function decideFlag(
       prClassifications,
       eq(prClassifications.id, prReviewFlags.classificationId)
     )
+    .leftJoin(users, eq(users.id, prReviewFlags.agentId))
     .where(
       and(
         eq(prReviewFlags.id, flagId),
@@ -116,9 +129,17 @@ export async function decideFlag(
     eq(prReviewFlags.id, flagId),
     isNull(prReviewFlags.approvedAt)
   );
+  const audit = {
+    repositoryId: pr.repositoryId,
+    actorId: userId,
+    via: opts.via ?? null,
+    target: flagTitle(flag.value),
+    pull: pr.number,
+  };
+  const facts = { finding: flag.id, kind: flag.kind, agent: flag.agent };
   if (decision.kind === 'approve') {
-    // Approving twice keeps the first approval (and how it was made).
-    await db
+    // Approving twice keeps the first approval (and how it was made), and records it once.
+    const approved = await db
       .update(prReviewFlags)
       .set({
         approvedById: userId,
@@ -128,7 +149,14 @@ export async function decideFlag(
         changesRequestedAt: null,
         changesRequestedNote: null,
       })
-      .where(unapproved);
+      .where(unapproved)
+      .returning({ id: prReviewFlags.id });
+    if (approved.length)
+      await recordAudit(db, {
+        ...audit,
+        action: 'finding.approved',
+        data: facts,
+      });
   } else {
     const updated = await db
       .update(prReviewFlags)
@@ -141,6 +169,11 @@ export async function decideFlag(
       .returning({ id: prReviewFlags.id });
     if (!updated.length)
       return { ok: false, status: 400, error: 'This flag is already approved' };
+    await recordAudit(db, {
+      ...audit,
+      action: 'finding.changes_requested',
+      data: { ...facts, note },
+    });
   }
   after(
     maybeAutoMerge(env, db, pr.id).catch((e) =>

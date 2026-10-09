@@ -105,6 +105,10 @@ describe('agentTemplate', () => {
       trigger: { above: 0.5 },
     });
     expect(config.instructions).toContain('# Data: "the" Agent');
+    // A blank agent covers "other" and takes its colour from its handle.
+    expect(config.facet).toBe('other');
+    expect(config.color).toBeUndefined();
+    expect(config.guarded).toBeUndefined();
     expect(files['knowledge/README.md']).toContain('20 files');
     expect(files[AVATAR_PATH]).toEqual(await identiconPng('dataagent'));
   });

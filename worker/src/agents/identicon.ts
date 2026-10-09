@@ -1,7 +1,7 @@
 import { concat, deflate, encoder } from '../git/bytes';
 
 /** FNV-1a, exactly as `src/components/Avatar.tsx` hashes usernames. */
-function fnv1a(s: string) {
+export function fnv1a(s: string) {
   let h = 2166136261;
   for (let i = 0; i < s.length; i++) {
     h ^= s.charCodeAt(i);

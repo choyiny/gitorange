@@ -1,5 +1,5 @@
 import { z } from '@hono/zod-openapi';
-import { lessonStatuses } from '../db/app.schema';
+import { agentFacets, auditActorKinds, lessonStatuses } from '../db/app.schema';
 import { PULL_STATES, REASON_KINDS } from '../pulls/state';
 
 export const publicUserSchema = z
@@ -17,6 +17,12 @@ export const agentSchema = publicUserSchema
     bio: z.string(),
     trigger: z.object({ ask: z.string(), above: z.number() }),
     engine: z.enum(['pass', 'pi']),
+    /** `#rrggbb`: AGENT.md's colour, else a stable one from the palette. */
+    color: z.string(),
+    /** What it covers (AGENT.md `facet`); null when AGENT.md doesn't say. */
+    facet: z.enum(agentFacets).nullable(),
+    /** Its findings are never approved in bulk, by one key or by AI, and approving one needs a reason. */
+    guarded: z.boolean(),
     /** `<handle>/<handle>`; null once its repository was deleted, or when the viewer can't read it. */
     repository: z.string().nullable(),
     /** The commit of the AGENT.md these fields came from; null when `repository` is. */
@@ -124,6 +130,55 @@ export const prEventSchema = z
     createdAt: z.string(),
   })
   .openapi('PullEvent');
+
+/** A reviewer preset (worker/src/agents/presets.ts), for Agents → New reviewer. */
+export const agentPresetSchema = z
+  .object({
+    facet: z.enum(agentFacets),
+    name: z.string(),
+    handle: z.string(),
+    bio: z.string(),
+    color: z.string(),
+    guarded: z.boolean(),
+    triggerAsk: z.string(),
+    triggerAbove: z.number(),
+    engine: z.enum(['pass', 'pi']),
+    /** Part of "the recommended crew" (POST /api/admin/agents/crew). */
+    recommended: z.boolean(),
+    /** Its handle is taken (it was created already, or someone else holds the name): it can't be created. */
+    exists: z.boolean(),
+  })
+  .openapi('AgentPreset');
+
+/** One entry of an audit log: an audit_events row, or a pull request timeline event (`pull.<kind>`). */
+export const auditEventSchema = z
+  .object({
+    id: z.string(),
+    /** Epoch milliseconds. */
+    at: z.number(),
+    actor: z.object({
+      kind: z.enum(auditActorKinds),
+      login: z.string().nullable(),
+      name: z.string().nullable(),
+    }),
+    /** The app it went through: a connected MCP app's name, or "GitOrange AI". */
+    via: z.string().nullable(),
+    action: z.string(),
+    target: z.string(),
+    data: z.record(z.string(), z.unknown()),
+    /** `owner/name`; null for an instance event. */
+    repo: z.string().nullable(),
+    pull: z.number().nullable(),
+  })
+  .openapi('AuditEvent');
+
+export const auditPageSchema = z
+  .object({
+    events: z.array(auditEventSchema),
+    /** Pass as `cursor` for the next (older) page; null on the last. */
+    nextCursor: z.string().nullable(),
+  })
+  .openapi('AuditPage');
 
 /** What an agent learned from one pull request's dismissed change requests (learn/view.ts LessonView). */
 export const lessonSchema = z

@@ -1,6 +1,7 @@
 import { OpenAPIHono, createRoute, z } from '@hono/zod-openapi';
 import { and, desc, eq } from 'drizzle-orm';
 import { personalAccessTokens } from '../db/app.schema';
+import { recordAudit } from '../lib/audit';
 import { hashToken, randomToken } from '../lib/tokens';
 import type { AppEnv } from '../variables';
 import {
@@ -92,6 +93,13 @@ tokensRouter.openapi(createTokenRoute, async (c) => {
     createdAt: now,
   };
   await c.get('db').insert(personalAccessTokens).values(row);
+  await recordAudit(c.get('db'), {
+    repositoryId: null,
+    actorId: row.userId,
+    action: 'token.created',
+    target: name,
+    data: { token: row.id, expiresAt: row.expiresAt?.getTime() ?? null },
+  });
   return c.json({ token: serialize(row), plaintext }, 201);
 });
 
@@ -103,7 +111,7 @@ const deleteRoute = createRoute({
   responses: { ...json200Response(okSchema, 'Deleted') },
 });
 tokensRouter.openapi(deleteRoute, async (c) => {
-  await c
+  const deleted = await c
     .get('db')
     .delete(personalAccessTokens)
     .where(
@@ -111,6 +119,18 @@ tokensRouter.openapi(deleteRoute, async (c) => {
         eq(personalAccessTokens.id, c.req.valid('param').id),
         eq(personalAccessTokens.userId, c.get('user')!.id)
       )
-    );
+    )
+    .returning({
+      id: personalAccessTokens.id,
+      name: personalAccessTokens.name,
+    });
+  for (const token of deleted)
+    await recordAudit(c.get('db'), {
+      repositoryId: null,
+      actorId: c.get('user')!.id,
+      action: 'token.deleted',
+      target: token.name,
+      data: { token: token.id },
+    });
   return c.json({ ok: true as const }, 200);
 });

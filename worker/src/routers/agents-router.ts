@@ -1,7 +1,9 @@
 import { OpenAPIHono, createRoute, z } from '@hono/zod-openapi';
-import { eq } from 'drizzle-orm';
+import { eq, inArray, sql } from 'drizzle-orm';
 import { requireAdmin } from '../auth/guards';
-import { repositoryAgents } from '../db/app.schema';
+import { repositoryAgents, teams } from '../db/app.schema';
+import { users } from '../db/auth.schema';
+import type { DrizzleDB } from '../db/middleware';
 import {
   agentByHandle,
   createAgent,
@@ -12,6 +14,8 @@ import {
 } from '../agents/accounts';
 import { AVATAR_PATH } from '../agents/config';
 import { inviteAgent, removeAgent } from '../agents/membership';
+import { PRESET_FACETS, PRESETS } from '../agents/presets';
+import { recordAudit } from '../lib/audit';
 import { settleStates } from '../pulls/settle';
 import { autoMergeRepository } from '../review/auto-merge';
 import { cancelAgentReviews } from '../review/reviewers';
@@ -33,7 +37,7 @@ import {
   okSchema,
   validationHook,
 } from './openapi-helpers';
-import { agentSchema, ownerRepoParams } from './schemas';
+import { agentPresetSchema, agentSchema, ownerRepoParams } from './schemas';
 
 const handleParams = z.object({ handle: z.string() });
 
@@ -54,6 +58,58 @@ const listRoute = createRoute({
 agentsRouter.openapi(listRoute, async (c) => {
   return c.json(
     (await listAgents(c.get('db'), c.get('user')!)).map(serializeAgent),
+    200
+  );
+});
+
+/** Which of `handles` are taken by a user (an agent's included) or the team. */
+async function takenHandles(db: DrizzleDB, handles: string[]) {
+  const [byUsers, byTeam] = await db.batch([
+    db
+      .select({ name: sql<string>`lower(${users.username})` })
+      .from(users)
+      .where(inArray(sql`lower(${users.username})`, handles)),
+    db
+      .select({ name: teams.slug })
+      .from(teams)
+      .where(inArray(teams.slug, handles)),
+  ]);
+  return new Set([...byUsers, ...byTeam].map((r) => r.name));
+}
+
+const presetsRoute = createRoute({
+  method: 'get',
+  path: '/presets',
+  tags: ['Agents'],
+  responses: {
+    ...json200Response(
+      z.array(agentPresetSchema),
+      'The seven reviewer presets, and whether each one exists'
+    ),
+  },
+});
+agentsRouter.openapi(presetsRoute, async (c) => {
+  const taken = await takenHandles(
+    c.get('db'),
+    PRESET_FACETS.map((f) => PRESETS[f].handle)
+  );
+  return c.json(
+    PRESET_FACETS.map((f) => {
+      const p = PRESETS[f];
+      return {
+        facet: p.facet,
+        name: p.name,
+        handle: p.handle,
+        bio: p.bio,
+        color: p.color,
+        guarded: p.guarded,
+        triggerAsk: p.triggerAsk,
+        triggerAbove: p.triggerAbove,
+        engine: p.engine,
+        recommended: p.recommended,
+        exists: taken.has(p.handle),
+      };
+    }),
     200
   );
 });
@@ -121,8 +177,12 @@ const createAgentRoute = createRoute({
       content: {
         'application/json': {
           schema: z.object({
-            handle: z.string().min(1).max(39),
-            name: z.string().trim().min(1).max(100),
+            /** Required without `preset`; with it, defaults to the preset's handle. */
+            handle: z.string().min(1).max(39).optional(),
+            /** Required without `preset`; with it, defaults to the preset's name. */
+            name: z.string().trim().min(1).max(100).optional(),
+            /** Start from a preset's AGENT.md (GET /api/agents/presets) instead of the blank one. */
+            preset: z.enum(PRESET_FACETS).optional(),
           }),
         },
       },
@@ -136,14 +196,72 @@ const createAgentRoute = createRoute({
   },
 });
 adminAgentsRouter.openapi(createAgentRoute, async (c) => {
-  const result = await createAgent(
-    c.env,
-    c.get('db'),
-    c.get('user')!,
-    c.req.valid('json')
-  );
+  const body = c.req.valid('json');
+  const preset = body.preset ? PRESETS[body.preset] : null;
+  const handle = body.handle ?? preset?.handle;
+  const name = body.name ?? preset?.name;
+  if (!handle || !name)
+    return c.json(
+      {
+        error: 'Give the agent a handle and a display name, or pick a preset.',
+      },
+      400
+    );
+  const result = await createAgent(c.env, c.get('db'), c.get('user')!, {
+    handle,
+    name,
+    preset: body.preset,
+  });
   if (!result.ok) return c.json({ error: result.error }, result.status);
   return c.json({ agent: serializeAgent(result.agent) }, 201);
+});
+
+const crewRoute = createRoute({
+  method: 'post',
+  path: '/crew',
+  tags: ['Agents'],
+  summary: 'Create the recommended crew',
+  description:
+    'Creates every recommended preset whose handle is free, each from its preset AGENT.md. Running it again ' +
+    'creates only the ones still missing.',
+  responses: {
+    ...json200Response(
+      z.object({
+        created: z.array(agentSchema),
+        /** Presets not created: their handle is taken, or creating them failed. */
+        skipped: z.array(z.object({ handle: z.string(), reason: z.string() })),
+      }),
+      'The agents created, and the presets skipped'
+    ),
+    ...json403Response,
+  },
+});
+adminAgentsRouter.openapi(crewRoute, async (c) => {
+  const db = c.get('db');
+  const crew = PRESET_FACETS.map((f) => PRESETS[f]).filter(
+    (p) => p.recommended
+  );
+  const taken = await takenHandles(
+    db,
+    crew.map((p) => p.handle)
+  );
+  const created = [];
+  const skipped: { handle: string; reason: string }[] = [];
+  // One at a time: each creates a repository and its first commit.
+  for (const p of crew) {
+    if (taken.has(p.handle)) {
+      skipped.push({ handle: p.handle, reason: 'Already exists' });
+      continue;
+    }
+    const result = await createAgent(c.env, db, c.get('user')!, {
+      handle: p.handle,
+      name: p.name,
+      preset: p.facet,
+    });
+    if (result.ok) created.push(serializeAgent(result.agent));
+    else skipped.push({ handle: p.handle, reason: result.error });
+  }
+  return c.json({ created, skipped }, 200);
 });
 
 const deleteAgentRoute = createRoute({
@@ -169,6 +287,12 @@ adminAgentsRouter.openapi(deleteAgentRoute, async (c) => {
     .all();
   await deleteAgent(db, view.agent.userId);
   await cancelAgentReviews(db, view.agent.userId);
+  await recordAudit(db, {
+    repositoryId: null,
+    actorId: c.get('user')!.id,
+    action: 'agent.deleted',
+    target: view.user.username ?? view.user.id,
+  });
   // Its reviews stop counting everywhere: states change, and pull requests it held back may land.
   for (const { id } of invited) {
     c.executionCtx.waitUntil(settleStates(c.env, db, id));
@@ -257,6 +381,7 @@ repoAgentsRouter.openapi(removeRoute, async (c) => {
     c.get('db'),
     c.get('repo').id,
     c.req.valid('param').handle,
+    c.get('user')!.id,
     (work) => c.executionCtx.waitUntil(work)
   );
   if (!result.ok) return c.json({ error: result.error }, result.status);

@@ -8,6 +8,9 @@ export type AgentJson = {
   bio: string;
   trigger: { ask: string; above: number };
   engine: 'pass' | 'pi';
+  color: string;
+  facet: string | null;
+  guarded: boolean;
   repository: string | null;
   configSha: string | null;
   configError: string | null;
@@ -59,6 +62,9 @@ export async function agentRow(t: TestEnv, handle = 'secagent') {
       trigger_ask: string;
       trigger_above: number;
       engine: string;
+      color: string | null;
+      facet: string | null;
+      guarded: number;
       config_sha: string | null;
       config_error: string | null;
       deleted_at: number | null;

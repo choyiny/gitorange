@@ -43,6 +43,19 @@ export const repositories = sqliteTable(
     // Immutable Artifacts repo name (r_<id>) so renames never touch git storage.
     artifactsName: text('artifacts_name').notNull().unique(),
     nextPrNumber: integer('next_pr_number').notNull().default(1),
+    // Set ⇒ merging is paused (the merge button and auto-merge refuse) since then, by that member. No foreign key:
+    // resolved with the ghost-user fallback like other user ids; nothing deletes users.
+    mergingPausedAt: integer('merging_paused_at', { mode: 'timestamp' }),
+    mergingPausedById: text('merging_paused_by_id'),
+    // Every landing (merge button or auto-merge) deletes the pull request's head branch.
+    deleteMergedBranches: integer('delete_merged_branches', {
+      mode: 'boolean',
+    })
+      .notNull()
+      .default(true),
+    // The most common source file extension on the default branch, cached at `language_sha` (its commit).
+    language: text('language'),
+    languageSha: text('language_sha'),
     createdAt: integer('created_at', { mode: 'timestamp' }).notNull(),
     updatedAt: integer('updated_at', { mode: 'timestamp' }).notNull(),
   },
@@ -75,6 +88,19 @@ export const repositoryCollaborators = sqliteTable(
   ]
 );
 
+/** What a reviewer agent covers (AGENT.md `facet`); the seven named ones are presets (worker/src/agents/presets.ts). */
+export const agentFacets = [
+  'security',
+  'data',
+  'speed',
+  'features',
+  'reliability',
+  'privacy',
+  'shipping',
+  'other',
+] as const;
+export type Facet = (typeof agentFacets)[number];
+
 // Reviewer agents: an account in `users` with no credential, sessions or tokens, plus this row. The cached
 // fields come from AGENT.md on its repository's default branch at `config_sha` (the latest valid one);
 // `config_error` is the latest parse error. Reviews read the repository itself, never these fields.
@@ -95,6 +121,11 @@ export const agents = sqliteTable(
     engine: text('engine', { enum: ['pass', 'pi'] })
       .notNull()
       .default('pass'),
+    // AGENT.md's `color` (#rrggbb, lowercase); null ⇒ a stable colour from the palette (agentColor).
+    color: text('color'),
+    facet: text('facet', { enum: agentFacets }),
+    // AGENT.md's `guarded`. Read through isGuarded, which also guards every Security and Data agent.
+    guarded: integer('guarded', { mode: 'boolean' }).notNull().default(false),
     configSha: text('config_sha'),
     configError: text('config_error'),
     createdById: text('created_by_id').references(() => users.id, {
@@ -231,6 +262,11 @@ export const pullRequests = sqliteTable(
     autoMergeDisabledAt: integer('auto_merge_disabled_at', {
       mode: 'timestamp',
     }),
+    // Provenance, self-reported by the MCP client that opened it: the OAuth client's name ("Claude Code"), its
+    // coding session's label, and the person's original request (≤ 4000 characters). Null when opened by hand.
+    createdVia: text('created_via'),
+    sessionLabel: text('session_label'),
+    request: text('request'),
     createdAt: integer('created_at', { mode: 'timestamp' }).notNull(),
     updatedAt: integer('updated_at', { mode: 'timestamp' }).notNull(),
   },
@@ -440,6 +476,18 @@ export const prReviewFlags = sqliteTable(
       .notNull()
       .default('needs_person'),
     agentSha: text('agent_sha'),
+    // needs_person: the agent's plain yes/no question for the owner (≤ 200 characters, no jargon).
+    question: text('question'),
+    // Who was asked to decide it, by whom and when. No foreign keys: resolved with the ghost-user fallback like
+    // other user ids; nothing deletes users.
+    assigneeId: text('assignee_id'),
+    assignedById: text('assigned_by_id'),
+    assignedAt: integer('assigned_at', { mode: 'timestamp' }),
+    // The decider's reason (required to approve a guarded agent's finding).
+    decisionReason: text('decision_reason'),
+    // What the decider taught the agent with the decision; its learner reads it as the rule (no foreign key, as above).
+    teachNote: text('teach_note'),
+    teachById: text('teach_by_id'),
     createdAt: integer('created_at', { mode: 'timestamp' }).notNull(),
   },
   (t) => [
@@ -749,9 +797,98 @@ export const prEvents = sqliteTable(
   },
   (t) => [
     index('pr_events_pr_kind_idx').on(t.pullRequestId, t.kind, t.computedAt),
+    // The audit log merges these, newest first: per repository, and instance-wide.
+    index('pr_events_repo_created_idx').on(t.repositoryId, t.createdAt),
+    index('pr_events_created_idx').on(t.createdAt),
   ]
 );
 export type PrEvent = typeof prEvents.$inferSelect;
+
+// ── Audit log ────────────────────────────────────────────────────────────────
+// Who did what, recorded by recordAudit (worker/src/lib/audit.ts), which never throws. The log a page shows merges
+// these with pr_events (listAudit). `repository_id` null ⇒ an instance event (tokens, settings, agents, a deleted
+// repository); a repository's own events go with it.
+
+export const auditActions = [
+  'settings.changed',
+  'collaborator.added',
+  'collaborator.removed',
+  'agent.invited',
+  'agent.removed',
+  'agent.created',
+  'agent.deleted',
+  'branch.deleted',
+  'branches.cleaned',
+  'merging.paused',
+  'merging.resumed',
+  'pull.merged',
+  'pull.reverted',
+  'pull.approved',
+  'finding.approved',
+  'finding.changes_requested',
+  'finding.assigned',
+  'finding.delegated',
+  'finding.undone',
+  'finding.taught',
+  'token.created',
+  'token.deleted',
+  'visibility.changed',
+  'repository.created',
+  'repository.deleted',
+  'instance.settings',
+] as const;
+export type AuditAction = (typeof auditActions)[number];
+/** person: a member. agent: a reviewer agent. ai: GitOrange AI deciding for `actor_id`. system: GitOrange itself. */
+export const auditActorKinds = ['person', 'agent', 'ai', 'system'] as const;
+export type AuditActorKind = (typeof auditActorKinds)[number];
+
+export const auditEvents = sqliteTable(
+  'audit_events',
+  {
+    id: text('id').primaryKey(),
+    repositoryId: text('repository_id').references(() => repositories.id, {
+      onDelete: 'cascade',
+    }),
+    actorId: text('actor_id').references(() => users.id, {
+      onDelete: 'set null',
+    }),
+    actorKind: text('actor_kind', { enum: auditActorKinds }).notNull(),
+    // The app it went through: a connected MCP app's name, or "GitOrange AI".
+    via: text('via'),
+    action: text('action', { enum: auditActions }).notNull(),
+    // What it was done to, as people read it: "#12", a branch, a handle, a token or setting name.
+    target: text('target').notNull(),
+    data: text('data', { mode: 'json' })
+      .$type<Record<string, unknown>>()
+      .notNull(),
+    createdAt: integer('created_at', { mode: 'timestamp_ms' }).notNull(),
+  },
+  (t) => [
+    index('audit_events_repo_created_idx').on(t.repositoryId, t.createdAt),
+    index('audit_events_created_idx').on(t.createdAt),
+  ]
+);
+export type AuditEventRow = typeof auditEvents.$inferSelect;
+
+// A person lets GitOrange AI answer this agent's findings on their pull requests ("Let Claude decide"). Never a
+// guarded agent's (isGuarded).
+export const aiDelegations = sqliteTable(
+  'ai_delegations',
+  {
+    userId: text('user_id')
+      .notNull()
+      .references(() => users.id, { onDelete: 'cascade' }),
+    agentId: text('agent_id')
+      .notNull()
+      .references(() => agents.userId, { onDelete: 'cascade' }),
+    createdAt: integer('created_at', { mode: 'timestamp' }).notNull(),
+  },
+  (t) => [
+    primaryKey({ columns: [t.userId, t.agentId] }),
+    index('ai_delegations_agent_idx').on(t.agentId),
+  ]
+);
+export type AiDelegation = typeof aiDelegations.$inferSelect;
 
 // ── Actions ──────────────────────────────────────────────────────────────────
 // A workflow run: one `.github/workflows/*.yml` file triggered by one event.

@@ -191,8 +191,13 @@ const removeAgentTool: ToolModule = {
   handler: async (args, ctx) => {
     const { repo, fullName } = await administeredRepo(ctx, args, 'remove');
     const handle = str(args, 'handle', true).trim();
-    const result = await removeAgent(ctx.env, ctx.db, repo.id, handle, (w) =>
-      ctx.after(w)
+    const result = await removeAgent(
+      ctx.env,
+      ctx.db,
+      repo.id,
+      handle,
+      ctx.user.id,
+      (w) => ctx.after(w)
     );
     if (!result.ok)
       throw new McpToolError(

@@ -1,6 +1,7 @@
 import { and, eq } from 'drizzle-orm';
 import { repositoryAgents } from '../db/app.schema';
 import type { DrizzleDB } from '../db/middleware';
+import { recordAudit } from '../lib/audit';
 import { d1Of } from '../pulls/events';
 import { settleStates } from '../pulls/settle';
 import { autoMergeRepository } from '../review/auto-merge';
@@ -22,7 +23,10 @@ const NOT_FOUND = {
   error: 'Agent not found',
 } as const;
 
-/** Invites a live agent; inviting it again is a no-op. Refused past `MAX_AGENTS_PER_REPOSITORY`. */
+/**
+ * Invites a live agent; inviting it again is a no-op. Refused past `MAX_AGENTS_PER_REPOSITORY`. An invitation is
+ * recorded in the audit log.
+ */
 export async function inviteAgent(
   db: DrizzleDB,
   repositoryId: string,
@@ -48,7 +52,15 @@ export async function inviteAgent(
       MAX_AGENTS_PER_REPOSITORY
     )
     .run();
-  if (meta.changes) return { ok: true };
+  if (meta.changes) {
+    await recordAudit(db, {
+      repositoryId,
+      actorId: inviterId,
+      action: 'agent.invited',
+      target: view.user.username ?? view.user.id,
+    });
+    return { ok: true };
+  }
   const already = await db
     .select({ id: repositoryAgents.agentId })
     .from(repositoryAgents)
@@ -69,25 +81,34 @@ export async function inviteAgent(
 
 /**
  * Uninvites an agent (a no-op if it wasn't invited) and cancels its reviews here. Pull request states change and
- * ones it held back may land: that work goes to `after`.
+ * ones it held back may land: that work goes to `after`. A removal is recorded in the audit log as `actorId`'s.
  */
 export async function removeAgent(
   env: CloudflareBindings,
   db: DrizzleDB,
   repositoryId: string,
   handle: string,
+  actorId: string,
   after: (work: Promise<unknown>) => void
 ): Promise<{ ok: true } | typeof NOT_FOUND> {
   const view = await agentByHandle(db, handle);
   if (!view) return NOT_FOUND;
-  await db
+  const removed = await db
     .delete(repositoryAgents)
     .where(
       and(
         eq(repositoryAgents.repositoryId, repositoryId),
         eq(repositoryAgents.agentId, view.agent.userId)
       )
-    );
+    )
+    .returning({ id: repositoryAgents.agentId });
+  if (removed.length)
+    await recordAudit(db, {
+      repositoryId,
+      actorId,
+      action: 'agent.removed',
+      target: view.user.username ?? view.user.id,
+    });
   await cancelAgentReviews(db, view.agent.userId, repositoryId);
   after(settleStates(env, db, repositoryId));
   after(autoMergeRepository(env, db, repositoryId));

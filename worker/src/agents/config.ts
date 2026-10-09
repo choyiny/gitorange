@@ -1,5 +1,6 @@
 import { parse as parseYaml } from 'yaml';
 import { z } from 'zod';
+import { agentFacets, type Facet } from '../db/app.schema';
 import { decoder } from '../git/bytes';
 import type { GitService } from '../git/service';
 
@@ -16,6 +17,12 @@ export interface AgentConfig {
   bio: string;
   trigger: { ask: string; above: number };
   engine: AgentEngine;
+  /** Its colour across GitOrange, `#rrggbb` (lowercase); absent ⇒ a stable one from the palette (agentColor). */
+  color?: string;
+  /** What it covers; the seven named facets are presets (presets.ts). */
+  facet?: Facet;
+  /** Its findings are never approved in bulk, by one key or by AI, and approving one needs a reason (isGuarded). */
+  guarded?: boolean;
   /** The Markdown body: what the agent cares about and how it judges. */
   instructions: string;
 }
@@ -23,6 +30,8 @@ export interface AgentConfig {
 export class AgentConfigError extends Error {}
 
 const BETWEEN = 'must be between 0 and 1 (exclusive)';
+const COLOR = 'must be a colour like "#2a78d6"';
+const FACETS = `must be one of ${agentFacets.slice(0, -1).join(', ')} or ${agentFacets.at(-1)}`;
 
 // Strict: a typo such as `treshold` is an error, not a silently ignored key.
 const frontmatter = z
@@ -42,6 +51,16 @@ const frontmatter = z
     engine: z
       .enum(['pass', 'pi'], { message: 'must be pass or pi' })
       .default('pass'),
+    color: z
+      .string({
+        // YAML reads an unquoted # as the start of a comment, which leaves the value empty.
+        message: `${COLOR}, in quotes (an unquoted # starts a YAML comment)`,
+      })
+      .regex(/^#[0-9a-fA-F]{6}$/, { message: COLOR })
+      .transform((c) => c.toLowerCase())
+      .optional(),
+    facet: z.enum(agentFacets, { message: FACETS }).optional(),
+    guarded: z.boolean({ message: 'must be true or false' }).optional(),
   })
   .strict();
 

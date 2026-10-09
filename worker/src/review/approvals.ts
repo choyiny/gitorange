@@ -2,6 +2,7 @@ import { and, asc, eq } from 'drizzle-orm';
 import type { DrizzleDB } from '../db/middleware';
 import { prApprovals, type PullRequest } from '../db/app.schema';
 import type { GitService } from '../git/service';
+import { recordAudit } from '../lib/audit';
 import { resolutionConfigured } from '../merge/resolution';
 import { d1Of } from '../pulls/events';
 import { settleStates } from '../pulls/settle';
@@ -111,7 +112,7 @@ export async function approvePull(
   const d1 = d1Of(db);
   const via = opts.via ?? null;
   // One transaction: the approval and its timeline entry (once per person and commit) are written together.
-  await d1.batch([
+  const [inserted] = await d1.batch([
     d1
       .prepare(
         `INSERT INTO pr_approvals (pull_request_id, head_sha, user_id, created_at, via) VALUES (?, ?, ?, ?, ?)
@@ -138,6 +139,17 @@ export async function approvePull(
         now
       ),
   ]);
+  // A new approval only: the audit log lists it, and leaves out its pr_events row (listAudit).
+  if (inserted.meta.changes)
+    await recordAudit(db, {
+      repositoryId: pr.repositoryId,
+      actorId: userId,
+      via,
+      action: 'pull.approved',
+      target: `#${pr.number}`,
+      pull: pr.number,
+      data: { headSha: head.headSha },
+    });
   afterApprovals(env, db, pr, after, opts.followUps ?? true);
   return head;
 }

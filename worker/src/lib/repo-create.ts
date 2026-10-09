@@ -94,6 +94,11 @@ export async function createRepository(
     protectedBranches: null,
     artifactsName: `r_${id}`,
     nextPrNumber: 1,
+    mergingPausedAt: null,
+    mergingPausedById: null,
+    deleteMergedBranches: true,
+    language: null,
+    languageSha: null,
     createdAt: now,
     updatedAt: now,
   };

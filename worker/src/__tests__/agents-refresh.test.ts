@@ -71,6 +71,26 @@ describe('refreshing an agent from AGENT.md', () => {
     });
   });
 
+  it('caches the colour, facet and guarded flag, and clears them when AGENT.md drops them', async () => {
+    const s = await setup();
+    const withMeta = AGENT('Auth Agent').replace(
+      'engine: pi\n',
+      'engine: pi\ncolor: "#2A78D6"\nfacet: security\nguarded: true\n'
+    );
+    await pushTo(s, 'main', { 'AGENT.md': withMeta });
+    expect(await agentRow(s.t)).toMatchObject({
+      color: '#2a78d6',
+      facet: 'security',
+      guarded: 1,
+    });
+    await pushTo(s, 'main', { 'AGENT.md': AGENT('Auth Agent') });
+    expect(await agentRow(s.t)).toMatchObject({
+      color: null,
+      facet: null,
+      guarded: 0,
+    });
+  });
+
   it('points the avatar at the pushed commit when avatar.png is there', async () => {
     const s = await setup();
     const sha = await pushTo(s, 'main', {

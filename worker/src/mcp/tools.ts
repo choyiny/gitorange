@@ -8,6 +8,7 @@ import {
 } from '../db/app.schema';
 import { users } from '../db/auth.schema';
 import type { DrizzleDB } from '../db/middleware';
+import { recordAudit } from '../lib/audit';
 import { createRepository } from '../lib/repo-create';
 import { INSIGHT_PERIODS, repoInsights } from '../lib/insights';
 import { isMonth, usageReport } from '../usage/report';
@@ -478,6 +479,13 @@ const createRepositoryTool: ToolModule = {
     });
     if (!result.ok) throw new McpToolError(result.error);
     const fullName = `${result.namespace.username}/${result.repo.name}`;
+    await recordAudit(ctx.db, {
+      repositoryId: result.repo.id,
+      actorId: ctx.user.id,
+      action: 'repository.created',
+      target: fullName,
+      data: { visibility: result.repo.visibility },
+    });
     return {
       content: [
         json({

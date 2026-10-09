@@ -13,6 +13,7 @@ import { REBASE_COMMITTER } from '../git/rebase';
 import { GitPushError, ZERO_SHA } from '../git/remote';
 import type { GitService } from '../git/service';
 import { onRefsUpdated } from '../actions/trigger';
+import { recordAudit } from '../lib/audit';
 import { startSweep } from './auto';
 import { resolutionConfigured } from './resolution';
 import {
@@ -206,6 +207,15 @@ export async function landPull(opts: LandOpts): Promise<LandResult> {
     .update(repositories)
     .set({ updatedAt: now })
     .where(eq(repositories.id, pr.repositoryId));
+  await recordAudit(db, {
+    repositoryId: pr.repositoryId,
+    // GitOrange itself when it lands one on its own (auto-merge).
+    actorId: opts.by?.id ?? null,
+    action: 'pull.merged',
+    target: `#${pr.number}`,
+    pull: pr.number,
+    data: { title: pr.title, sha: landHead, into: target, automatic: !opts.by },
+  });
   // Auto-merges happen in the background.
   opts.after(publishChange(env, pr.repositoryId, { approvals: true }));
   opts.after(settleStates(env, db, pr.repositoryId));
@@ -394,6 +404,13 @@ export async function deleteMergedBranch(opts: {
     console.warn('[merge] could not delete merged branch', pr.id, branch, e);
     return false;
   }
+  await recordAudit(db, {
+    repositoryId: pr.repositoryId,
+    actorId: null,
+    action: 'branch.deleted',
+    target: branch,
+    data: { sha: opts.headSha, merged: true },
+  });
   await publishChange(env, pr.repositoryId);
   return true;
 }

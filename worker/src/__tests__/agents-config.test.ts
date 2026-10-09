@@ -44,6 +44,37 @@ describe('parseAgentConfig', () => {
     });
   });
 
+  it('reads the optional colour, facet and guarded flag', () => {
+    expect(
+      parseAgentConfig(
+        md(`${VALID}\ncolor: "#2A78D6"\nfacet: security\nguarded: true`)
+      )
+    ).toMatchObject({ color: '#2a78d6', facet: 'security', guarded: true });
+    for (const facet of [
+      'security',
+      'data',
+      'speed',
+      'features',
+      'reliability',
+      'privacy',
+      'shipping',
+      'other',
+    ])
+      expect(parseAgentConfig(md(`${VALID}\nfacet: ${facet}`)).facet).toBe(
+        facet
+      );
+    expect(parseAgentConfig(md(`${VALID}\nguarded: false`)).guarded).toBe(
+      false
+    );
+  });
+
+  it('leaves the colour, facet and guarded flag out when AGENT.md does', () => {
+    const config = parseAgentConfig(md(VALID));
+    expect(config.color).toBeUndefined();
+    expect(config.facet).toBeUndefined();
+    expect(config.guarded).toBeUndefined();
+  });
+
   it('accepts the pi engine', () => {
     expect(
       parseAgentConfig(md(VALID.replace('engine: pass', 'engine: pi'))).engine
@@ -90,6 +121,37 @@ describe('parseAgentConfig', () => {
       /engine: must be pass or pi/,
     ],
     ['an unknown key', md(`${VALID}\nmodel: clef`), /model/],
+    [
+      'a colour name',
+      md(`${VALID}\ncolor: red`),
+      /color: must be a colour like "#2a78d6"/,
+    ],
+    [
+      'a short hex colour',
+      md(`${VALID}\ncolor: "#2a78d"`),
+      /color: must be a colour like "#2a78d6"/,
+    ],
+    [
+      'a colour that is not hex',
+      md(`${VALID}\ncolor: "#2a78zz"`),
+      /color: must be a colour like "#2a78d6"/,
+    ],
+    [
+      // YAML reads an unquoted # as the start of a comment, so the value is empty.
+      'an unquoted colour',
+      md(`${VALID}\ncolor: #2a78d6`),
+      /color: .*quote/,
+    ],
+    [
+      'an unknown facet',
+      md(`${VALID}\nfacet: ops`),
+      /facet: must be one of security, data, speed, features, reliability, privacy, shipping or other/,
+    ],
+    [
+      'guarded as text',
+      md(`${VALID}\nguarded: "yes"`),
+      /guarded: must be true or false/,
+    ],
     ['an empty body', md(VALID, '   '), /no instructions/],
   ])('rejects %s', (_, source, message) => {
     expect(() => parseAgentConfig(source)).toThrow(AgentConfigError);

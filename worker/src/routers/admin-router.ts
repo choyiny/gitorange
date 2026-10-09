@@ -11,6 +11,7 @@ import {
   setSetting,
 } from '../lib/settings';
 import type { RetentionStatus } from '../actions/retention';
+import { recordAudit } from '../lib/audit';
 import {
   json200Response,
   json400Response,
@@ -121,18 +122,22 @@ const updateRoute = createRoute({
 adminRouter.openapi(updateRoute, async (c) => {
   const { key } = c.req.valid('param');
   if (!isSettingKey(key)) return c.json({ error: 'Unknown setting' }, 404);
+  const value = c.req.valid('json').value ?? null;
   try {
-    await setSetting(
-      c.get('db'),
-      key,
-      c.req.valid('json').value ?? null,
-      c.get('user')!.id
-    );
+    await setSetting(c.get('db'), key, value, c.get('user')!.id);
   } catch (e) {
     if (e instanceof ZodError)
       return c.json({ error: e.issues[0]?.message ?? 'Invalid value' }, 400);
     throw e;
   }
+  // Settings hold no secrets (worker/src/lib/settings.ts): the value is recorded as given.
+  await recordAudit(c.get('db'), {
+    repositoryId: null,
+    actorId: c.get('user')!.id,
+    action: 'instance.settings',
+    target: key,
+    data: { value },
+  });
   return c.json({ ok: true as const }, 200);
 });
 
@@ -151,5 +156,12 @@ adminRouter.openapi(resetRoute, async (c) => {
   const { key } = c.req.valid('param');
   if (!isSettingKey(key)) return c.json({ error: 'Unknown setting' }, 404);
   await setSetting(c.get('db'), key, undefined, c.get('user')!.id);
+  await recordAudit(c.get('db'), {
+    repositoryId: null,
+    actorId: c.get('user')!.id,
+    action: 'instance.settings',
+    target: key,
+    data: { reset: true },
+  });
   return c.json({ ok: true as const }, 200);
 });

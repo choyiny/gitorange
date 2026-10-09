@@ -10,6 +10,7 @@ import {
 } from '../db/app.schema';
 import { users } from '../db/auth.schema';
 import type { DrizzleDB } from '../db/middleware';
+import { recordAudit } from '../lib/audit';
 import { namespaceTaken } from '../lib/namespaces';
 import { createRepository } from '../lib/repo-create';
 import { gitFor, teamNamespace, userNamespace, visibleTo } from '../lib/repos';
@@ -18,6 +19,13 @@ import { toPublicUser } from '../lib/users';
 import type { SessionUser } from '../variables';
 import { AGENT_PATH, parseAgentConfig } from './config';
 import { agentEmail, avatarUrl } from './identity';
+import {
+  agentColor,
+  isGuarded,
+  PRESETS,
+  presetAgentMd,
+  type PresetFacet,
+} from './presets';
 import { agentTemplate } from './template';
 
 export type AgentView = {
@@ -34,6 +42,9 @@ export function serializeAgent(v: AgentView) {
     bio: v.agent.bio,
     trigger: { ask: v.agent.triggerAsk, above: v.agent.triggerAbove },
     engine: v.agent.engine,
+    color: agentColor(v.agent, v.user.username ?? v.user.id),
+    facet: v.agent.facet,
+    guarded: isGuarded(v.agent),
     // Always a personal repository of the agent's own user. Its name and what was read from it (the
     // config commit, why AGENT.md is invalid) only for viewers who can read it.
     repository: v.repo
@@ -117,15 +128,15 @@ export type CreateAgentResult =
   | { ok: false; status: 400 | 409; error: string };
 
 /**
- * Creates the agent's user (no credential), its `<handle>/<handle>` repository seeded from the template
- * with `creator` as author and collaborator, and its `agents` row (in the same batch as the user). On
- * failure removes what it made.
+ * Creates the agent's user (no credential), its `<handle>/<handle>` repository seeded from the template (a preset's
+ * AGENT.md with `preset`) with `creator` as author and collaborator, and its `agents` row (in the same batch as the
+ * user). On failure removes what it made. Recorded in the audit log.
  */
 export async function createAgent(
   env: CloudflareBindings,
   db: DrizzleDB,
   creator: SessionUser,
-  input: { handle: string; name: string }
+  input: { handle: string; name: string; preset?: PresetFacet }
 ): Promise<CreateAgentResult> {
   const handle = input.handle.trim().toLowerCase();
   const name = input.name.trim();
@@ -147,7 +158,13 @@ export async function createAgent(
 
   const id = crypto.randomUUID();
   const now = new Date();
-  const files = await agentTemplate(handle, name);
+  const files = await agentTemplate(
+    handle,
+    name,
+    input.preset
+      ? presetAgentMd(PRESETS[input.preset], handle, name)
+      : undefined
+  );
   const config = parseAgentConfig(files[AGENT_PATH] as string);
   const user = {
     id,
@@ -174,6 +191,9 @@ export async function createAgent(
         triggerAsk: config.trigger.ask,
         triggerAbove: config.trigger.above,
         engine: config.engine,
+        color: config.color ?? null,
+        facet: config.facet ?? null,
+        guarded: config.guarded ?? false,
         configSha: null,
         configError: null,
         createdById: creator.id,
@@ -239,6 +259,13 @@ export async function createAgent(
     }
     throw e;
   }
+  await recordAudit(db, {
+    repositoryId: null,
+    actorId: creator.id,
+    action: 'agent.created',
+    target: handle,
+    data: { name, preset: input.preset ?? null },
+  });
   return { ok: true, agent: (await agentByHandle(db, handle, creator))! };
 }
 

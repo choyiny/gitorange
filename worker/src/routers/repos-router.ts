@@ -10,6 +10,7 @@ import {
   type Repository,
 } from '../db/app.schema';
 import { users } from '../db/auth.schema';
+import type { DrizzleDB } from '../db/middleware';
 import { isAgentUser } from '../agents/identity';
 import { decoder } from '../git/bytes';
 import type { GitService } from '../git/service';
@@ -26,6 +27,7 @@ import {
   type RepoEnv,
 } from '../lib/repos';
 import { deleteRepositoryLogs } from '../actions/trigger';
+import { recordAudit } from '../lib/audit';
 import { createRepository, nameTaken } from '../lib/repo-create';
 import {
   invalidProtectedPatterns,
@@ -168,6 +170,13 @@ reposRouter.openapi(createRepoRoute, async (c) => {
     c.req.valid('json')
   );
   if (!result.ok) return c.json({ error: result.error }, result.status);
+  await recordAudit(c.get('db'), {
+    repositoryId: result.repo.id,
+    actorId: c.get('user')!.id,
+    action: 'repository.created',
+    target: `${result.namespace.username}/${result.repo.name}`,
+    data: { visibility: result.repo.visibility },
+  });
   return c.json(serializeRepo(result.repo, result.namespace), 201);
 });
 
@@ -293,8 +302,56 @@ reposRouter.openapi(updateRepoRoute, async (c) => {
     patch.protectedBranches = normalizeProtectedPatterns(patterns);
   }
   await db.update(repositories).set(patch).where(eq(repositories.id, repo.id));
+  await auditRepoChanges(
+    db,
+    c.get('user')!.id,
+    repo,
+    patch,
+    c.get('namespace')
+  );
   return c.json(serializeRepo({ ...repo, ...patch }, c.get('namespace')), 200);
 });
+
+/** What the settings route changed, for the audit log: visibility on its own, the rest as one `settings.changed`. */
+async function auditRepoChanges(
+  db: DrizzleDB,
+  actorId: string,
+  before: Repository,
+  patch: Partial<Repository>,
+  ns: Namespace
+) {
+  const target = `${ns.username}/${patch.name ?? before.name}`;
+  const changes: Record<string, { from: unknown; to: unknown }> = {};
+  for (const key of [
+    'name',
+    'description',
+    'defaultBranch',
+    'protectedBranches',
+  ] as const) {
+    if (!(key in patch)) continue;
+    const list = key === 'protectedBranches';
+    const from = list ? (before[key] ?? []) : before[key];
+    const to = list ? (patch[key] ?? []) : patch[key];
+    if (JSON.stringify(from) !== JSON.stringify(to))
+      changes[key] = { from, to };
+  }
+  if (Object.keys(changes).length)
+    await recordAudit(db, {
+      repositoryId: before.id,
+      actorId,
+      action: 'settings.changed',
+      target,
+      data: { changes },
+    });
+  if (patch.visibility !== undefined && patch.visibility !== before.visibility)
+    await recordAudit(db, {
+      repositoryId: before.id,
+      actorId,
+      action: 'visibility.changed',
+      target,
+      data: { from: before.visibility, to: patch.visibility },
+    });
+}
 
 const deleteRepoRoute = createRoute({
   method: 'delete',
@@ -312,6 +369,14 @@ reposRouter.openapi(deleteRepoRoute, async (c) => {
     return c.json({ error: 'You must be an admin of this repository' }, 403);
   const repo = c.get('repo');
   await c.get('db').delete(repositories).where(eq(repositories.id, repo.id));
+  // An instance event: the repository's own log went with it.
+  await recordAudit(c.get('db'), {
+    repositoryId: null,
+    actorId: c.get('user')!.id,
+    action: 'repository.deleted',
+    target: `${c.get('namespace').username}/${repo.name}`,
+    data: { repository: repo.id },
+  });
   await c.env.ARTIFACTS.delete(repo.artifactsName);
   // LFS rows cascade with the repository; their R2 bytes have to go explicitly.
   await deleteRepositoryObjects(c.env, repo.id);
@@ -372,7 +437,7 @@ reposRouter.openapi(addCollabRoute, async (c) => {
       },
       400
     );
-  await c
+  const added = await c
     .get('db')
     .insert(repositoryCollaborators)
     .values({
@@ -380,7 +445,15 @@ reposRouter.openapi(addCollabRoute, async (c) => {
       userId: user.id,
       createdAt: new Date(),
     })
-    .onConflictDoNothing();
+    .onConflictDoNothing()
+    .returning({ id: repositoryCollaborators.userId });
+  if (added.length)
+    await recordAudit(c.get('db'), {
+      repositoryId: c.get('repo').id,
+      actorId: c.get('user')!.id,
+      action: 'collaborator.added',
+      target: user.username ?? user.id,
+    });
   return c.json({ ok: true as const }, 200);
 });
 
@@ -400,7 +473,7 @@ reposRouter.openapi(removeCollabRoute, async (c) => {
     return c.json({ error: 'You must be an admin of this repository' }, 403);
   const user = await userByUsername(c.get('db'), c.req.valid('param').username);
   if (!user) return c.json({ error: 'User not found' }, 404);
-  await c
+  const removed = await c
     .get('db')
     .delete(repositoryCollaborators)
     .where(
@@ -408,7 +481,15 @@ reposRouter.openapi(removeCollabRoute, async (c) => {
         eq(repositoryCollaborators.repositoryId, c.get('repo').id),
         eq(repositoryCollaborators.userId, user.id)
       )
-    );
+    )
+    .returning({ id: repositoryCollaborators.userId });
+  if (removed.length)
+    await recordAudit(c.get('db'), {
+      repositoryId: c.get('repo').id,
+      actorId: c.get('user')!.id,
+      action: 'collaborator.removed',
+      target: user.username ?? user.id,
+    });
   return c.json({ ok: true as const }, 200);
 });
 
@@ -432,7 +513,15 @@ reposRouter.openapi(deleteBranchRoute, async (c) => {
   const { name } = c.req.valid('query');
   if (name === c.get('repo').defaultBranch)
     return c.json({ error: 'Cannot delete the default branch' }, 400);
+  const sha = await c.get('git').resolve(name);
   await c.get('git').deleteBranch(name);
+  await recordAudit(c.get('db'), {
+    repositoryId: c.get('repo').id,
+    actorId: c.get('user')!.id,
+    action: 'branch.deleted',
+    target: name,
+    data: { sha },
+  });
   return c.json({ ok: true as const }, 200);
 });
 

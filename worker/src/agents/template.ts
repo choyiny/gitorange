@@ -1,22 +1,63 @@
-import { AGENT_PATH, AVATAR_PATH } from './config';
+import type { Facet } from '../db/app.schema';
+import { AGENT_PATH, AVATAR_PATH, type AgentEngine } from './config';
 import { identiconPng } from './identicon';
+
+/** AGENT.md's front matter, commented for whoever edits it next (through the closing `---` line). */
+export function frontMatter(o: {
+  handle: string;
+  name: string;
+  bio: string;
+  ask: string;
+  above: number;
+  engine: AgentEngine;
+  facet: Facet;
+  /** Written only when set; without it the agent's colour comes from its handle. */
+  color?: string;
+  guarded?: boolean;
+}) {
+  // A JSON string is valid YAML, so names with `:` or quotes, and a colour's `#`, survive.
+  const s = JSON.stringify;
+  const color = o.color
+    ? `# Its colour across GitOrange (in quotes: an unquoted # starts a YAML comment).
+color: ${s(o.color)}
+`
+    : `# Optional. color: "#2a78d6" (its colour across GitOrange, in quotes; without it one is picked from its handle).
+`;
+  const guarded =
+    o.guarded === undefined
+      ? `# Optional. guarded: true (its findings are never approved in bulk, by one key or by AI, and approving one needs a reason).
+`
+      : `# Guarded: its findings are never approved in bulk, by one key or by AI, and approving one needs a reason.
+guarded: ${o.guarded}
+`;
+  return `---
+# Shown on the profile at /${o.handle}. Edit this file (by pull request, like any code) to change the agent.
+name: ${s(o.name)}
+bio: ${s(o.bio)}
+trigger:
+  # Asked of every new pull request commit, over one-line summaries of the changed files.
+  ask: ${s(o.ask)}
+  # Review when the probability that the answer is yes is at least this (0 < above < 1).
+  above: ${o.above}
+# pass: one reasoning-model call per review. pi: a Pi agent that also reads the repository at the commit (read-only tools); slower.
+engine: ${o.engine}
+# What it covers: security, data, speed, features, reliability, privacy, shipping or other.
+facet: ${o.facet}
+${color}${guarded}---
+`;
+}
 
 /** AGENT.md for a new agent: a working correctness reviewer to edit into what this agent covers. */
 function agentMd(handle: string, name: string) {
-  // A JSON string is valid YAML, so names with `:` or quotes survive.
-  return `---
-# Shown on the profile at /${handle}. Edit this file (by pull request, like any code) to change the agent.
-name: ${JSON.stringify(name)}
-bio: Reviews pull requests for correctness — logic errors, broken edge cases and missing tests.
-trigger:
-  # Asked of every new pull request commit, over one-line summaries of the changed files.
-  ask: Does this change alter how the program behaves (not only docs, comments, formatting or generated files)?
-  # Review when the probability that the answer is yes is at least this (0 < above < 1).
-  above: 0.5
-# pass: one reasoning-model call per review. pi: a Pi agent that also reads the repository at the commit (read-only tools); slower.
-engine: pass
----
-
+  return `${frontMatter({
+    handle,
+    name,
+    bio: 'Reviews pull requests for correctness — logic errors, broken edge cases and missing tests.',
+    ask: 'Does this change alter how the program behaves (not only docs, comments, formatting or generated files)?',
+    above: 0.5,
+    engine: 'pass',
+    facet: 'other',
+  })}
 # ${name}
 
 You review pull requests for correctness. Your question is whether the change does what its pull request says,
@@ -65,13 +106,14 @@ incidents, conventions this codebase follows.
 `;
 }
 
-/** The files a new agent's repository starts with. */
+/** The files a new agent's repository starts with; `md` replaces the blank AGENT.md (a preset's, presets.ts). */
 export async function agentTemplate(
   handle: string,
-  name: string
+  name: string,
+  md?: string
 ): Promise<Record<string, string | Uint8Array>> {
   return {
-    [AGENT_PATH]: agentMd(handle, name),
+    [AGENT_PATH]: md ?? agentMd(handle, name),
     [AVATAR_PATH]: await identiconPng(handle),
     'knowledge/README.md': knowledgeReadme(name),
   };

@@ -89,6 +89,9 @@ async function refreshOnce(
           triggerAsk: c.trigger.ask,
           triggerAbove: c.trigger.above,
           engine: c.engine,
+          color: c.color ?? null,
+          facet: c.facet ?? null,
+          guarded: c.guarded ?? false,
           configSha: head,
           configError: null,
         })
