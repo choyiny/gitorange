@@ -1,4 +1,5 @@
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
+import { GitService } from '../git/service';
 import { addMember, call, settle } from './helpers/app';
 import { collaborator, crewRepo, FILES, type CrewRepo } from './helpers/crew';
 import { commitPaths } from './helpers/seed';
@@ -56,6 +57,8 @@ const pullCount = async (s: CrewRepo) =>
   )
     .bind(s.repoId)
     .first<{ n: number }>())!.n;
+
+afterEach(() => vi.restoreAllMocks());
 
 describe('POST /api/repos/{o}/{r}/pulls/{n}/revert', () => {
   it('opens a pull request that undoes every landed commit, on top of the target as it is now', async () => {
@@ -220,6 +223,28 @@ describe('POST /api/repos/{o}/{r}/pulls/{n}/revert', () => {
       .bind(number)
       .first<{ username: string }>();
     expect(author!.username).toBe('ada');
+  });
+
+  it('deletes the revert branch when the pull request then fails to open', async () => {
+    const s = await crewRepo();
+    const n = await landed(s, 'feature', [{ ...FILES, 'feature.txt': 'f\n' }]);
+    const before = await pullCount(s);
+    // openPull reads the branches afresh; make that read fail after the push.
+    vi.spyOn(GitService.prototype, 'refs').mockRejectedValueOnce(
+      new Error('Artifacts is down')
+    );
+    const res = await revert(s, n);
+    expect(res.status).toBe(500);
+    expect(s.repo.refs.has('refs/heads/revert-1')).toBe(false);
+    expect(await pullCount(s)).toBe(before);
+    // Nothing left behind: a retry takes the same name.
+    const again = await revert(s, n);
+    expect(again.status).toBe(201);
+    const { number } = (await again.json()) as { number: number };
+    const page = (await (
+      await call(s.t, `${BASE}/pulls/${number}`, { cookie: s.admin })
+    ).json()) as { pull: { headRef: string } };
+    expect(page.pull.headRef).toBe('revert-1');
   });
 
   it('picks a branch name that is free', async () => {

@@ -146,21 +146,38 @@ export async function revertPull(opts: {
 
   const count =
     range.commits === 1 ? 'the commit' : `the ${range.commits} commits`;
-  const result = await openPull({
-    env,
-    db,
-    // A fresh service: this one's ref listing predates the new branch.
-    git: gitFor(env, repo),
-    repo,
-    repoFullName: opts.repoFullName,
-    author: user,
-    title: `Revert #${pr.number}: ${pr.title}`.slice(0, 256),
-    body: `Reverts #${pr.number} (${pr.title}).\n\nThis undoes ${count} #${pr.number} landed on \`${target}\` (up to ${range.head.slice(0, 7)}), on top of \`${target}\` as it is now (${tip.slice(0, 7)}).`,
-    base: target,
-    head: branch,
-    after: opts.after,
-  });
-  if (!result.ok) return refuse(result.error);
+  // No pull request, no branch: a failed open takes the branch back down (only if it still points at our commit).
+  const dropBranch = () =>
+    git.client
+      .push(
+        [{ ref: `refs/heads/${branch}`, old: commit.sha, new: ZERO_SHA }],
+        []
+      )
+      .catch((e) => console.error(`[revert] could not delete ${branch}`, e));
+  let result: Awaited<ReturnType<typeof openPull>>;
+  try {
+    result = await openPull({
+      env,
+      db,
+      // A fresh service: this one's ref listing predates the new branch.
+      git: gitFor(env, repo),
+      repo,
+      repoFullName: opts.repoFullName,
+      author: user,
+      title: `Revert #${pr.number}: ${pr.title}`.slice(0, 256),
+      body: `Reverts #${pr.number} (${pr.title}).\n\nThis undoes ${count} #${pr.number} landed on \`${target}\` (up to ${range.head.slice(0, 7)}), on top of \`${target}\` as it is now (${tip.slice(0, 7)}).`,
+      base: target,
+      head: branch,
+      after: opts.after,
+    });
+  } catch (e) {
+    await dropBranch();
+    throw e;
+  }
+  if (!result.ok) {
+    await dropBranch();
+    return refuse(result.error);
+  }
   await recordAudit(db, {
     repositoryId: repo.id,
     actorId: user.id,
