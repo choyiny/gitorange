@@ -1,5 +1,9 @@
 import { describe, expect, it } from 'vitest';
-import { call } from './helpers/app';
+import { drizzle } from 'drizzle-orm/d1';
+import { schema } from '../db/schema';
+import { learnSystemPrompt, learnUserPrompt } from '../learn/contract';
+import { lessonInput, loadLesson } from '../learn/lessons';
+import { call, settle } from './helpers/app';
 import { agentModels, BASE, runReviews, startReview } from './helpers/reviews';
 import { commitPaths } from './helpers/seed';
 import {
@@ -115,6 +119,101 @@ describe('lessons from dismissed change requests', () => {
       method: 'DELETE',
     });
     expect(res.status).toBe(200);
+    await closePull(t, admin);
+    expect(await lessons(t)).toEqual([]);
+  });
+});
+
+describe('lessons from what people taught', () => {
+  type T = Awaited<ReturnType<typeof reviewedPull>>['t'];
+  const db = (t: T) => drizzle(t.env.DB, { schema });
+  const teach = async (
+    t: T,
+    cookie: string,
+    id: string,
+    verb: 'approve' | 'request-changes',
+    note: string
+  ) => {
+    const res = await call(
+      t,
+      `/api/repos/octocat/app/pulls/1/review/flags/${id}/${verb}`,
+      { cookie, method: 'POST', json: { teach: note } }
+    );
+    expect(res.status, await res.clone().text()).toBe(200);
+    await settle(t);
+  };
+  const RULE = 'Rotation is handled by the vault: never ask about it.';
+
+  it("queues a lesson for a finding a person approved with a teach note, and gives the learner the person's words as the rule", async () => {
+    const { t, admin } = await reviewedPull();
+    const person = (await findings(t)).find((f) => f.kind === 'needs_person')!;
+    await teach(t, admin, person.id, 'approve', RULE);
+    await closePull(t, admin);
+    const rows = await lessons(t);
+    expect(rows).toHaveLength(1);
+    expect(rows[0].agent).toBe('secagent');
+    expect(JSON.parse(rows[0].finding_ids)).toEqual([person.id]);
+
+    const loaded = (await loadLesson(db(t), rows[0].id))!;
+    const input = await lessonInput(db(t), loaded);
+    expect(input.findings).toMatchObject([
+      {
+        id: person.id,
+        title: 'Secret rotation',
+        decision: 'approved',
+        rule: RULE,
+        dismissedBy: 'octocat',
+      },
+    ]);
+    // The rule is the person's, outside the fence that holds what the pull request says.
+    const prompt = learnUserPrompt(input, 'abc123', {
+      baseSha: 'f'.repeat(40),
+      files: 1,
+      skipped: 0,
+    });
+    const close = prompt.indexOf('</untrusted-abc123>');
+    expect(close).toBeGreaterThan(0);
+    expect(prompt.slice(0, close)).not.toContain(RULE);
+    expect(prompt.slice(close)).toContain(RULE);
+    expect(prompt.slice(close)).toContain('@octocat');
+    expect(learnSystemPrompt('secagent', 30)).toMatch(/rule/);
+  });
+
+  it('adds taught findings to the dismissed change requests, in order, one lesson per agent', async () => {
+    const { t, admin } = await reviewedPull();
+    const all = await findings(t);
+    const [tokenLogged] = all.filter((f) => f.kind === 'change_requested');
+    const person = all.find((f) => f.kind === 'needs_person')!;
+    await decide(t, admin, tokenLogged.id);
+    await teach(t, admin, person.id, 'request-changes', RULE);
+    await closePull(t, admin);
+    const rows = await lessons(t);
+    expect(rows).toHaveLength(1);
+    expect(JSON.parse(rows[0].finding_ids)).toEqual([
+      tokenLogged.id,
+      person.id,
+    ]);
+    const input = await lessonInput(
+      db(t),
+      (await loadLesson(db(t), rows[0].id))!
+    );
+    expect(input.findings.map((f) => [f.decision, f.rule ?? null])).toEqual([
+      ['dismissed', null],
+      ['changes_requested', RULE],
+    ]);
+  });
+
+  it('forgets a teach note whose decision was undone', async () => {
+    const { t, admin } = await reviewedPull();
+    const person = (await findings(t)).find((f) => f.kind === 'needs_person')!;
+    await teach(t, admin, person.id, 'approve', RULE);
+    const undo = await call(
+      t,
+      `/api/repos/octocat/app/pulls/1/review/flags/${person.id}/undo`,
+      { cookie: admin, method: 'POST' }
+    );
+    expect(undo.status).toBe(200);
+    await settle(t);
     await closePull(t, admin);
     expect(await lessons(t)).toEqual([]);
   });

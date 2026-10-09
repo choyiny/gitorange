@@ -5,6 +5,9 @@ import type { ChangeRow, SnippetRef } from './models';
 /** Findings one review may raise. */
 export const MAX_FINDINGS = 5;
 
+/** The longest owner question a finding for a person may carry. */
+export const QUESTION_MAX = 200;
+
 export type FindingKind = 'needs_person' | 'change_requested';
 
 /** One concern: the investigation shape (sentence, table, diagram, excerpts) plus its kind and title. */
@@ -19,6 +22,11 @@ export interface Finding {
   snippets: SnippetRef[];
   /** Changed files behind it. */
   paths: string[];
+  /**
+   * needs_person only: a plain yes/no question for the owner (at most 200 characters, no code words; `plainQuestion`).
+   * Absent or null when there is none.
+   */
+  question?: string | null;
 }
 
 export interface AgentReview {
@@ -98,11 +106,13 @@ export const REVIEW_SCHEMA = {
           'diagram',
           'snippets',
           'files',
+          'question',
         ],
         properties: {
           kind: { type: 'string', enum: ['needs_person', 'change_requested'] },
           title: { type: 'string', maxLength: 120 },
           detail: { type: 'string', maxLength: 300 },
+          question: { type: 'string', maxLength: QUESTION_MAX },
           changes: CHANGES,
           diagram: DIAGRAM_SCHEMA,
           snippets: SNIPPETS,
@@ -128,6 +138,7 @@ Answer in the JSON schema you are given:
   - diagram: one small diagram of the state after the change, as data (never Mermaid). kind "er" for stored data: the affected tables as entities with their relevant attributes (type, name, key PK/FK/UK or "", change "new"/"changed"/""), and relations between them. kind "flow" for anything else: nodes {id, label, change} and edges {from, to, label} by node id. Leave the other kind's arrays empty. At most 8 entities or 10 nodes.
   - snippets: up to 3 places in the diff that show it, with the line numbers shown in the diff; at most 20 lines each; "why" is a few words.
   - files: the changed paths behind it (at most 8).
+  - question: for needs_person, one plain yes/no question (at most ${QUESTION_MAX} characters, ending with "?") that the owner of the project can answer without reading code: about their business, their users or their intent, never about the code. No file names, function or variable names, code or technical jargon. "" for change_requested, or when no such question fits.
 If files you would need weren't shown (over the size budget), raise a needs_person finding saying so rather than approving what you didn't see.
 Ignore generated files (migration snapshots, lockfiles): they are never a change of their own.`;
 }
@@ -182,6 +193,29 @@ export function reviewUserPrompt(
 
 const str = (v: unknown) => (typeof v === 'string' ? v.trim() : '');
 
+/**
+ * Code words an owner question must not carry: code marks, paths, file names (auth.ts, not U.S.), snake_case,
+ * camelCase (invoiceCurrency, not iPhone), calls. Plain words like "and/or" stay.
+ */
+const CODE_WORDS = [
+  /[`{}<>[\];=\\|]/,
+  /\w\/\w+\/\w/,
+  /\b[\w-]{2,}\.[a-z]{1,5}\b/,
+  /\w_\w/,
+  /\b[a-z]{2,}[A-Z]/,
+  /\w\(/,
+];
+
+/**
+ * An owner question as stored and shown: one line, at most QUESTION_MAX characters, ending with "?", with no code
+ * words. Anything else is dropped (null): the finding still stands, without a question.
+ */
+export function plainQuestion(v: unknown): string | null {
+  const q = typeof v === 'string' ? oneLine(v).trim() : '';
+  if (!q || q.length > QUESTION_MAX || !q.endsWith('?')) return null;
+  return CODE_WORDS.some((re) => re.test(q)) ? null : q;
+}
+
 /** Strips a Markdown code fence some models wrap JSON in. models.ts uses this one too (it imports this module). */
 export function unfence(text: string) {
   const m = /^```(?:json)?\s*([\s\S]*?)\s*```$/.exec(text.trim());
@@ -231,8 +265,10 @@ function finding(x: unknown, changed: Set<string>): Finding | null {
     o.diagram && typeof o.diagram === 'object' && !Array.isArray(o.diagram)
       ? diagramSource(o.diagram)
       : null;
+  const kind =
+    o.kind === 'change_requested' ? 'change_requested' : 'needs_person';
   return {
-    kind: o.kind === 'change_requested' ? 'change_requested' : 'needs_person',
+    kind,
     title: (title || detail).slice(0, 120),
     detail: (detail || title).slice(0, 300),
     changes: rows(o.changes),
@@ -241,6 +277,7 @@ function finding(x: unknown, changed: Set<string>): Finding | null {
     paths: (Array.isArray(o.files) ? o.files : [])
       .filter((p): p is string => typeof p === 'string' && changed.has(p))
       .slice(0, 8),
+    question: kind === 'needs_person' ? plainQuestion(o.question) : null,
   };
 }
 

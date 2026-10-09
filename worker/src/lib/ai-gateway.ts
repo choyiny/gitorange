@@ -11,6 +11,7 @@ export type AiFeature =
   | 'review-agent'
   | 'review-agent-pi'
   | 'review-agent-learn'
+  | 'review-delegate'
   | 'merge-resolution'
   | 'stack-decide'
   | 'stack-explain'

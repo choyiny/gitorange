@@ -1,5 +1,16 @@
 import type { z } from '@hono/zod-openapi';
-import { and, desc, eq, lt, lte, ne, or, type SQL } from 'drizzle-orm';
+import {
+  and,
+  asc,
+  desc,
+  eq,
+  lt,
+  lte,
+  ne,
+  or,
+  sql,
+  type SQL,
+} from 'drizzle-orm';
 import type { AnySQLiteColumn } from 'drizzle-orm/sqlite-core';
 import {
   agents,
@@ -8,6 +19,7 @@ import {
   pullRequests,
   type AuditAction,
   type AuditActorKind,
+  type AuditEventRow,
 } from '../db/app.schema';
 import { users } from '../db/auth.schema';
 import type { DrizzleDB } from '../db/middleware';
@@ -57,6 +69,66 @@ export async function recordAudit(
   } catch (err) {
     console.error('[audit] could not record', e.action, e.target, err);
   }
+}
+
+/** An audit_events row as an AuditEvent, before its repository's name is filled in (`repo: null`). */
+function auditRowEvent(
+  e: AuditEventRow,
+  login: string | null,
+  name: string | null
+): AuditEvent {
+  const data = e.data ?? {};
+  return {
+    id: e.id,
+    at: e.createdAt.getTime(),
+    actor: {
+      kind: e.actorKind,
+      login: e.actorKind === 'system' ? null : (login ?? null),
+      name: e.actorKind === 'system' ? null : (name ?? null),
+    },
+    via: e.via,
+    action: e.action,
+    target: e.target,
+    data,
+    repo: null,
+    pull: typeof data.pull === 'number' ? data.pull : null,
+  };
+}
+
+/**
+ * audit_events rows matching `where` (only these: the pull request timeline isn't merged in), oldest or newest first,
+ * at most `limit`, as AuditEvents with their repository's name and id. The caller checks who may read them.
+ */
+export async function auditEventsWhere(
+  db: DrizzleDB,
+  where: SQL | undefined,
+  opts: { order: 'asc' | 'desc'; limit: number }
+): Promise<(AuditEvent & { repositoryId: string | null })[]> {
+  const rowid = sql.raw('"audit_events".rowid');
+  const rows = await db
+    .select({ e: auditEvents, login: users.username, name: users.name })
+    .from(auditEvents)
+    .leftJoin(users, eq(users.id, auditEvents.actorId))
+    .where(where)
+    .orderBy(
+      ...(opts.order === 'asc'
+        ? [asc(auditEvents.createdAt), asc(rowid)]
+        : [desc(auditEvents.createdAt), desc(rowid)])
+    )
+    .limit(opts.limit)
+    .all();
+  const repos = await findReposByIds(
+    db,
+    rows.flatMap(({ e }) => (e.repositoryId ? [e.repositoryId] : []))
+  );
+  return rows.map(({ e, login, name }) => {
+    const found = e.repositoryId ? repos.get(e.repositoryId) : undefined;
+    return {
+      ...auditRowEvent(e, login, name),
+      repo: found ? `${found.namespace.username}/${found.repo.name}` : null,
+      repositoryId: e.repositoryId,
+    };
+  });
 }
 
 export const AUDIT_PAGE_DEFAULT = 50;
@@ -176,26 +248,11 @@ export async function listAudit(
   ]);
 
   const listed: Listed[] = [
-    ...audit.map(({ e, login, name }): Listed => {
-      const data = e.data ?? {};
-      return {
-        src: 'a',
-        repositoryId: e.repositoryId,
-        id: e.id,
-        at: e.createdAt.getTime(),
-        actor: {
-          kind: e.actorKind,
-          login: e.actorKind === 'system' ? null : (login ?? null),
-          name: e.actorKind === 'system' ? null : (name ?? null),
-        },
-        via: e.via,
-        action: e.action,
-        target: e.target,
-        data,
-        repo: null,
-        pull: typeof data.pull === 'number' ? data.pull : null,
-      };
-    }),
+    ...audit.map(({ e, login, name }): Listed => ({
+      src: 'a',
+      repositoryId: e.repositoryId,
+      ...auditRowEvent(e, login, name),
+    })),
     ...timeline.map(({ e, number, login, name, agent }): Listed => {
       const data: Record<string, unknown> = {
         ...(e.state ? { state: e.state } : {}),

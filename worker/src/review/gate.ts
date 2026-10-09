@@ -1,6 +1,7 @@
 import { and, eq, inArray, sql } from 'drizzle-orm';
 import type { DrizzleDB } from '../db/middleware';
 import {
+  agents,
   prApprovals,
   prClassifications,
   prReviewers,
@@ -34,6 +35,8 @@ export type GateReviewer = {
   status: ReviewerStatus;
   requested: boolean;
   error: string | null;
+  /** A guarded agent (agents.guarded): a person's approval of the commit never stands over its findings. */
+  guarded?: boolean;
 };
 
 export type GateFlag = {
@@ -71,27 +74,60 @@ const sentence = (detail: string | null) =>
  * Whether review is satisfied for one head commit, and if not, why (as pull-state reasons). Every requested agent
  * that is still invited must have approved, or have every needs_person flag approved and every change request
  * dismissed; with no such agent, the commit needs a person's approval (or waits while its review hasn't requested
- * anyone yet). A person's approval of the commit stands over everything except an agent's open change request:
- * that must be dismissed, or a new commit pushed, first.
+ * anyone yet). A person's approval of the commit stands over everything except an agent's open change request (it
+ * must be dismissed, or a new commit pushed, first) and a guarded agent's open findings for a person: those are
+ * never approved in bulk, only one at a time with a reason.
  */
 export function reviewVerdict(i: GateInput): ReviewVerdict {
-  const agents = agentVerdict(i);
-  if (!i.approvedBy.length) return agents;
-  const changes = agents.reasons.filter(
-    (r) => r.kind === 'agent_changes_requested'
-  );
-  return { satisfied: !changes.length, reasons: changes };
+  const verdict = agentVerdict(i);
+  if (!i.approvedBy.length) return verdict;
+  const standing = notStoodOver(i, verdict.reasons);
+  return { satisfied: !standing.length, reasons: standing };
 }
 
 /**
  * What a person's approval of the commit stands over (recorded with it): agents' findings for a person, people's
- * change requests on them, unfinished and failed agent reviews. Not open change requests (it doesn't stand over
- * them) and not needs_approval (that is what an approval is for).
+ * change requests on them, unfinished and failed agent reviews. Not open change requests or a guarded agent's
+ * findings (it doesn't stand over them) and not needs_approval (that is what an approval is for).
  */
 export function approvalOverrides(i: GateInput): ReviewReason[] {
-  return agentVerdict(i).reasons.filter(
-    (r) => r.kind !== 'agent_changes_requested' && r.kind !== 'needs_approval'
-  );
+  const reasons = agentVerdict(i).reasons;
+  const standing = notStoodOver(i, reasons);
+  const guardedChanges = standing.find((r) => r.kind === 'changes_requested');
+  return reasons.flatMap((r): ReviewReason[] => {
+    if (r.kind === 'needs_approval') return [];
+    // People's change requests: the approval stands over those on unguarded agents' findings only.
+    if (r.kind === 'changes_requested') {
+      const flags = r.flags - (guardedChanges?.flags ?? 0);
+      return flags > 0 ? [{ ...r, flags }] : [];
+    }
+    return standing.includes(r) ? [] : [r];
+  });
+}
+
+/**
+ * The reasons a person's approval of the commit never stands over: agents' open change requests, and a guarded
+ * agent's open findings for a person (waiting, or with a person's change request on them).
+ */
+function notStoodOver(i: GateInput, reasons: ReviewReason[]): ReviewReason[] {
+  const guarded = i.reviewers.filter((r) => r.guarded);
+  const handles = new Set(guarded.map((r) => r.handle));
+  const ids = new Set(guarded.map((r) => r.agentId));
+  const guardedChanges = i.flags.filter(
+    (f) =>
+      f.agentId !== null &&
+      ids.has(f.agentId) &&
+      f.kind === 'needs_person' &&
+      !f.approved &&
+      f.changesRequested
+  ).length;
+  return reasons.flatMap((r): ReviewReason[] => {
+    if (r.kind === 'agent_changes_requested') return [r];
+    if (r.kind === 'agent_flagged' && handles.has(r.agent)) return [r];
+    if (r.kind === 'changes_requested' && guardedChanges)
+      return [{ ...r, flags: Math.min(guardedChanges, r.flags) }];
+    return [];
+  });
 }
 
 /** The verdict from agents alone, before any person's approval. */
@@ -294,10 +330,12 @@ export async function reviewInputs(
         status: prReviewers.status,
         requested: prReviewers.requested,
         error: prReviewers.error,
+        guarded: agents.guarded,
         invited: sql<number>`EXISTS (SELECT 1 FROM repository_agents ra WHERE ra.repository_id = ${repositoryId} AND ra.agent_id = ${prReviewers.agentId})`,
       })
       .from(prReviewers)
       .innerJoin(users, eq(users.id, prReviewers.agentId))
+      .leftJoin(agents, eq(agents.userId, prReviewers.agentId))
       .where(
         and(
           inArray(prReviewers.pullRequestId, prIds),
@@ -305,7 +343,11 @@ export async function reviewInputs(
         )
       )
       .all())
-      reviewerRows.push({ ...r, handle: r.handle ?? r.agentId });
+      reviewerRows.push({
+        ...r,
+        handle: r.handle ?? r.agentId,
+        guarded: !!r.guarded,
+      });
     approvals.push(
       ...(await db
         .select({
@@ -334,12 +376,13 @@ export async function reviewInputs(
       reviewers: reviewerRows
         .filter((r) => at(r) && Number(r.invited))
         .sort((a, b) => a.handle.localeCompare(b.handle))
-        .map(({ agentId, handle, status, requested, error }) => ({
+        .map(({ agentId, handle, status, requested, error, guarded }) => ({
           agentId,
           handle,
           status,
           requested,
           error,
+          guarded,
         })),
       flags: flags.filter((f) => f.classificationId === id),
       approvedBy: approvals.filter(at).map((a) => a.userId),

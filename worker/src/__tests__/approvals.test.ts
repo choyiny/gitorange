@@ -1,4 +1,15 @@
 import { describe, expect, it } from 'vitest';
+import { drizzle } from 'drizzle-orm/d1';
+import { schema } from '../db/schema';
+import { decideFinding } from '../review/delegate';
+import {
+  fakeDecider,
+  flagCall,
+  guard,
+  QUESTION,
+  questionedPull,
+  userId,
+} from './helpers/findings';
 import {
   addMember,
   bootstrapAdmin,
@@ -188,6 +199,7 @@ describe('Approvals pagination', () => {
     expect(await page(t, bob)).toEqual({
       items: [],
       count: 0,
+      assignedToMe: 0,
       nextCursor: null,
     });
   });
@@ -364,6 +376,7 @@ describe('Approvals items', () => {
     expect(await inbox(t, bob)).toEqual({
       items: [],
       count: 0,
+      assignedToMe: 0,
       nextCursor: null,
     });
     expect((await inbox(t, admin)).count).toBe(1);
@@ -524,5 +537,66 @@ describe('Approvals items', () => {
       'failed',
     ]);
     expect(res.count).toBe(1);
+  });
+});
+
+describe('Approvals: who decides each finding', () => {
+  type Flag = {
+    id: string;
+    question: string | null;
+    guarded: boolean;
+    assignee: { login: string } | null;
+    decidedVia: string | null;
+    reason: string | null;
+    teach: string | null;
+    changesRequestedNote: string | null;
+  };
+  const flagsOf = async (t: ReturnType<typeof makeEnv>, cookie: string) => {
+    const body = (await (
+      await call(t, '/api/approvals', { cookie })
+    ).json()) as {
+      assignedToMe: number;
+      items: { agents: { flags: Flag[] }[] }[];
+    };
+    return {
+      assignedToMe: body.assignedToMe,
+      flags: body.items.flatMap((i) => i.agents.flatMap((a) => a.flags)),
+    };
+  };
+
+  it("shows a finding GitOrange AI sent back, with its reason, and a guarded agent's finding as guarded", async () => {
+    const { t, admin, person } = await questionedPull();
+    const db = drizzle(t.env.DB, { schema });
+    const result = await decideFinding(t.env, db, person.id, await userId(t), {
+      model: fakeDecider(() => ({
+        decision: 'request_changes',
+        reason: 'Ask which invoices were in US dollars.',
+      })).model,
+      after: (w) => t.ctx.waitUntil(w),
+    });
+    expect(result).toMatchObject({ ok: true, applied: true });
+    await settle(t);
+    const before = await flagsOf(t, admin);
+    expect(before.assignedToMe).toBe(0);
+    expect(before.flags).toMatchObject([
+      {
+        id: person.id,
+        question: QUESTION,
+        guarded: false,
+        assignee: null,
+        decidedVia: 'GitOrange AI',
+        reason: 'Ask which invoices were in US dollars.',
+        changesRequestedNote: 'Ask which invoices were in US dollars.',
+        teach: null,
+      },
+    ]);
+    await guard(t, 'dataagent');
+    expect((await flagsOf(t, admin)).flags[0].guarded).toBe(true);
+    // Assigned to yourself: counted.
+    await flagCall(t, admin, person.id, 'assign', { login: 'octocat' });
+    expect(await flagsOf(t, admin)).toMatchObject({
+      assignedToMe: 1,
+      flags: [{ assignee: { login: 'octocat' } }],
+    });
   });
 });

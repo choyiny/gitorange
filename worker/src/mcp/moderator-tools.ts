@@ -1,5 +1,9 @@
 import { approvePull } from '../review/approvals';
-import { decideFlag, type FlagKind } from '../review/flags';
+import {
+  DECISION_REASON_MAX,
+  decideFlag,
+  type FlagKind,
+} from '../review/flags';
 import { publishChange } from '../live/publish';
 import { McpToolError } from './errors';
 import { NOT_MODERATOR, type Moderator } from './moderators';
@@ -31,6 +35,13 @@ const findingIdProp = {
   type: 'string',
   description:
     "The finding's id, from gitorange_get_pull_request's reviewers[].findings.",
+};
+const reasonProp = {
+  type: 'string',
+  maxLength: DECISION_REASON_MAX,
+  description:
+    "Why. Required for a guarded agent's finding (guarded: true in gitorange_get_pull_request): it goes in the " +
+    "audit log with the user's name. Ask the user for it; never make one up.",
 };
 
 /** The repository, pull request and head SHA a moderator tool acts on, after the same checks as the web UI. */
@@ -74,7 +85,8 @@ async function decideFinding(
     pr,
     findingId,
     ctx.user.id,
-    { kind: 'approve' },
+    // A guarded agent's finding needs the reason; decideFlag refuses it without one, as on the web.
+    { kind: 'approve', reason: str(args, 'reason') },
     ctx.after,
     { via: moderator.name, kind, expectedHead: { sha: headSha, git } }
   );
@@ -95,7 +107,8 @@ const approveReviewFinding: ToolModule = {
     description:
       "Moderator apps only. Approve one of a pull request's findings that needs a person (kind needs_person), " +
       'as the signed-in user, recorded as made via this app — the same as Approve in the web UI. Read the ' +
-      'finding with gitorange_get_pull_request first and pass the head_sha you reviewed. Needs push access.',
+      "finding with gitorange_get_pull_request first and pass the head_sha you reviewed. A guarded agent's finding " +
+      '(guarded: true) needs a reason from the user. Needs push access.',
     annotations: {
       readOnlyHint: false,
       destructiveHint: false,
@@ -108,6 +121,7 @@ const approveReviewFinding: ToolModule = {
         number: numberProp,
         finding_id: findingIdProp,
         head_sha: headShaProp,
+        reason: reasonProp,
       },
       required: ['repository', 'number', 'finding_id', 'head_sha'],
     },
@@ -125,7 +139,8 @@ const dismissChangeRequest: ToolModule = {
     description:
       "Moderator apps only. Dismiss an agent's change request on a pull request (a finding of kind " +
       'change_requested), as the signed-in user, recorded as made via this app — the same as Dismiss in the web ' +
-      'UI. Pass the head_sha you reviewed. Needs push access.',
+      "UI. Pass the head_sha you reviewed. A guarded agent's change request needs a reason from the user. Needs " +
+      'push access.',
     annotations: {
       readOnlyHint: false,
       destructiveHint: false,
@@ -138,6 +153,7 @@ const dismissChangeRequest: ToolModule = {
         number: numberProp,
         finding_id: findingIdProp,
         head_sha: headShaProp,
+        reason: reasonProp,
       },
       required: ['repository', 'number', 'finding_id', 'head_sha'],
     },
@@ -155,8 +171,9 @@ const approvePullRequest: ToolModule = {
     description:
       "Moderator apps only. Approve a pull request's head commit as the signed-in user, recorded as made via " +
       'this app — the same as Approve in the web UI. It satisfies review when no agent was requested and stands ' +
-      "over findings for a person and failed agent reviews, but not over an agent's open change request. Pass " +
-      'the head_sha you reviewed. Needs push access.',
+      "over findings for a person and failed agent reviews, but not over an agent's open change request or a " +
+      "guarded agent's finding (approve those one at a time, with a reason). Pass the head_sha you reviewed. Needs " +
+      'push access.',
     annotations: {
       readOnlyHint: false,
       destructiveHint: false,

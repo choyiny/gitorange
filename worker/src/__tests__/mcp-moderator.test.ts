@@ -670,6 +670,43 @@ describe('moderator tools', () => {
     await settle(t);
   });
 
+  it("needs a reason for a guarded agent's finding, as the web does", async () => {
+    const { t, mod, head, person } = await moderated();
+    await t.env.DB.prepare(
+      "UPDATE agents SET guarded = 1, facet = 'security'"
+    ).run();
+    const refused = await tool(
+      t,
+      mod,
+      'gitorange_approve_review_finding',
+      pullArgs({ finding_id: person.id, head_sha: head })
+    );
+    expect(refused.isError).toBe(true);
+    expect(refused.content[0].text).toMatch(/needs a reason/);
+    await nothingDecided(t, person.id);
+    const ok = await tool(
+      t,
+      mod,
+      'gitorange_approve_review_finding',
+      pullArgs({
+        finding_id: person.id,
+        head_sha: head,
+        reason: 'Accepted risk: the export is internal.',
+      })
+    );
+    expect(ok.isError).toBeFalsy();
+    expect(await flagRow(t, person.id)).toMatchObject({
+      approved_via: 'Claude Mod',
+    });
+    const row = await t.env.DB.prepare(
+      'SELECT decision_reason FROM pr_review_flags WHERE id = ?'
+    )
+      .bind(person.id)
+      .first<{ decision_reason: string }>();
+    expect(row!.decision_reason).toBe('Accepted risk: the export is internal.');
+    await settle(t);
+  });
+
   it('approves a finding for a person as the web does, recorded via the app', async () => {
     const { t, mod, head, person } = await moderated();
     const res = await tool(

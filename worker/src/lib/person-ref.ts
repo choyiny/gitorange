@@ -55,3 +55,6 @@ export const GHOST: PersonRef = {
   isAgent: false,
   color: null,
 };
+
+/** The same stand-in, under the name the approvals code uses. */
+export const GHOST_REF = GHOST;

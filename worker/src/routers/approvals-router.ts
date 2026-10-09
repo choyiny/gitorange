@@ -4,9 +4,18 @@ import { approvalsFor, decodeCursor } from '../review/inbox';
 import {
   json200Response,
   json400Response,
+  json404Response,
   validationHook,
 } from './openapi-helpers';
-import { publicUserSchema, pullStateSchema } from './schemas';
+import {
+  auditEventSchema,
+  flagDecisionFields,
+  personRefSchema,
+  publicUserSchema,
+  pullStateSchema,
+} from './schemas';
+import { agentFacets } from '../db/app.schema';
+import { findingDetail } from '../review/finding';
 
 export const approvalsRouter = new OpenAPIHono<AppEnv>({
   defaultHook: validationHook,
@@ -56,6 +65,7 @@ const itemSchema = z.object({
           changesRequestedBy: publicUserSchema.nullable(),
           changesRequestedAt: z.string().nullable(),
           changesRequestedNote: z.string().nullable(),
+          ...flagDecisionFields,
         })
       ),
     })
@@ -81,6 +91,8 @@ const listRoute = createRoute({
         /** How many things wait on you across every page: each unapproved flag, failed review and
          * failed resolution, each stale must-account-for block, each pull request with unchecked stack pairs, and each pull request requiring human review that has none of those. */
         count: z.number(),
+        /** Findings someone asked you to decide that still wait, across every page. */
+        assignedToMe: z.number(),
         /** Pass as `cursor` for the next page; null on the last page. */
         nextCursor: z.string().nullable(),
       }),
@@ -98,4 +110,94 @@ approvalsRouter.openapi(listRoute, async (c) => {
     await approvalsFor(c.env, c.get('db'), c.get('user')!, { limit, cursor }),
     200
   );
+});
+
+/** One finding for its own page (/approvals/:flagId). */
+const findingSchema = z
+  .object({
+    id: z.string(),
+    kind: z.enum(['needs_person', 'change_requested']),
+    title: z.string(),
+    /** needs_person: the agent's plain yes/no question for the owner. */
+    question: z.string().nullable(),
+    /** The finding as recorded: its sentence, table, diagram and the diff excerpts it cites (Markdown). */
+    detail: z.string().nullable(),
+    detailModel: z.string().nullable(),
+    paths: z.array(z.string()),
+    agentSha: z.string().nullable(),
+    /** The commit it was raised on. */
+    headSha: z.string(),
+    /** Epoch milliseconds. */
+    createdAt: z.number(),
+    /** Never approved in bulk, by one key or by AI; approving it needs a reason. */
+    guarded: z.boolean(),
+    state: z.enum(['open', 'approved', 'dismissed', 'changes_requested']),
+    decidedBy: personRefSchema.nullable(),
+    decidedAt: z.number().nullable(),
+    /** A moderator app's name, or "GitOrange AI"; null from the web, or while open. */
+    decidedVia: z.string().nullable(),
+    reason: z.string().nullable(),
+    /** The note sent with a request for changes. */
+    note: z.string().nullable(),
+    teach: z.string().nullable(),
+    teachBy: personRefSchema.nullable(),
+    assignee: personRefSchema.nullable(),
+    assignedBy: personRefSchema.nullable(),
+    assignedAt: z.number().nullable(),
+    repo: z.object({ fullName: z.string(), name: z.string() }),
+    pull: z.object({
+      number: z.number(),
+      title: z.string(),
+      state: z.enum(['open', 'closed', 'merged']),
+      author: personRefSchema,
+      headRef: z.string(),
+      landTarget: z.string(),
+      /** The branch tip now; null once closed or when it can't be read. */
+      headSha: z.string().nullable(),
+    }),
+    agent: z
+      .object({
+        login: z.string(),
+        name: z.string(),
+        color: z.string(),
+        facet: z.enum(agentFacets).nullable(),
+        guarded: z.boolean(),
+        bio: z.string(),
+        repository: z.string().nullable(),
+      })
+      .nullable(),
+    /** You let GitOrange AI decide this agent's findings on your pull requests. */
+    delegated: z.boolean(),
+    /** What you can do with it now: decide (push rights, open), undo your decision, delegate it, assign it. */
+    can: z.object({
+      decide: z.boolean(),
+      undo: z.boolean(),
+      delegate: z.boolean(),
+      assign: z.boolean(),
+    }),
+    /** Its audit entries, oldest first. */
+    history: z.array(auditEventSchema),
+  })
+  .openapi('Finding');
+
+const findingRoute = createRoute({
+  method: 'get',
+  path: '/flags/{flagId}',
+  tags: ['Pull requests'],
+  summary: 'One finding, with its pull request, agent and history',
+  request: { params: z.object({ flagId: z.string() }) },
+  responses: {
+    ...json200Response(findingSchema, 'The finding'),
+    ...json404Response,
+  },
+});
+approvalsRouter.openapi(findingRoute, async (c) => {
+  const found = await findingDetail(
+    c.env,
+    c.get('db'),
+    c.get('user')!,
+    c.req.valid('param').flagId
+  );
+  if (!found) return c.json({ error: 'Not Found' }, 404);
+  return c.json(found, 200);
 });

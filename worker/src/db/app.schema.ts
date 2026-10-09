@@ -455,7 +455,8 @@ export const prReviewFlags = sqliteTable(
       onDelete: 'set null',
     }),
     approvedAt: integer('approved_at', { mode: 'timestamp' }),
-    // The connected app's name when a moderator app approved or dismissed it over MCP; null from the web.
+    // How the current decision (approval, dismissal, or request for changes) was made: the connected app's name when
+    // a moderator app made it over MCP, "GitOrange AI" when the AI decided for the person; null from the web.
     approvedVia: text('approved_via'),
     // A person asked for changes instead of approving: blocks auto-merge until someone approves
     // (which clears these). Never set together with approved_at.

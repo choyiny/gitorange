@@ -36,6 +36,7 @@ import { readAgentConfig, type AgentEngine } from '../agents/config';
 import { ensureStacking } from '../stack/discover';
 import { chunks } from '../stack/view';
 import { maybeAutoMerge } from './auto-merge';
+import { decideDelegated, delegatesAny, type DelegateModel } from './delegate';
 import {
   MODEL_RETRIES,
   SUMMARY_BATCH,
@@ -340,6 +341,11 @@ export interface AgentReviewDeps {
   pi?: (name: string) => PiReviewerApi;
   /** This Workflow instance, for the Pi reviewer's "settled" event. */
   instanceId?: string;
+  /**
+   * The model GitOrange AI decides delegated findings with once a review finishes ("Let Claude decide"); undefined:
+   * the instance's reasoning model (none without an AI binding), null: none.
+   */
+  delegate?: DelegateModel | null;
 }
 
 /**
@@ -945,6 +951,13 @@ async function reviewHead(
     await startStacking(env, db, pr.id, headSha);
     return true;
   });
+  // Findings of agents the author delegated: GitOrange AI decides them before auto-merge looks. Never throws. A
+  // step only for someone who delegates (steps are keyed by name, so a replay that skips or adds it is fine).
+  if (await delegatesAny(db, pr.authorId))
+    await step.do('delegate', async () => {
+      await decideDelegated(env, db, id, { model: deps.delegate });
+      return true;
+    });
   await step.do('auto-merge', async () => {
     await maybeAutoMerge(env, db, pr.id);
     return true;
@@ -1036,6 +1049,7 @@ export async function executeReviewerRetry(
       ok: true as const,
       reviewId: headReviewId(row.pullRequestId, row.headSha),
       headSha: row.headSha,
+      agentId: row.agentId,
       handle,
       generation: row.createdAt.getTime(),
       summaries:
@@ -1092,6 +1106,16 @@ export async function executeReviewerRetry(
         );
     return true;
   });
+  // This agent's findings, when the author delegated it (a step cached before agentId existed skips it).
+  const agentId = (job as { agentId?: string }).agentId;
+  if (agentId && (await delegatesAny(db, job.pr.authorId)))
+    await step.do('delegate', async () => {
+      await decideDelegated(env, db, job.reviewId, {
+        agentId,
+        model: deps.delegate,
+      });
+      return true;
+    });
   await step.do('auto-merge', async () => {
     await maybeAutoMerge(env, db, job.pr.id);
     return true;
