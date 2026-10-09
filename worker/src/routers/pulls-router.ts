@@ -88,6 +88,12 @@ const pullSchema = z
     mergedAutomatically: z.boolean(),
     mergedAt: z.string().nullable(),
     closedAt: z.string().nullable(),
+    /** The app that opened it over MCP, self-reported (the OAuth client's name); null when opened by hand. */
+    createdVia: z.string().nullable(),
+    /** The coding session label that app reported, if any. */
+    sessionLabel: z.string().nullable(),
+    /** The person's original request that app reported, if any. */
+    request: z.string().nullable(),
     createdAt: z.string(),
     updatedAt: z.string(),
     commentCount: z.number(),
@@ -121,6 +127,9 @@ function serializePull(
     mergedAutomatically: pr.mergedAutomatically,
     mergedAt: pr.mergedAt?.toISOString() ?? null,
     closedAt: pr.closedAt?.toISOString() ?? null,
+    createdVia: pr.createdVia,
+    sessionLabel: pr.sessionLabel,
+    request: pr.request,
     createdAt: pr.createdAt.toISOString(),
     updatedAt: pr.updatedAt.toISOString(),
     commentCount,

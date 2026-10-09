@@ -35,6 +35,8 @@ import {
 } from './routers/agents-router';
 import { usageRouter } from './routers/usage-router';
 import { adminAuditRouter, repoAuditRouter } from './routers/audit-router';
+import { branchesRouter } from './routers/branches-router';
+import { sessionsRouter } from './routers/sessions-router';
 import { runScheduled } from './cron';
 
 const app = new OpenAPIHono<AppEnv>();
@@ -101,6 +103,8 @@ app.route('/api/repos', agentRunsRouter);
 app.route('/api/repos', insightsRouter);
 app.route('/api/repos', repoAgentsRouter);
 app.route('/api/repos', repoAuditRouter);
+app.route('/api/repos', sessionsRouter);
+app.route('/api/repos', branchesRouter);
 app.use('/api/users/*', requireAuth);
 app.use('/api/users', requireAuth);
 app.route('/api/users', usersRouter);

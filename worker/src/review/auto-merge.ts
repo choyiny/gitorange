@@ -108,8 +108,6 @@ export async function maybeAutoMerge(
     pr,
     by: null,
     after: (p) => void followUps.push(p),
-    // Merged branches don't pile up; stacked or since-pushed ones are kept.
-    deleteBranch: true,
   });
   await Promise.allSettled(followUps);
   if (!result.ok)

@@ -28,6 +28,7 @@ import { publishChange } from '../live/publish';
 import { bareNode, stackTargetFor, stackTreeView } from '../stack/view';
 import type { Dependency, TreeNode } from '../stack/tree';
 import { McpToolError } from './errors';
+import { appName } from './moderators';
 import type { ToolContext, ToolModule } from './tools';
 import { landShas, landTargetOf } from '../lib/land-target';
 
@@ -57,6 +58,30 @@ export function str(
   if (typeof v !== 'string') throw new McpToolError(`${key} must be a string.`);
   if (required && !v.trim())
     throw new McpToolError(`${key} must not be empty.`);
+  return v;
+}
+
+/** The longest session label, and the longest request, a pull request records. */
+export const SESSION_MAX = 64;
+export const REQUEST_MAX = 4000;
+
+/**
+ * An optional text argument, trimmed: null when it is absent or blank, an error over `max` characters. `strip` first
+ * removes control, format and line-separator characters (a label is one line of plain text).
+ */
+function optionalText(
+  args: Record<string, unknown>,
+  key: string,
+  max: number,
+  strip = false
+): string | null {
+  let v = str(args, key);
+  if (v === undefined) return null;
+  if (strip) v = v.replace(/[\p{Cc}\p{Cf}\p{Zl}\p{Zp}]/gu, '');
+  v = v.trim();
+  if (!v) return null;
+  if (Array.from(v).length > max)
+    throw new McpToolError(`${key} must be at most ${max} characters.`);
   return v;
 }
 
@@ -447,6 +472,10 @@ const getPullRequest: ToolModule = {
           land_target: landTargetOf(pr),
           head: pr.headRef,
           head_sha: shas?.head ?? null,
+          // Who opened it, as the app reported: the app, its session label, and the person's original request.
+          created_via: pr.createdVia,
+          session: pr.sessionLabel,
+          request: pr.request,
           commits: commits.map((c) => ({
             sha: c.hash.slice(0, 7),
             message: c.message.split('\n')[0],
@@ -541,7 +570,10 @@ const createPullRequest: ToolModule = {
     description:
       'Open a pull request from a branch you already pushed (head) into another branch (base, the default ' +
       'branch if omitted). Opening it starts its checks and, where reviewer agents are invited, ' +
-      'their review; follow both with gitorange_get_pull_request. Needs push access.',
+      'their review; follow both with gitorange_get_pull_request. Needs push access. Always pass `request` ' +
+      "(the person's original request, in their words) and `session` (a short label for this coding session, the " +
+      'same on every pull request you open in it): GitOrange shows them to the people who review the change and ' +
+      'groups your pull requests into one session.',
     annotations: {
       readOnlyHint: false,
       destructiveHint: false,
@@ -565,6 +597,20 @@ const createPullRequest: ToolModule = {
           type: 'string',
           description: 'Markdown description: what changed and why.',
         },
+        session: {
+          type: 'string',
+          maxLength: SESSION_MAX,
+          description:
+            'A short label for this coding session (at most 64 characters), e.g. "s4": the same on every pull ' +
+            'request you open in it, different from your other sessions.',
+        },
+        request: {
+          type: 'string',
+          maxLength: REQUEST_MAX,
+          description:
+            "The person's original request that led to this change, in their own words (at most 4000 characters), " +
+            'not your summary of it.',
+        },
       },
       required: ['repository', 'head', 'title'],
     },
@@ -573,6 +619,9 @@ const createPullRequest: ToolModule = {
     const { repo, git, fullName, perms } = await repoFor(ctx, args);
     if (!perms.write)
       throw new McpToolError(`You don't have push access to ${fullName}.`);
+    // Checked before anything is opened: a refused call leaves no pull request behind.
+    const sessionLabel = optionalText(args, 'session', SESSION_MAX, true);
+    const request = optionalText(args, 'request', REQUEST_MAX);
     const result = await openPull({
       env: ctx.env,
       db: ctx.db,
@@ -584,6 +633,10 @@ const createPullRequest: ToolModule = {
       body: str(args, 'body') ?? '',
       base: str(args, 'base')?.trim() || repo.defaultBranch,
       head: str(args, 'head', true).trim(),
+      // Self-reported provenance: the app is the OAuth client of this token, the rest is what the agent passed.
+      createdVia: ctx.clientId ? await appName(ctx.db, ctx.clientId) : null,
+      sessionLabel,
+      request,
       after: ctx.after,
     });
     if (!result.ok) throw new McpToolError(result.error);
@@ -594,6 +647,8 @@ const createPullRequest: ToolModule = {
           title: result.pr.title,
           base: result.pr.baseRef,
           head: result.pr.headRef,
+          created_via: result.pr.createdVia,
+          session: result.pr.sessionLabel,
           url: pullUrl(ctx, fullName, result.pr.number),
         }),
       ],

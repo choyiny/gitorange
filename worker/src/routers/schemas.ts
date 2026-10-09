@@ -57,6 +57,8 @@ export const repoSchema = z
     defaultBranch: z.string(),
     // Branch name patterns GitOrange never rebases (exact names, or globs: * within a segment, ** across).
     protectedBranches: z.array(z.string()),
+    // Every landing (the merge button or auto-merge) deletes the pull request's head branch.
+    deleteMergedBranches: z.boolean(),
     createdAt: z.string(),
     updatedAt: z.string(),
   })

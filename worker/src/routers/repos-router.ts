@@ -13,6 +13,7 @@ import { users } from '../db/auth.schema';
 import type { DrizzleDB } from '../db/middleware';
 import { isAgentUser } from '../agents/identity';
 import { decoder } from '../git/bytes';
+import { GitPushError } from '../git/remote';
 import type { GitService } from '../git/service';
 import {
   REPO_NAME_RE,
@@ -78,6 +79,7 @@ export function serializeRepo(r: Repository, ns: Namespace) {
     description: r.description,
     defaultBranch: r.defaultBranch,
     protectedBranches: r.protectedBranches ?? [],
+    deleteMergedBranches: r.deleteMergedBranches,
     createdAt: r.createdAt.toISOString(),
     updatedAt: r.updatedAt.toISOString(),
   };
@@ -273,6 +275,10 @@ const updateRepoRoute = createRoute({
                   'Branch name patterns GitOrange never rebases: exact names, or globs (* within one path segment, ** across segments). At most 50, each 1–100 characters without whitespace.',
                 example: ['release/*', 'develop'],
               }),
+            deleteMergedBranches: z.boolean().optional().openapi({
+              description:
+                'Delete a pull request’s head branch when it lands, by the merge button or auto-merge (never the default or a protected branch, or one another open pull request uses).',
+            }),
           }),
         },
       },
@@ -322,6 +328,8 @@ reposRouter.openapi(updateRepoRoute, async (c) => {
     if (invalid) return c.json({ error: invalid }, 400);
     patch.protectedBranches = normalizeProtectedPatterns(patterns);
   }
+  if (body.deleteMergedBranches !== undefined)
+    patch.deleteMergedBranches = body.deleteMergedBranches;
   await db.update(repositories).set(patch).where(eq(repositories.id, repo.id));
   await auditRepoChanges(
     db,
@@ -348,6 +356,7 @@ async function auditRepoChanges(
     'description',
     'defaultBranch',
     'protectedBranches',
+    'deleteMergedBranches',
   ] as const) {
     if (!(key in patch)) continue;
     const list = key === 'protectedBranches';
@@ -526,6 +535,7 @@ const deleteBranchRoute = createRoute({
     ...json400Response,
     ...json403Response,
     ...json404Response,
+    ...json409Response,
   },
 });
 reposRouter.openapi(deleteBranchRoute, async (c) => {
@@ -534,15 +544,28 @@ reposRouter.openapi(deleteBranchRoute, async (c) => {
   const { name } = c.req.valid('query');
   if (name === c.get('repo').defaultBranch)
     return c.json({ error: 'Cannot delete the default branch' }, 400);
-  const sha = await c.get('git').resolve(name);
-  await c.get('git').deleteBranch(name);
-  await recordAudit(c.get('db'), {
-    repositoryId: c.get('repo').id,
-    actorId: c.get('user')!.id,
-    action: 'branch.deleted',
-    target: name,
-    data: { sha },
-  });
+  // The branch itself, not a tag or commit of that name; deleting one that isn't there does nothing and records nothing.
+  const sha = (await c.get('git').refs()).get(`refs/heads/${name}`);
+  if (sha) {
+    // Compare-and-swap on the tip just read: a push in between wins and the deletion is refused.
+    try {
+      await c.get('git').deleteBranch(name, sha);
+    } catch (e) {
+      if (e instanceof GitPushError)
+        return c.json(
+          { error: 'The branch has new commits since you looked. Try again.' },
+          409
+        );
+      throw e;
+    }
+    await recordAudit(c.get('db'), {
+      repositoryId: c.get('repo').id,
+      actorId: c.get('user')!.id,
+      action: 'branch.deleted',
+      target: name,
+      data: { sha },
+    });
+  }
   return c.json({ ok: true as const }, 200);
 });
 

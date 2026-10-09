@@ -472,12 +472,23 @@ describe('mutations write the audit log', () => {
         },
         repo: 'app',
       },
+      // The repository deletes merged branches (the default): GitOrange removes the head branch itself.
+      {
+        action: 'branch.deleted',
+        actor_kind: 'system',
+        actor: null,
+        target: 'feature',
+        data: { sha: head, merged: true },
+        repo: 'app',
+      },
     ]);
   });
 
   it('GitOrange landing a pull request on its own', async () => {
     const { t, admin, repo } = await appRepo();
-    await openPull(t, admin, repo, { 'src/app.ts': 'export const a = 2;\n' });
+    const { head } = await openPull(t, admin, repo, {
+      'src/app.ts': 'export const a = 2;\n',
+    });
     await ok(
       call(t, '/api/repos/octocat/app/pulls/1/approval', {
         cookie: admin,
@@ -508,6 +519,14 @@ describe('mutations write the audit log', () => {
         actor: null,
         target: '#1',
         data: { pull: 1, automatic: true },
+        repo: 'app',
+      },
+      {
+        action: 'branch.deleted',
+        actor_kind: 'system',
+        actor: null,
+        target: 'feature',
+        data: { sha: head, merged: true },
         repo: 'app',
       },
     ]);

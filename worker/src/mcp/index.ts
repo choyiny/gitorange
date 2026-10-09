@@ -199,6 +199,7 @@ mcpRouter.post('/', async (c) => {
             baseURL,
             after: (work) => c.executionCtx.waitUntil(work),
             moderator: mod,
+            clientId: session.clientId,
           })
         )
       );
