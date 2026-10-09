@@ -186,8 +186,6 @@ export function Flag({
   approver,
   changesRequester,
   canApprove,
-  approving,
-  requestingChanges,
   investigating,
   error,
   filesHref,
@@ -204,26 +202,24 @@ export function Flag({
   /** Who asked for changes instead (only while unapproved), with their note. */
   changesRequester: ChangesRequester | null;
   canApprove: boolean;
-  approving: boolean;
-  requestingChanges: boolean;
   /** The agent is still reviewing, so a finding may not have its detail yet. */
   investigating: boolean;
   /** The last decision on this finding failed, in words. */
   error?: string | null;
   /** The pull request's Files tab, so each path jumps to its diff. */
   filesHref?: string;
-  /** Resolves to whether it worked, so an open panel closes only then. */
+  /** Decisions show at once (the caller sets `approver` or `changesRequester` before the request); a refused one comes back as `error`. */
   onApprove: (decision: FlagDecision) => Promise<boolean> | void;
   onRequestChanges: (note: string, teach: string | null) => Promise<boolean>;
 }) {
   const change = f.kind === 'change_requested';
   const [panel, setPanel] = useState<Panel>(null);
   const changes = approver ? null : changesRequester;
-  const busy = approving || requestingChanges;
   const decided = !!approver;
   const panelId = `finding-${f.id}-panel`;
-  const decide = async (decision: FlagDecision) => {
-    if ((await onApprove(decision)) !== false) setPanel(null);
+  const decide = (decision: FlagDecision) => {
+    setPanel(null);
+    void onApprove(decision);
   };
   const tone = decided ? 'done' : changes || change ? 'asked' : 'needs';
   return (
@@ -318,7 +314,7 @@ export function Flag({
           id={panelId}
           agentName={agentName}
           pull={pull}
-          pending={approving}
+          pending={false}
           error={error}
           onSubmit={(reason, teach) => decide({ reason, teach })}
           onCancel={() => setPanel(null)}
@@ -330,7 +326,7 @@ export function Flag({
           agentName={agentName}
           pull={pull}
           guarded={f.guarded}
-          pending={approving}
+          pending={false}
           error={error}
           onSubmit={(reason, teach) =>
             decide({ reason: reason.trim() || undefined, teach })
@@ -343,10 +339,11 @@ export function Flag({
           id={panelId}
           agentName={agentName}
           pull={pull}
-          pending={requestingChanges}
+          pending={false}
           error={error}
-          onSubmit={async (note, teach) => {
-            if (await onRequestChanges(note, teach)) setPanel(null);
+          onSubmit={(note, teach) => {
+            setPanel(null);
+            void onRequestChanges(note, teach);
           }}
           onCancel={() => setPanel(null)}
         />
@@ -376,7 +373,6 @@ export function Flag({
                 <button
                   type="button"
                   className="btn small"
-                  disabled={busy}
                   onClick={() => setPanel('changes')}
                 >
                   <SyncIcon size={14} />
@@ -387,34 +383,29 @@ export function Flag({
                 <button
                   type="button"
                   className="btn small"
-                  disabled={busy}
                   onClick={() => setPanel(change ? 'dismiss' : 'approve')}
                 >
                   <ShieldIcon size={14} />
                   {change ? 'Dismiss with a reason…' : 'Approve with a reason…'}
                 </button>
               ) : change ? (
-                <PendingButton
-                  className="small"
-                  pending={approving}
-                  pendingLabel="Dismissing…"
-                  disabled={busy}
-                  onClick={() => void decide({})}
+                <button
+                  type="button"
+                  className="btn small"
+                  onClick={() => decide({})}
                 >
                   <XIcon size={14} />
                   Dismiss
-                </PendingButton>
+                </button>
               ) : (
-                <PendingButton
-                  className="small"
-                  pending={approving}
-                  pendingLabel="Approving…"
-                  disabled={busy}
-                  onClick={() => void decide({})}
+                <button
+                  type="button"
+                  className="btn small"
+                  onClick={() => decide({})}
                 >
                   <CheckCircleFillIcon size={14} />
                   Approve
-                </PendingButton>
+                </button>
               )}
             </div>
           )

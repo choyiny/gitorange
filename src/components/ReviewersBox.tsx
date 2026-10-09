@@ -150,11 +150,10 @@ export function AgentReview({
   const canAct = useCanAct(d);
   const look = useAgentLook()(r.agent);
   const { busy, error, run } = useAction(onChange);
-  // Decisions confirmed by the server but not yet in the reloaded page.
+  // Your decisions, shown as soon as you make them (before the server answers and the page reloads); a refused one
+  // is taken back.
   const [approved, setApproved] = useState<Set<string>>(new Set());
-  const [approving, setApproving] = useState<string | null>(null);
   const [requested, setRequested] = useState<Map<string, string>>(new Map());
-  const [requesting, setRequesting] = useState<string | null>(null);
   // The finding the last decision was about: its error shows there, the review's own above.
   const [acted, setActed] = useState<string | null>(null);
   const o = repo.owner.username;
@@ -256,40 +255,43 @@ export function AgentReview({
                         : serverChangesRequester(f)
                     }
                     canApprove={canAct}
-                    approving={approving === f.id}
-                    requestingChanges={requesting === f.id}
                     investigating={r.status === 'reviewing'}
                     error={acted === f.id ? error : null}
                     onApprove={async (decision: FlagDecision) => {
                       setActed(f.id);
-                      setApproving(f.id);
-                      const ok = await run(async () => {
-                        await api.approveFlag(o, repo.name, n, f.id, decision);
-                        setApproved((x) => new Set(x).add(f.id));
-                      });
-                      setApproving(null);
+                      setApproved((x) => new Set(x).add(f.id));
+                      const ok = await run(() =>
+                        api.approveFlag(o, repo.name, n, f.id, decision)
+                      );
+                      if (!ok)
+                        setApproved((x) => {
+                          const next = new Set(x);
+                          next.delete(f.id);
+                          return next;
+                        });
                       return ok;
                     }}
                     onRequestChanges={async (note, teach) => {
                       setActed(f.id);
-                      setRequesting(f.id);
+                      setRequested((m) => new Map(m).set(f.id, note.trim()));
                       const ok = await run(
-                        async () => {
-                          await api.requestFlagChanges(
+                        () =>
+                          api.requestFlagChanges(
                             o,
                             repo.name,
                             n,
                             f.id,
                             note,
                             teach
-                          );
-                          setRequested((m) =>
-                            new Map(m).set(f.id, note.trim())
-                          );
-                        },
+                          ),
                         { sendingNote: true }
                       );
-                      setRequesting(null);
+                      if (!ok)
+                        setRequested((m) => {
+                          const next = new Map(m);
+                          next.delete(f.id);
+                          return next;
+                        });
                       return ok;
                     }}
                   />
@@ -356,8 +358,6 @@ function ReadOnlyFlag({
       }
       changesRequester={serverChangesRequester(f)}
       canApprove={false}
-      approving={false}
-      requestingChanges={false}
       investigating={false}
       onApprove={() => {}}
       onRequestChanges={async () => false}
@@ -458,7 +458,33 @@ export function PersonApprovals({
   const me = useCurrentUser();
   const canAct = useCanAct(d);
   const { busy, error, run } = useAction(onChange);
-  const mine = !!me && d.approvals.some((a) => a.user.id === me.id);
+  // Your approval or withdrawal, shown before the server answers; null once the page has reloaded (or it was refused).
+  const [local, setLocal] = useState<boolean | null>(null);
+  const serverMine = !!me && d.approvals.some((a) => a.user.id === me.id);
+  const mine = local ?? serverMine;
+  const approvals =
+    !me || local === null || local === serverMine
+      ? d.approvals
+      : local
+        ? [
+            ...d.approvals,
+            {
+              user: {
+                id: me.id,
+                username: me.username ?? me.name,
+                name: me.name,
+                image: me.image ?? null,
+              },
+              createdAt: new Date().toISOString(),
+              via: null,
+            },
+          ]
+        : d.approvals.filter((a) => a.user.id !== me.id);
+  const decide = async (approve: boolean, call: () => Promise<unknown>) => {
+    setLocal(approve);
+    await run(call);
+    setLocal(null);
+  };
   const outstanding = d.review?.verdict?.reasons.some((r) =>
     [
       'agent_flagged',
@@ -474,12 +500,12 @@ export function PersonApprovals({
   return (
     <div className="pr-row">
       <span className="pr-row-icon">
-        <ShieldCheckIcon className={d.approvals.length ? 'pr-ok' : 'muted'} />
+        <ShieldCheckIcon className={approvals.length ? 'pr-ok' : 'muted'} />
       </span>
       <div className="pr-row-main">
-        {d.approvals.length ? (
+        {approvals.length ? (
           <p className="pr-people">
-            {d.approvals.map((a) => (
+            {approvals.map((a) => (
               <span key={a.user.id} title={fullDate(a.createdAt)}>
                 <Avatar user={a.user} size={16} />
                 {withVia(a.user.username, a.via)}
@@ -500,22 +526,23 @@ export function PersonApprovals({
       </div>
       {canAct &&
         (mine ? (
-          <PendingButton
-            className="small"
-            pending={busy}
-            pendingLabel="Withdrawing…"
+          <button
+            type="button"
+            className="btn small"
+            disabled={busy}
             onClick={() =>
-              run(() => api.withdrawApproval(o, repo.name, d.pull.number))
+              decide(false, () =>
+                api.withdrawApproval(o, repo.name, d.pull.number)
+              )
             }
           >
             Withdraw approval
-          </PendingButton>
+          </button>
         ) : (
-          <PendingButton
-            className="small"
-            pending={busy}
-            pendingLabel="Approving…"
-            disabled={!d.headSha}
+          <button
+            type="button"
+            className="btn small"
+            disabled={!d.headSha || busy}
             aria-label="Approve this commit"
             title={
               outstanding
@@ -523,14 +550,14 @@ export function PersonApprovals({
                 : 'Approve this commit. Guarded findings still need a decision with a reason; an agent’s change request needs a new commit or a Dismiss.'
             }
             onClick={() =>
-              run(() =>
+              decide(true, () =>
                 api.approvePull(o, repo.name, d.pull.number, d.headSha!)
               )
             }
           >
             <ShieldCheckIcon size={14} />
             Approve
-          </PendingButton>
+          </button>
         ))}
     </div>
   );

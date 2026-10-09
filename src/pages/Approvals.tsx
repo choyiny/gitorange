@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
 import {
+  AlertIcon,
   CheckIcon,
   InboxIcon,
   ShieldIcon,
@@ -75,26 +76,20 @@ function approvedReceipt(row: FindingRow): ReceiptBody {
   };
 }
 
-/** Calls the API for one row's action; the receipt it leaves, or null when the row simply reloads. */
-async function perform(
-  row: InboxRow,
-  a: RowAction
-): Promise<ReceiptBody | null> {
+/**
+ * The receipt a decision leaves, known before the request returns: approving, dismissing and requesting changes (on a
+ * finding or a whole pull request) show it at once and roll it back if the request fails. Null for the rest.
+ */
+function receiptFor(row: InboxRow, a: RowAction): ReceiptBody | null {
   const { owner, name } = row;
   const n = row.pull.number;
   if (row.type === 'finding') {
     const agent = agentName(row.agent);
-    const id = row.flag.id;
-    const undo = () => api.undoFlag(owner, name, n, id);
+    const undo = () => api.undoFlag(owner, name, n, row.flag.id);
     switch (a.kind) {
       case 'approve':
-        await api.approveFlag(owner, name, n, id);
         return approvedReceipt(row);
       case 'dismiss':
-        await api.approveFlag(owner, name, n, id, {
-          reason: a.reason,
-          teach: a.teach,
-        });
         return a.teach
           ? {
               status: 'learned',
@@ -113,7 +108,6 @@ async function perform(
               undo,
             };
       case 'changes':
-        await api.requestFlagChanges(owner, name, n, id, a.note, a.teach);
         return {
           status: 'changes_requested',
           icon: 'sync',
@@ -122,8 +116,46 @@ async function perform(
           toast: `Changes requested on #${n}`,
           undo,
         };
+      default:
+        return null;
+    }
+  }
+  if (a.kind === 'approve-pull' && row.pull.headSha)
+    return {
+      status: 'approved',
+      icon: 'check',
+      tone: 'good',
+      text: `You approved #${n}. It can merge when nothing else holds it up.`,
+      toast: `Approved #${n}`,
+      undo: () => api.withdrawApproval(owner, name, n),
+    };
+  return null;
+}
+
+/** Calls the API for one row's action; the receipt the rest leave (retries), or null when the row simply reloads. */
+async function perform(
+  row: InboxRow,
+  a: RowAction
+): Promise<ReceiptBody | null> {
+  const { owner, name } = row;
+  const n = row.pull.number;
+  if (row.type === 'finding') {
+    const id = row.flag.id;
+    switch (a.kind) {
+      case 'approve':
+        await api.approveFlag(owner, name, n, id);
+        return null;
+      case 'dismiss':
+        await api.approveFlag(owner, name, n, id, {
+          reason: a.reason,
+          teach: a.teach,
+        });
+        return null;
+      case 'changes':
+        await api.requestFlagChanges(owner, name, n, id, a.note, a.teach);
+        return null;
       case 'undo':
-        await undo();
+        await api.undoFlag(owner, name, n, id);
         return null;
       default:
         return null;
@@ -161,14 +193,7 @@ async function perform(
     case 'approve-pull':
       if (!row.pull.headSha) return null;
       await api.approvePull(owner, name, n, row.pull.headSha);
-      return {
-        status: 'approved',
-        icon: 'check',
-        tone: 'good',
-        text: `You approved #${n}. It can merge when nothing else holds it up.`,
-        toast: `Approved #${n}`,
-        undo: () => api.withdrawApproval(owner, name, n),
-      };
+      return null;
     default:
       return null;
   }
@@ -215,21 +240,17 @@ export default function Approvals() {
   const [panels, setPanels] = useState<Map<string, RowPanel>>(new Map());
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [busy, setBusyState] = useState<Busy>(null);
-  const [bulkBusy, setBulkState] = useState(false);
-  // Toasts call back into older renders (Undo): these refs say what is running now.
+  // Toasts call back into older renders (Undo): this ref says what is running now.
   const busyRef = useRef<Busy>(null);
-  const bulkRef = useRef(false);
   const setBusy = (b: Busy) => {
     busyRef.current = b;
     setBusyState(b);
   };
-  const setBulkBusy = (b: boolean) => {
-    bulkRef.current = b;
-    setBulkState(b);
-  };
-  const running = () => !!busyRef.current || bulkRef.current;
+  const running = () => !!busyRef.current;
   const [errors, setErrors] = useState<Map<string, string>>(new Map());
   const refs = useRef(new Map<string, HTMLLIElement>());
+  // Decisions sent but not answered yet, by row: Undo waits for them.
+  const pending = useRef(new Map<string, Promise<unknown>>());
   const receiptsRef = useRef(receipts);
   receiptsRef.current = receipts;
 
@@ -295,8 +316,53 @@ export default function Approvals() {
       return next;
     });
 
+  /** Removes a receipt: the row is back in the list. */
+  const dropReceipt = (key: string) =>
+    setReceipts((m) => {
+      const next = new Map(m);
+      next.delete(key);
+      return next;
+    });
+
+  /** Shows a decision's receipt now; the request runs behind it, and a refusal puts the row back with the error. */
+  const decide = async (row: InboxRow, a: RowAction, body: ReceiptBody) => {
+    const index = order.indexOf(row.key);
+    const next = nextOpen(row.key);
+    const hadFocus = !!refs.current
+      .get(row.key)
+      ?.contains(document.activeElement);
+    setError(row.key, null);
+    closePanel(row.key);
+    togglePick(row.key, false);
+    setReceipts((m) =>
+      new Map(m).set(row.key, { ...body, key: row.key, index, row })
+    );
+    toast(
+      body.toast,
+      body.undo ? { undo: () => void undoReceipt(row.key) } : undefined
+    );
+    if (cur === row.key) setCurrent(next);
+    if (hadFocus) focusRow(next);
+    const request = perform(row, a);
+    pending.current.set(row.key, request);
+    try {
+      await request;
+    } catch (e) {
+      dropReceipt(row.key);
+      const message = failure(e, { sendingNote: a.kind === 'changes' });
+      setError(row.key, message);
+      toast(`Not saved: ${message}`, { icon: <AlertIcon size={16} /> });
+    } finally {
+      pending.current.delete(row.key);
+      // Also after a refusal (409: the branch moved): the list shows the new state.
+      await refresh(row.owner, row.name);
+    }
+  };
+
   const run = async (row: InboxRow, a: RowAction) => {
-    if (running()) return;
+    if (running() || pending.current.has(row.key)) return;
+    const body = receiptFor(row, a);
+    if (body) return decide(row, a, body);
     const index = order.indexOf(row.key);
     const next = nextOpen(row.key);
     const hadFocus = !!refs.current
@@ -305,16 +371,16 @@ export default function Approvals() {
     setBusy({ key: row.key, kind: a.kind });
     setError(row.key, null);
     try {
-      const body = await perform(row, a);
+      const done = await perform(row, a);
       closePanel(row.key);
       togglePick(row.key, false);
-      if (body) {
+      if (done) {
         setReceipts((m) =>
-          new Map(m).set(row.key, { ...body, key: row.key, index, row })
+          new Map(m).set(row.key, { ...done, key: row.key, index, row })
         );
         toast(
-          body.toast,
-          body.undo ? { undo: () => void undoReceipt(row.key) } : undefined
+          done.toast,
+          done.undo ? { undo: () => void undoReceipt(row.key) } : undefined
         );
         if (cur === row.key) setCurrent(next);
         if (hadFocus) focusRow(next);
@@ -332,6 +398,9 @@ export default function Approvals() {
   };
 
   const undoReceipt = async (key: string) => {
+    // Undo right after deciding: let the decision land first, and do nothing if it was refused.
+    const inFlight = pending.current.get(key);
+    if (inFlight) await inFlight.catch(() => undefined);
     const r = receiptsRef.current.get(key);
     if (!r?.undo || running()) return;
     setBusy({ key, kind: 'undo' });
@@ -339,11 +408,7 @@ export default function Approvals() {
     try {
       await r.undo();
       await refresh(r.row.owner, r.row.name);
-      setReceipts((m) => {
-        const next = new Map(m);
-        next.delete(key);
-        return next;
-      });
+      dropReceipt(key);
       setCurrent(key);
       focusRow(key);
       toast('Reopened. It’s back in your list.', {
@@ -366,47 +431,57 @@ export default function Approvals() {
       .map((k) => byKey.get(k))
       .filter((r): r is FindingRow => !!r && r.type === 'finding');
     if (!rowsToApprove.length || running()) return;
-    setBulkBusy(true);
-    const done: string[] = [];
-    for (const row of rowsToApprove) {
-      const index = order.indexOf(row.key);
-      try {
-        await api.approveFlag(
-          row.owner,
-          row.name,
-          row.pull.number,
-          row.flag.id
-        );
-        done.push(row.key);
-        setError(row.key, null);
-        setReceipts((m) =>
-          new Map(m).set(row.key, {
-            ...approvedReceipt(row),
-            key: row.key,
-            index,
-            row,
-          })
-        );
-      } catch (e) {
-        setError(row.key, failure(e));
-      }
-    }
+    // Every receipt shows now; the approvals are sent one by one behind them, and refusals come back as rows.
+    const keys = rowsToApprove.map((r) => r.key);
+    for (const row of rowsToApprove) setError(row.key, null);
+    setReceipts((m) => {
+      const next = new Map(m);
+      for (const row of rowsToApprove)
+        next.set(row.key, {
+          ...approvedReceipt(row),
+          key: row.key,
+          index: order.indexOf(row.key),
+          row,
+        });
+      return next;
+    });
     setSelected(new Set());
+    setCurrent(openKeys.find((k) => !keys.includes(k)) ?? null);
+    toast(
+      `Approved ${keys.length} ${keys.length === 1 ? 'finding' : 'findings'}`,
+      { undo: () => void undoMany(keys) }
+    );
+    const sent = (async () => {
+      let refused = 0;
+      for (const row of rowsToApprove)
+        try {
+          await api.approveFlag(
+            row.owner,
+            row.name,
+            row.pull.number,
+            row.flag.id
+          );
+        } catch (e) {
+          refused++;
+          dropReceipt(row.key);
+          setError(row.key, failure(e));
+        }
+      return refused;
+    })();
+    for (const key of keys) pending.current.set(key, sent);
+    const refused = await sent;
+    for (const key of keys) pending.current.delete(key);
     await Promise.all(
       [...new Set(rowsToApprove.map((r) => r.repo))].map((repo) => {
         const [o, n] = repo.split('/');
         return refresh(o, n);
       })
     );
-    setBulkBusy(false);
-    if (done.length) {
-      const left = openKeys.find((k) => !done.includes(k)) ?? null;
-      setCurrent(left);
+    if (refused)
       toast(
-        `Approved ${done.length} ${done.length === 1 ? 'finding' : 'findings'}`,
-        { undo: () => void undoMany(done) }
+        `${refused} ${refused === 1 ? 'approval was' : 'approvals were'} not saved: ${refused === 1 ? 'it is' : 'they are'} back in your list`,
+        { icon: <AlertIcon size={16} /> }
       );
-    }
   };
 
   // The "Assigned to you" count covers every page, the list only the loaded ones: while the filter is on and some
@@ -561,7 +636,7 @@ export default function Approvals() {
                 key={key}
                 receipt={receipt}
                 undoing={busy?.key === key}
-                locked={!!busy || bulkBusy}
+                locked={!!busy}
                 error={errors.get(key) ?? null}
                 color={
                   receipt.row.type === 'finding' ||
@@ -582,14 +657,8 @@ export default function Approvals() {
               current={cur === key}
               picked={selected.has(key)}
               panel={panels.get(key) ?? null}
-              busy={
-                busy?.key === key
-                  ? busy.kind
-                  : bulkBusy && selected.has(key)
-                    ? 'approve'
-                    : null
-              }
-              locked={!!busy || bulkBusy}
+              busy={busy?.key === key ? busy.kind : null}
+              locked={!!busy}
               error={errors.get(key) ?? null}
               me={myLogin}
               color={
@@ -680,21 +749,19 @@ export default function Approvals() {
                   <button
                     type="button"
                     className="btn quiet small"
-                    disabled={bulkBusy}
                     onClick={() => setSelected(new Set())}
                   >
                     Clear
                   </button>
-                  <PendingButton
-                    className="primary small"
-                    pending={bulkBusy}
-                    pendingLabel="Approving…"
+                  <button
+                    type="button"
+                    className="btn primary small"
                     disabled={!!busy}
                     onClick={() => void approveSelected()}
                   >
                     <CheckIcon size={14} />
                     Approve selected
-                  </PendingButton>
+                  </button>
                 </div>
               )}
             </div>

@@ -1,7 +1,8 @@
 import { useState, type CSSProperties, type ReactNode } from 'react';
 import { Link, useParams } from 'react-router-dom';
-import { useQuery } from '@tanstack/react-query';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
 import {
+  AlertIcon,
   ArrowRightIcon,
   BookIcon,
   CheckIcon,
@@ -442,10 +443,20 @@ function NextLink({ id }: { id: string }) {
   );
 }
 
-/** Runs one answer: pending state, the toast (with Undo when it can be undone), the refresh, and the refusal. */
+/** What a decision changes on the finding, shown before the server answers. */
+type Shown = Pick<FindingData, 'state'> &
+  Partial<Pick<FindingData, 'reason' | 'note' | 'teach'>>;
+
+/**
+ * Runs one answer: the toast (with Undo when it can be undone), the refresh, and the refusal. A decision (`opts.show`)
+ * shows at once: the finding's cached page takes the new state before the request, and gets it back if refused.
+ * Anything else (asking someone) shows a pending state until it is saved.
+ */
 function useAnswer(f: FindingData) {
   const toast = useToast();
   const refresh = useRefresh();
+  const qc = useQueryClient();
+  const me = useCurrentUser();
   const [owner, repo] = f.repo.fullName.split('/');
   const n = f.pull.number;
   const [pending, setPending] = useState<string | null>(null);
@@ -454,13 +465,12 @@ function useAnswer(f: FindingData) {
     key: string,
     fn: () => Promise<unknown>,
     done: { toast: string; undo?: () => Promise<unknown> },
-    opts: { sendingNote?: boolean } = {}
+    opts: { sendingNote?: boolean; show?: Shown } = {}
   ) => {
     if (pending) return false;
-    setPending(key);
-    setError(null);
-    try {
-      await fn();
+    const queryKey = qk.approvalFlag(f.id);
+    const before = qc.getQueryData<FindingData>(queryKey);
+    const undoToast = () => {
       const undo = done.undo;
       toast(
         done.toast,
@@ -473,9 +483,40 @@ function useAnswer(f: FindingData) {
             }
           : undefined
       );
+    };
+    if (opts.show && before) {
+      qc.setQueryData<FindingData>(queryKey, {
+        ...before,
+        reason: null,
+        note: null,
+        teach: null,
+        ...opts.show,
+        decidedBy: me
+          ? {
+              login: me.username ?? me.name,
+              name: me.name,
+              isAgent: false,
+              color: null,
+            }
+          : null,
+        decidedAt: Date.now(),
+        decidedVia: null,
+        can: { ...before.can, undo: true },
+      });
+      undoToast();
+    } else setPending(key);
+    setError(null);
+    try {
+      await fn();
+      if (!(opts.show && before)) undoToast();
       return true;
     } catch (e) {
-      setError(failure(e, opts));
+      const message = failure(e, opts);
+      if (opts.show && before) {
+        qc.setQueryData(queryKey, before);
+        toast(`Not saved: ${message}`, { icon: <AlertIcon size={16} /> });
+      }
+      setError(message);
       return false;
     } finally {
       // Also after a refusal (409: the branch moved): the page shows the new state.
@@ -753,14 +794,28 @@ function OwnerAnswer({ f, me }: { f: FindingData; me: string | null }) {
             reason: f.guarded ? reason : null,
             teach: t,
           }),
-        { toast: 'Approved', undo: undoDecision }
+        { toast: 'Approved', undo: undoDecision },
+        {
+          show: {
+            state: 'approved',
+            reason: f.guarded ? reason.trim() || null : null,
+            teach: t,
+          },
+        }
       );
     else if (choice === 'no')
       void act(
         'submit',
         () => api.requestFlagChanges(owner, repo, n, f.id, note, t),
         { toast: 'Sent back for a change', undo: undoDecision },
-        { sendingNote: true }
+        {
+          sendingNote: true,
+          show: {
+            state: 'changes_requested',
+            note: note.trim() || null,
+            teach: t,
+          },
+        }
       );
     else {
       const before = f.assignee?.login ?? null;
@@ -930,8 +985,10 @@ function DevAnswer({ f, me }: { f: FindingData; me: string | null }) {
   const asked = f.state === 'changes_requested';
   const undoDecision = () => api.undoFlag(owner, repo, n, f.id);
   const panelId = 'ap-answer-panel';
-  const done = async (ok: Promise<boolean>) => {
-    if (await ok) setMode(null);
+  // Decisions show at once, so their panel closes at once; a refusal comes back as a toast.
+  const done = (sent: Promise<boolean>) => {
+    setMode(null);
+    return sent;
   };
   const toggle = (m: Mode, label: ReactNode, primary = false) => (
     <button
@@ -951,10 +1008,12 @@ function DevAnswer({ f, me }: { f: FindingData; me: string | null }) {
       pending={pending === 'approve'}
       pendingLabel="Approving…"
       onClick={() =>
-        void act('approve', () => api.approveFlag(owner, repo, n, f.id), {
-          toast: `Approved #${n}`,
-          undo: undoDecision,
-        })
+        void act(
+          'approve',
+          () => api.approveFlag(owner, repo, n, f.id),
+          { toast: `Approved #${n}`, undo: undoDecision },
+          { show: { state: change ? 'dismissed' : 'approved' } }
+        )
       }
     >
       <CheckIcon size={14} />
@@ -1040,7 +1099,14 @@ function DevAnswer({ f, me }: { f: FindingData; me: string | null }) {
                 'changes',
                 () => api.requestFlagChanges(owner, repo, n, f.id, note, teach),
                 { toast: `Changes requested on #${n}`, undo: undoDecision },
-                { sendingNote: true }
+                {
+                  sendingNote: true,
+                  show: {
+                    state: 'changes_requested',
+                    note: note.trim() || null,
+                    teach,
+                  },
+                }
               )
             )
           }
@@ -1064,6 +1130,13 @@ function DevAnswer({ f, me }: { f: FindingData; me: string | null }) {
                     ? `Dismissed. ${name} learns your rule`
                     : 'Dismissed',
                   undo: undoDecision,
+                },
+                {
+                  show: {
+                    state: change ? 'dismissed' : 'approved',
+                    reason: reason.trim() || null,
+                    teach,
+                  },
                 }
               )
             )
@@ -1085,6 +1158,13 @@ function DevAnswer({ f, me }: { f: FindingData; me: string | null }) {
                 {
                   toast: 'Approved. Reason recorded in the audit log.',
                   undo: undoDecision,
+                },
+                {
+                  show: {
+                    state: change ? 'dismissed' : 'approved',
+                    reason: reason.trim() || null,
+                    teach,
+                  },
                 }
               )
             )
@@ -1102,12 +1182,11 @@ function DevAnswer({ f, me }: { f: FindingData; me: string | null }) {
           onCancel={() => setMode(null)}
           onSubmit={(login) => {
             const before = f.assignee?.login ?? null;
-            void done(
-              act('ask', () => api.assignFlag(owner, repo, n, f.id, login), {
-                toast: login ? `Asked @${login}` : 'Taken back',
-                undo: () => api.assignFlag(owner, repo, n, f.id, before),
-              })
-            );
+            // Asking someone isn't a decision: the panel waits for it to be saved.
+            void act('ask', () => api.assignFlag(owner, repo, n, f.id, login), {
+              toast: login ? `Asked @${login}` : 'Taken back',
+              undo: () => api.assignFlag(owner, repo, n, f.id, before),
+            }).then((ok) => ok && setMode(null));
           }}
         />
       )}
