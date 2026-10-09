@@ -27,6 +27,7 @@ import Finding from './pages/Finding';
 import NewRepo from './pages/NewRepo';
 import Profile from './pages/Profile';
 import RepoCode from './pages/RepoCode';
+import RepoHealth from './pages/RepoHealth';
 import RepoCommits from './pages/RepoCommits';
 import CommitView from './pages/CommitView';
 import Pulls from './pages/Pulls';
@@ -164,6 +165,7 @@ const App = () => (
                 <Route path="blob/*" element={<RepoCode />} />
                 <Route path="commits/*" element={<RepoCommits />} />
                 <Route path="commit/:sha" element={<CommitView />} />
+                <Route path="health" element={<RepoHealth />} />
                 <Route path="pulls" element={<Pulls />} />
                 <Route path="compare" element={<PullNew />} />
                 <Route path="compare/*" element={<PullNew />} />

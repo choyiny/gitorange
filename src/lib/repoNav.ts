@@ -6,7 +6,7 @@
 import type { PageIconName } from './pageIcon';
 
 export type RepoTabId =
-  'code' | 'pulls' | 'actions' | 'insights' | 'settings' | 'commits';
+  'code' | 'health' | 'pulls' | 'actions' | 'insights' | 'settings' | 'commits';
 
 export interface RepoTab {
   id: RepoTabId;
@@ -30,6 +30,7 @@ export interface RepoBand {
 
 const TABS: Record<RepoTabId, RepoTab> = {
   code: { id: 'code', label: 'Code', icon: 'code', path: '' },
+  health: { id: 'health', label: 'Health', icon: 'pulse', path: 'health' },
   pulls: { id: 'pulls', label: 'Pull requests', icon: 'pull', path: 'pulls' },
   actions: { id: 'actions', label: 'Actions', icon: 'play', path: 'actions' },
   insights: {
@@ -63,6 +64,8 @@ export function repoRest(pathname: string): string[] {
 /** The tab a repository page belongs to; on agent repositories the commit pages have their own tab. */
 export function repoTabOf(rest: string[], agentRepo: boolean): RepoTabId {
   switch (rest[0]) {
+    case 'health':
+      return 'health';
     case 'pulls':
     case 'pull':
     case 'compare':
@@ -89,7 +92,7 @@ export function repoTabOf(rest: string[], agentRepo: boolean): RepoTabId {
 export function repoTabs(agentRepo: boolean, admin: boolean): RepoTab[] {
   const ids: RepoTabId[] = agentRepo
     ? ['code', 'commits']
-    : ['code', 'pulls', 'actions', 'insights'];
+    : ['code', 'health', 'pulls', 'actions', 'insights'];
   if (admin) ids.push('settings');
   return ids.map((id) => TABS[id]);
 }
@@ -131,6 +134,8 @@ export function repoBand(
       return page('commit', 'Commits');
     case 'commit':
       return item('commit', TABS.commits, (id ?? '').slice(0, 7));
+    case 'health':
+      return page('pulse', 'Health');
     case 'pulls':
       return page('pull', 'Pull requests');
     case 'pull':

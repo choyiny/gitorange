@@ -1,0 +1,279 @@
+/* Health: the decision waiting, the "did anything get worse?" table, the branch map card, who made things better or
+   worse, and the reviewers. Ported from docs/design/crew/views.css (decision card, movers, reviewer rows). Tokens
+   only; the table, list, chip, spark and coder tile come from components.css. */
+
+/* ---------- The decision waiting on the owner ---------- */
+.hl-ask {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  gap: 14px;
+  align-items: center;
+  padding: 14px 16px;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-left: 3px solid var(--warn);
+  border-radius: var(--r);
+  box-shadow: var(--sh);
+}
+/* The robot keeps its own size: a grid item would stretch to the row. */
+.hl-ask > .ava {
+  align-self: center;
+  justify-self: start;
+}
+.hl-ask-icon {
+  width: 56px;
+  height: 56px;
+  border-radius: 50%;
+  display: grid;
+  place-items: center;
+  background: var(--warn-bg);
+  color: var(--warn);
+}
+.hl-ask-body {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.hl-ask-body strong {
+  font-size: 16px;
+  font-weight: 600;
+}
+.hl-ask-body p {
+  color: var(--ink-2);
+}
+.hl-ask-from {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--muted);
+  letter-spacing: 0.04em;
+}
+.hl-ask-meta {
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
+  font-size: 13px;
+  color: var(--muted);
+}
+.hl-ask-meta > svg {
+  flex: none;
+  margin-top: 3px;
+}
+.hl-more {
+  margin: 8px 0 0;
+}
+
+/* ---------- Did anything get worse? ---------- */
+.hl-table th[scope='row'],
+.hl-table td {
+  vertical-align: middle;
+}
+.hl-area {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  color: var(--ink);
+}
+.hl-area-mark {
+  width: 28px;
+  height: 28px;
+  border-radius: 8px;
+  display: grid;
+  place-items: center;
+  flex: none;
+  background: var(--surface-3);
+  color: var(--ink-2);
+}
+.hl-cell-now > span {
+  display: block;
+}
+.hl-cell-spark,
+.hl-cell-change {
+  white-space: nowrap;
+}
+/* The list's robots hold their expression without the moving ring: many rows, one calm list. */
+.hl-area .ava.live::after,
+.hl-rrow .ava.live::after {
+  display: none;
+}
+.hl-measure {
+  margin: 0;
+}
+
+/* ---------- Branch map ---------- */
+.hl-map {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  gap: 14px;
+  align-items: center;
+  padding: 14px 16px;
+}
+.hl-map-icon {
+  width: 40px;
+  height: 40px;
+  border-radius: 50%;
+  display: grid;
+  place-items: center;
+  background: var(--accent-tint);
+  color: var(--accent);
+}
+.hl-map-text {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+}
+
+/* ---------- Who made things better or worse ---------- */
+.list.hl-movers li {
+  grid-template-columns: minmax(0, 0.9fr) auto minmax(0, 1.4fr);
+  align-items: start;
+  /* The row holds its visually hidden text (".sr" is absolutely positioned). */
+  position: relative;
+}
+.hl-coder-name {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.hl-coder-link {
+  color: inherit;
+  min-width: 0;
+}
+.hl-merged {
+  white-space: nowrap;
+  padding-top: 2px;
+}
+.hl-mover {
+  display: flex;
+  gap: 8px;
+  align-items: flex-start;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.hl-mover > svg {
+  flex: none;
+  margin-top: 3px;
+  color: var(--muted);
+}
+.hl-mover.better > svg {
+  color: var(--good);
+}
+.hl-mover.worse > svg {
+  color: var(--serious);
+}
+.hl-mover-detail {
+  display: block;
+}
+
+/* ---------- Reviewers ---------- */
+.hl-rlist {
+  border: 1px solid var(--line);
+  border-radius: var(--r);
+  background: var(--surface);
+  overflow: hidden;
+}
+.hl-rrow {
+  display: grid;
+  /* A fixed last column keeps every row's record in line, whatever chip or button ends it. */
+  grid-template-columns: auto minmax(0, 1.1fr) minmax(0, 1fr) 140px;
+  gap: 14px;
+  align-items: center;
+  padding: 10px 14px;
+  border-top: 1px solid var(--line);
+  color: inherit;
+}
+.hl-rrow > .chip,
+.hl-rrow > .btn {
+  justify-self: end;
+}
+.hl-rrow:first-child {
+  border-top: 0;
+}
+.view a.hl-rrow:hover {
+  text-decoration: none;
+  background: color-mix(in srgb, var(--surface-2) 45%, transparent);
+}
+.hl-rrow.off {
+  background: color-mix(in srgb, var(--surface-2) 30%, transparent);
+}
+.hl-rrow-main {
+  display: grid;
+  gap: 1px;
+  min-width: 0;
+}
+.hl-rrow-main > .muted {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  overflow: hidden;
+}
+.hl-rrow-rec {
+  color: var(--ink-2);
+  min-width: 0;
+}
+
+/* ---------- Phones ---------- */
+@media (max-width: 720px) {
+  /* The table becomes one card per row: name, then where it stands, then the chart and the change. */
+  .hl-table thead {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip-path: inset(50%);
+  }
+  .hl-table,
+  .hl-table tbody {
+    display: block;
+  }
+  .table.hl-table tr {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    gap: 8px 12px;
+    align-items: center;
+    padding: 12px 14px;
+    border-top: 1px solid var(--line);
+  }
+  .table.hl-table tbody tr:first-child {
+    border-top: 0;
+  }
+  .table.hl-table th,
+  .table.hl-table td {
+    display: block;
+    padding: 0;
+    border: 0;
+  }
+  .hl-cell-area,
+  .hl-cell-now {
+    grid-column: 1 / -1;
+  }
+  .hl-cell-change {
+    justify-self: end;
+  }
+}
+@media (max-width: 640px) {
+  .hl-ask,
+  .hl-map {
+    grid-template-columns: auto minmax(0, 1fr);
+  }
+  .hl-ask > .btn,
+  .hl-map > .btn {
+    grid-column: 1 / -1;
+    justify-self: start;
+  }
+  .list.hl-movers li {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 4px;
+  }
+  .hl-merged {
+    padding-top: 0;
+  }
+  .hl-rrow {
+    grid-template-columns: auto minmax(0, 1fr);
+  }
+  .hl-rrow > .hl-rrow-rec,
+  .hl-rrow > .chip,
+  .hl-rrow > .btn {
+    grid-column: 2;
+    justify-self: start;
+  }
+}
