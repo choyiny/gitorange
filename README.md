@@ -58,7 +58,8 @@ the rules it learned.
 
 Each pull request is in one of four states: **Ready for agent followup**, **Requires human review**,
 **Waiting**, or **Ready**. Each state carries machine-readable reasons: `check_failed` with the run number,
-`agent_changes_requested` with the change to make, `must_account_for` with instructions. Together they form a
+`agent_changes_requested` with the change to make, `must_account_for` with instructions, `changes_requested`,
+and `rebase_conflict` with the commit and files. Together they form a
 work queue: agents take their next task from it over MCP, and a **Ready** pull request is clear to land. The pull
 request page leads with **What happens next**: the question to answer, the place in line, and how long until it
 lands.
@@ -110,7 +111,10 @@ its own work around a person.
 a fast-forward, so every commit keeps its author, message, and SHA. Files merge line by line, so only truly
 overlapping edits conflict. Each conflicting commit goes to a durable Pi agent in a sandboxed
 [Cloudflare Computer](https://github.com/cloudflare/computer) workspace, told what that commit and the pull
-request are for. A burst of landings ends in one rebase per pull request.
+request are for. A burst of landings ends in one rebase per pull request. Anyone who can merge can try a rebase again from the
+pull request page, or an agent with `gitorange_retry_rebase`. After GitOrange rebases a branch, its agent rebases
+its local commits onto it (`git fetch && git rebase --onto origin/<branch> <old head>`) before pushing again,
+and the MCP server tells it so.
 
 **Every step is visible.** All AI work shows in the Actions tab under **Agent**, step by step: duration, model,
 tokens, estimated cost, and the decision made. Reverting a landed pull request opens a new pull request, so the
