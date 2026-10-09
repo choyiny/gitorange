@@ -21,6 +21,7 @@ import { reviewConfigured } from '../review/head';
 import { chunks } from '../stack/view';
 import { mainStatus } from './branches';
 import { GHOST, personRefs } from './person-ref';
+import { pullSessionId } from './sessions';
 
 // A repository's health (Decision 1), measured only from what GitOrange itself knows, week over week (ISO weeks,
 // Monday 00:00 UTC): one row per invited reviewer agent (its findings: those that needed a person or asked for
@@ -47,6 +48,11 @@ export type HealthArea = {
   detail: string;
   /** Problems open now. */
   open: number;
+  /**
+   * Tests on main only: for each of `weeks`, true when no run finished that week, so its 0 in `weeks` is "no data",
+   * not "no failures". Absent on the other rows.
+   */
+  noRuns?: boolean[];
 };
 
 export type HealthContributor = {
@@ -58,6 +64,8 @@ export type HealthContributor = {
     login: string;
     /** The app of a session; null for a person working by hand. */
     client: string | null;
+    /** The id `GET /sessions` gives this group of pull requests (a person working by hand is their "by hand" session). */
+    sessionId: string;
   };
   /** Pull requests merged this week. */
   merged: number;
@@ -361,7 +369,8 @@ export async function repoHealth(
     });
   }
 
-  // Tests on main: the share of finished runs (passed or failed) that failed, per week; 0 for a week without runs.
+  // Tests on main: the share of finished runs (passed or failed) that failed, per week; 0 for a week without runs,
+  // which `noRuns` marks so a reader can tell it from a week where nothing failed.
   const passed = starts.map(() => 0);
   const failed = starts.map(() => 0);
   for (const r of runs) {
@@ -392,6 +401,7 @@ export async function repoHealth(
       total(last) && total(last - 1)
         ? trendOf(failedPct[last], failedPct[last - 1])
         : 'same',
+    noRuns: starts.map((_, i) => total(i) === 0),
     status: {
       failing: 'Failing now',
       passing: 'Passing',
@@ -487,9 +497,7 @@ async function contributors(
   if (!merged.length) return [];
   type Row = (typeof merged)[number];
   const keyOf = (p: Row) =>
-    p.createdVia
-      ? `${p.authorId}\0${p.createdVia}\0${p.sessionLabel ?? ''}`
-      : p.authorId;
+    `${p.authorId}\0${p.createdVia || ''}\0${p.sessionLabel || ''}`;
   // The pull requests findings were raised on, to find their group.
   const rows = new Map(merged.map((p) => [p.id, p]));
   const unknown = [...new Set(flags.map((f) => f.pullRequestId))].filter(
@@ -540,12 +548,15 @@ async function contributors(
     } else if (at >= weeks.lastWeekStart) g.lastWeek++;
   }
 
+  const list = [...groups.values()];
   const people = await personRefs(
     db,
-    [...groups.values()].map((g) => g.first.authorId)
+    list.map((g) => g.first.authorId)
   );
-  return [...groups.values()]
-    .map((g): HealthContributor => {
+  // Use the same group and id as `GET /sessions`, including a legacy by-hand row carrying a session label.
+  const ids = await Promise.all(list.map((g) => pullSessionId(g.first)));
+  return list
+    .map((g, i): HealthContributor => {
       const person = people.get(g.first.authorId) ?? GHOST;
       const client = g.first.createdVia || null;
       const [top] = [...g.byNumber].sort((a, b) => b[1] - a[1] || a[0] - b[0]);
@@ -556,12 +567,14 @@ async function contributors(
               label: g.first.sessionLabel || client,
               login: person.login,
               client,
+              sessionId: ids[i],
             }
           : {
               kind: 'person',
               label: person.name ?? person.login,
               login: person.login,
               client: null,
+              sessionId: ids[i],
             },
         merged: g.merged,
         findings: g.thisWeek,

@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { isoWeekStart, trendOf, weekStarts } from '../lib/health';
+import { sessionId } from '../lib/sessions';
 import { addMember, call } from './helpers/app';
 import { newAgent } from './helpers/agents';
 import { crewRepo, type CrewRepo } from './helpers/crew';
@@ -27,6 +28,7 @@ type HealthArea = {
   status: string;
   detail: string;
   open: number;
+  noRuns?: boolean[];
 };
 type HealthReport = {
   summary: string;
@@ -38,6 +40,7 @@ type HealthReport = {
       label: string;
       login: string;
       client: string | null;
+      sessionId: string;
     };
     merged: number;
     findings: number;
@@ -286,6 +289,39 @@ describe('GET /api/repos/{o}/{r}/health', () => {
     expect(report.summary).toBe('Nothing got worse this week.');
   });
 
+  it('marks the weeks in which no run finished, so a 0 for them is not read as "nothing failed"', async () => {
+    const s = await crewRepo();
+    // Runs this week (one failed of two) and three weeks ago (all passed); a week that only has a cancelled run has
+    // no finished run either.
+    for (const c of ['success', 'failure']) await mainRun(s, inWeek(0), c);
+    await mainRun(s, inWeek(3), 'success');
+    await mainRun(s, inWeek(5), 'cancelled');
+    const tests = area(await health(s), 'tests');
+    // `weeks` keeps its numbers (0 for a week without runs); `noRuns` says which of them are not measurements.
+    expect(tests.weeks).toEqual([0, 0, 0, 0, 0, 0, 0, 50]);
+    expect(tests.noRuns).toEqual([
+      true,
+      true,
+      true,
+      true,
+      false,
+      true,
+      true,
+      false,
+    ]);
+    expect(tests.noRuns).toHaveLength(tests.weeks.length);
+  });
+
+  it('marks every week as having no runs before any test has run, and only the tests row has noRuns', async () => {
+    const s = await crewRepo();
+    await invitedAgent(s.t, s.admin, 'secagent');
+    const report = await health(s);
+    expect(area(report, 'tests').noRuns).toEqual(Array(8).fill(true));
+    expect(area(report, 'tests').weeks).toEqual(Array(8).fill(0));
+    expect(area(report, 'agent:secagent').noRuns).toBeUndefined();
+    expect(area(report, 'merging').noRuns).toBeUndefined();
+  });
+
   it('says so when no tests have run', async () => {
     const quiet = await crewRepo();
     expect(area(await health(quiet), 'tests')).toMatchObject({
@@ -391,6 +427,7 @@ describe('GET /api/repos/{o}/{r}/health', () => {
           label: 's4',
           login: 'octocat',
           client: 'Claude Code',
+          sessionId: expect.stringMatching(/^s-[0-9a-f]{10}$/),
         },
         merged: 2,
         findings: 2,
@@ -398,13 +435,68 @@ describe('GET /api/repos/{o}/{r}/health', () => {
         trend: 'worse',
       },
       {
-        who: { kind: 'person', label: 'ada', login: 'ada', client: null },
+        who: {
+          kind: 'person',
+          label: 'ada',
+          login: 'ada',
+          client: null,
+          sessionId: expect.stringMatching(/^s-[0-9a-f]{10}$/),
+        },
         merged: 1,
         findings: 0,
         note: null,
         trend: 'same',
       },
     ]);
+  });
+
+  it('gives each contributor the id GET /sessions gives its group, a person working by hand included', async () => {
+    const s = await crewRepo();
+    await addMember(s.t, s.admin, 'ada');
+    await pr(s, 1, { mergedAt: inWeek(0), via: 'Claude Code', session: 's4' });
+    // Another app with no label, and a legacy by-hand pull request with a label and no app: each is its own session.
+    await pr(s, 2, { mergedAt: inWeek(0), via: 'Codex' });
+    await pr(s, 3, { mergedAt: inWeek(0), author: 'ada' });
+    await pr(s, 4, { mergedAt: inWeek(0), author: 'ada', session: 'stray' });
+
+    const { contributors } = await health(s);
+    const res = await call(s.t, `${BASE}/sessions`, { cookie: s.admin });
+    const sessions = (await res.json()) as {
+      id: string;
+      client: string | null;
+      label: string | null;
+      author: { login: string };
+      pulls: { number: number; state: string }[];
+    }[];
+    expect(contributors).toHaveLength(4);
+    for (const c of contributors) {
+      // Both the linked id and its merge count must refer to the same group, not an aggregation of different ids.
+      const listed = sessions.find((x) => x.id === c.who.sessionId);
+      expect(listed, c.who.label).toBeDefined();
+      expect(listed!.author.login).toBe(c.who.login);
+      expect(listed!.client).toBe(c.who.client);
+      expect(c.merged).toBe(
+        listed!.pulls.filter((p) => p.state === 'merged').length
+      );
+    }
+    const adaId = await sessionId(await idOf(s, 'ada'), null, null);
+    const ada = contributors.find((c) => c.who.sessionId === adaId)!;
+    expect(ada.who.kind).toBe('person');
+    expect(ada.merged).toBe(1);
+    const legacyId = await sessionId(await idOf(s, 'ada'), null, 'stray');
+    expect(contributors.find((c) => c.who.sessionId === legacyId)?.merged).toBe(
+      1
+    );
+    const claude = contributors.find((c) => c.who.client === 'Claude Code')!;
+    expect(claude.who.sessionId).toBe(
+      await sessionId(await idOf(s, 'octocat'), 'Claude Code', 's4')
+    );
+    // Same person and app, no label: another session, another id.
+    const codex = contributors.find((c) => c.who.client === 'Codex')!;
+    expect(codex.who.sessionId).toBe(
+      await sessionId(await idOf(s, 'octocat'), 'Codex', null)
+    );
+    expect(codex.who.sessionId).not.toBe(claude.who.sessionId);
   });
 
   it('counts open findings per agent from the pull requests’ current state', async () => {

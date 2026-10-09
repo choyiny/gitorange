@@ -19,4 +19,5 @@
 @import './pages/new-repo.css';
 @import './pages/approvals.css';
 @import './pages/pull.css';
+@import './pages/health.css';
 @import './legacy.css';

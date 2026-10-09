@@ -676,6 +676,22 @@ p {
 .spark.worse .end {
   fill: var(--change);
 }
+/* A value that was not measured: a hollow marker on the baseline, the line broken around it. A measured point
+   with a gap on both sides is a dot. */
+.spark .gap {
+  fill: var(--surface);
+  stroke: var(--muted);
+  stroke-width: 1.1;
+}
+.spark .solo {
+  fill: var(--ink-2);
+}
+.spark.better .solo {
+  fill: var(--ok);
+}
+.spark.worse .solo {
+  fill: var(--change);
+}
 
 /* ---------- People and agents ---------- */
 .identicon {

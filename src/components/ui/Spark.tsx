@@ -1,6 +1,10 @@
+import { sparkGeometry } from '@/lib/spark';
+
 /**
  * A sparkline: one series, an area fill, the last point emphasised, and a native tooltip per point. `trend`
- * colours it (better = green, worse = orange); `label` names it for assistive tech.
+ * colours it (better = green, worse = orange); `label` names it for assistive tech. `missing` marks values that
+ * were not measured (a week with no test runs): they are drawn as hollow markers on the baseline, the line is broken
+ * there, and their tooltip says `missingText` instead of the value.
  */
 export function Spark({
   values,
@@ -10,6 +14,8 @@ export function Spark({
   labels,
   unit = '',
   trend,
+  missing,
+  missingText = 'no data',
 }: {
   values: number[];
   width?: number;
@@ -19,21 +25,25 @@ export function Spark({
   labels?: string[];
   unit?: string;
   trend?: 'better' | 'worse' | 'same';
+  /** One flag per value; true where it was not measured. */
+  missing?: boolean[];
+  missingText?: string;
 }) {
   if (!values.length) return null;
-  const pad = 3;
-  const series = values.length === 1 ? [values[0], values[0]] : values;
-  const min = Math.min(...series);
-  const max = Math.max(...series);
-  const span = max - min || 1;
-  const last = series.length - 1;
-  const x = (i: number) => pad + (i * (width - pad * 2)) / last;
-  const y = (v: number) =>
-    height - pad - ((v - min) / span) * (height - pad * 2);
-  const points = series.map((v, i) => `${x(i).toFixed(1)},${y(v).toFixed(1)}`);
-  const area = `M${x(0)},${height - pad} L${points.join(' L')} L${x(last)},${height - pad} Z`;
+  const { points, runs, last, baseline } = sparkGeometry({
+    values,
+    missing,
+    width,
+    height,
+  });
+  const fmt = (p: { x: number; y: number }) =>
+    `${p.x.toFixed(1)},${p.y.toFixed(1)}`;
   const cls =
     trend === 'better' || trend === 'worse' ? `spark ${trend}` : 'spark';
+  const shown = (i: number) => Math.min(i, values.length - 1);
+  const title = (i: number, text: string) =>
+    `${labels?.[shown(i)] ?? `Week ${shown(i) + 1}`}: ${text}`;
+  const lines = runs.filter((r) => r.length > 1);
   return (
     <svg
       className={cls}
@@ -43,19 +53,40 @@ export function Spark({
       role="img"
       aria-label={label}
     >
-      <path className="area" d={area} />
-      <polyline className="line" points={points.join(' ')} />
-      {series.map((v, i) => (
-        <circle
-          key={i}
-          cx={x(i).toFixed(1)}
-          cy={y(v).toFixed(1)}
-          r={i === last ? 3.2 : 6}
-          className={i === last ? 'end' : 'hit'}
-        >
-          <title>{`${labels?.[Math.min(i, values.length - 1)] ?? `Week ${Math.min(i, values.length - 1) + 1}`}: ${v}${unit}`}</title>
-        </circle>
+      {lines.map((run) => (
+        <path
+          key={`a${run[0].i}`}
+          className="area"
+          d={`M${run[0].x},${baseline} L${run.map(fmt).join(' L')} L${run[run.length - 1].x},${baseline} Z`}
+        />
       ))}
+      {lines.map((run) => (
+        <polyline
+          key={`l${run[0].i}`}
+          className="line"
+          points={run.map(fmt).join(' ')}
+        />
+      ))}
+      {points.map((p) => {
+        const text = p.missing ? missingText : `${values[shown(p.i)]}${unit}`;
+        const cx = p.x.toFixed(1);
+        const cy = p.y.toFixed(1);
+        const alone =
+          !p.missing && runs.some((r) => r.length === 1 && r[0].i === p.i);
+        return (
+          <circle
+            key={p.i}
+            cx={cx}
+            cy={cy}
+            r={p.missing ? 2.4 : p.i === last ? 3.2 : alone ? 2.4 : 6}
+            className={
+              p.missing ? 'gap' : p.i === last ? 'end' : alone ? 'solo' : 'hit'
+            }
+          >
+            <title>{title(p.i, text)}</title>
+          </circle>
+        );
+      })}
     </svg>
   );
 }

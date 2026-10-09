@@ -29,6 +29,10 @@ describe('repoTabOf', () => {
       expect(repoTabOf(rest, false)).toBe('pulls');
   });
 
+  it('marks Health on its page', () => {
+    expect(repoTabOf(['health'], false)).toBe('health');
+  });
+
   it('marks Actions, Insights and Settings on their pages', () => {
     expect(repoTabOf(['actions'], false)).toBe('actions');
     expect(repoTabOf(['actions', 'runs', '4', 'job', 'j'], false)).toBe(
@@ -58,6 +62,7 @@ describe('repoTabs', () => {
   it('shows the existing tabs, Settings only to admins', () => {
     expect(repoTabs(false, true).map((t) => t.id)).toEqual([
       'code',
+      'health',
       'pulls',
       'actions',
       'insights',
@@ -65,6 +70,7 @@ describe('repoTabs', () => {
     ]);
     expect(repoTabs(false, false).map((t) => t.id)).toEqual([
       'code',
+      'health',
       'pulls',
       'actions',
       'insights',
@@ -96,6 +102,12 @@ describe('repoBand (the default trail for a repository page)', () => {
       title: 'Pull requests',
     });
     expect(repoBand(['settings'], base, false).title).toBe('Settings');
+    expect(repoBand(['health'], base, false)).toEqual({
+      tab: 'health',
+      icon: 'pulse',
+      crumbs: [{ label: 'Health' }],
+      title: 'Health',
+    });
   });
 
   it('names a folder or file by its last segment', () => {

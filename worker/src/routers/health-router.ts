@@ -32,6 +32,11 @@ const healthAreaSchema = z
     detail: z.string(),
     /** Problems open now. */
     open: z.number(),
+    /**
+     * Tests on main only: one entry per week of `weeks`, true when no run finished that week (its 0 in `weeks` is "no
+     * data", not "no failures"). Absent on the other rows.
+     */
+    noRuns: z.array(z.boolean()).optional(),
   })
   .openapi('HealthArea');
 
@@ -50,6 +55,8 @@ const healthReportSchema = z
           label: z.string(),
           login: z.string(),
           client: z.string().nullable(),
+          /** The session's id, as `GET /sessions` gives it; a person working by hand has their "by hand" session. */
+          sessionId: z.string(),
         }),
         merged: z.number(),
         findings: z.number(),
