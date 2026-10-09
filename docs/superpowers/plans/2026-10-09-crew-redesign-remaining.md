@@ -76,19 +76,22 @@ Commits on top of `crew-redesign` (`git log origin/crew-redesign..crew-fixes`):
   the full interaction matrix remain unverified. Captures: `docs/screenshots/crew-health.jpg`,
   `crew-health-mobile.jpg`, and `crew-pull-mobile.jpg`.
 
-## Unfinished work (local branches on Mahmoud's machine)
+## Unfinished work (published for Cho)
 
-These worktrees live under `.claude/worktrees/` in Mahmoud's checkout; their branches are not pushed. Each WIP
-commit needs completion or re-review before merging.
+All three saved worktrees are now available on `origin` (GitOrange). These are unfinished source snapshots,
+not completed or approved PRs. Their full Git histories and tracked files are pushed; no local worktree path
+is required. See [the handoff](2026-10-09-crew-redesign-handoff.md) for fetch commands, integration cautions,
+and validation boundaries.
 
-| Task                            | Branch                             | State                                                            | Next step                                                                                                                                                                                      |
-| ------------------------------- | ---------------------------------- | ---------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| C6 Branches + branch map        | `worktree-agent-a7c6ee0ba3e6ffb3c` | Reviewed (one Important fix); fix round half done, WIP `7066148` | Finish: `BranchInfo.inUse`, per-branch DELETE refuses protected and in-use branches (409), UI never offers Delete on them; revert captures its target; shared state wording. Re-review, merge. |
-| C7 Live + repository audit log  | `worktree-agent-aad6384e7459d5282` | Implementation in progress, WIP `b657f83`                        | Finish, verify, review, merge. Adds Live and Audit log tabs.                                                                                                                                   |
-| C11 Repository settings + Rules | `worktree-agent-adae75b92ab71fddc` | Implementation in progress, WIP `36c546d`                        | Finish, verify, review, merge. Rules must describe real behaviour (direct pushes to main are not blocked today).                                                                               |
+| Task                            | Remote branch                       | Snapshot  | Remaining work                                                                                                                                        |
+| ------------------------------- | ----------------------------------- | --------- | ----------------------------------------------------------------------------------------------------------------------------------------------------- |
+| C6 Branches + branch map        | `codex/crew-c6-branches-wip`        | `7066148` | Finish the saved fix round and review. Reconcile its DELETE changes with Cho's `60a2bc7`; complete `inUse` metadata/UI and capture the revert target. |
+| C7 Live + repository audit log  | `codex/crew-c7-live-audit-wip`      | `b657f83` | Finish, verify, review and integrate Live/Audit routes and tabs.                                                                                      |
+| C11 Repository settings + Rules | `codex/crew-c11-settings-rules-wip` | `36c546d` | Finish, verify, review and integrate settings sections. Keep Rules truthful about direct pushes.                                                      |
 
-To continue one: `cd .claude/worktrees/<agent-dir> && git merge crew-redesign`, finish, then merge its branch
-into `crew-redesign`.
+Start from the latest `origin/crew-redesign`, which includes Cho's backend, theme and documentation fixes.
+Integrate each snapshot on a separate feature branch, resolve shared routing/navigation/style changes, and
+validate before merging back. Do not replace the current shared branch with any of these older snapshots.
 
 ## Remaining tasks, in order
 
