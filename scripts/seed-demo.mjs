@@ -116,8 +116,32 @@ async function main() {
     : new D1({ wrangler: findWrangler(cwd, args.wrangler), cwd });
   const scratch = fs.mkdtempSync(path.join(os.tmpdir(), 'seed-demo-'));
   let tokenId = null;
+  // What this run created itself: only those rows get backdated, never a person's or an agent that was already there.
+  const created = { tokenId: null, cho: false, agents: [] };
   let admin = null;
   let git = null;
+  // Revokes the git token and removes the temporary folders, whether the run ends, fails or is interrupted.
+  let cleaned = false;
+  const cleanup = async ({ keepDryRun = false } = {}) => {
+    if (cleaned) return;
+    cleaned = true;
+    if (tokenId && admin)
+      await api
+        .request('DELETE', `/api/tokens/${tokenId}`, { session: admin })
+        .catch(() => {});
+    if (keepDryRun)
+      log(
+        `\nThe history is in ${path.join(scratch, 'work')} (a dry run keeps it, to look at).`
+      );
+    else fs.rmSync(scratch, { recursive: true, force: true });
+    if (git) fs.rmSync(git.home, { recursive: true, force: true });
+  };
+  const onSignal = () => {
+    console.error('\nseed-demo: interrupted; cleaning up.');
+    cleanup().finally(() => process.exit(130));
+  };
+  process.once('SIGINT', onSignal);
+  process.once('SIGTERM', onSignal);
   try {
     // ── 1. Sign in ──────────────────────────────────────────────────────────
     let people;
@@ -140,7 +164,6 @@ async function main() {
       repoFull = `admin/${history.REPO.name}`;
       log(`Dry run: building the history in ${scratch}`);
     } else {
-      d1.query('SELECT 1 AS ok');
       admin = await api.signIn(args.admin, args.password);
       const users = await api.get('/api/users', admin);
       const me = users.find((u) => u.username === args.admin.toLowerCase());
@@ -152,6 +175,16 @@ async function main() {
         throw new Error(
           `${me.username} is not a site admin, and the crew needs one.`
         );
+      // The rows below go into this checkout's local D1 and everything else through the API: they must be one database.
+      // Before anything is created or deleted, the admin the server knows must be the admin this D1 holds.
+      const session = await api.get('/api/auth/get-session', admin);
+      const [local] = d1.query(
+        `SELECT id FROM users WHERE username = ${q(me.username)}`
+      );
+      if (!local || local.id !== (session?.user?.id ?? me.id))
+        throw new Error(
+          `This checkout's local database is not the one served at ${url.origin}. Run the seed from the checkout that runs yarn dev.`
+        );
       people = {
         admin: me,
         cho: users.find((u) => u.username === history.TEAMMATE.username),
@@ -162,22 +195,55 @@ async function main() {
       // ── Already seeded? ────────────────────────────────────────────────
       const repos = await api.get('/api/repos', admin);
       const existing = repos.find((r) => r.fullName === repoFull);
-      if (existing && args.reset) {
-        log(`Deleting ${repoFull} (--reset)`);
-        await api.must('DELETE', `/api/repos/${repoFull}`, { session: admin });
-      } else if (existing) {
-        const [seeded] = d1.query(
+      if (existing) {
+        // Deleting a repository also deletes its git storage for good, so a repository only counts as the demo (and is
+        // only ever deleted by --reset) with evidence this script built it: its exact description, and either the marker
+        // it writes last, or the first commit it pushes (or nothing pushed yet).
+        const [marker] = d1.query(
           `SELECT COUNT(*) AS n FROM pr_events WHERE id LIKE 'seed-state-%' AND repository_id = ${q(existing.id)}`
         );
-        if (seeded?.n > 0) {
+        const complete = marker?.n > 0;
+        const builtByThisScript = async () => {
+          const detail = await api.get(`/api/repos/${repoFull}`, admin);
+          if (detail.empty) return true;
+          let first = null;
+          for (let page = 1; page <= 20; page++) {
+            const res = await api.request(
+              'GET',
+              `/api/repos/${repoFull}/commits?ref=${encodeURIComponent(detail.defaultBranch)}&page=${page}`,
+              { session: admin }
+            );
+            if (!res.ok) return false;
+            first = res.body.commits.at(-1) ?? first;
+            if (!res.body.hasMore)
+              return (
+                first?.message.split('\n')[0] ===
+                history.BASE_COMMITS[0].message
+              );
+          }
+          return false;
+        };
+        const demo =
+          existing.description === history.REPO.description &&
+          (complete || (await builtByThisScript()));
+        if (!demo)
+          throw new Error(
+            `${repoFull} already exists and is not the demo this script builds (its description and first commit are different), so the seed leaves it alone and --reset will not delete it. Rename or delete it yourself first.`
+          );
+        if (args.reset) {
+          log(`Deleting ${repoFull} (--reset)`);
+          await api.must('DELETE', `/api/repos/${repoFull}`, {
+            session: admin,
+          });
+        } else if (complete) {
           log(
             `${repoFull} is already seeded: nothing to do. (--reset builds it again.)`
           );
           return await summary({ api, admin, repoFull, url, d1 });
-        }
-        throw new Error(
-          `${repoFull} exists but was not fully seeded (an earlier run stopped part way). Run again with --reset to build it from scratch.`
-        );
+        } else
+          throw new Error(
+            `${repoFull} exists but was not fully seeded (an earlier run stopped part way). Run again with --reset to build it from scratch.`
+          );
       }
     }
 
@@ -195,7 +261,7 @@ async function main() {
         session: admin,
         json: { name: 'seed-demo', expiresInDays: 1 },
       });
-      tokenId = made.token.id;
+      tokenId = created.tokenId = made.token.id;
       authHeader = `Authorization: Basic ${Buffer.from(`seed:${made.plaintext}`).toString('base64')}`;
       sessions.admin = admin;
 
@@ -216,6 +282,7 @@ async function main() {
         people.cho = (await api.get('/api/users', admin)).find(
           (u) => u.username === history.TEAMMATE.username
         );
+        created.cho = true;
         log(
           `Invited and accepted ${history.TEAMMATE.name} (${history.TEAMMATE.username})`
         );
@@ -463,10 +530,20 @@ async function main() {
     if (dry) {
       for (const h of history.INVITED)
         agents.set(h, { id: `dry-${h}`, name: h, sha: '0'.repeat(40) });
+      created.agents = history.INVITED.map((h) => ({
+        id: `dry-${h}`,
+        handle: h,
+      }));
+      created.cho = true;
+      created.tokenId = 'dry-token';
     } else {
       const crew = await api.must('POST', '/api/admin/agents/crew', {
         session: admin,
       });
+      created.agents = crew.created.map((a) => ({
+        id: a.id,
+        handle: a.username,
+      }));
       log(
         `Crew: ${crew.created.length} created, ${crew.skipped.length} already there`
       );
@@ -498,6 +575,7 @@ async function main() {
       people,
       agents,
       baseTip,
+      created,
     };
     const statements = [
       ...rows.historyStatements(ctx),
@@ -558,16 +636,9 @@ async function main() {
 
     await summary({ api, admin, repoFull, url, d1, states, records });
   } finally {
-    if (tokenId && admin)
-      await api
-        .request('DELETE', `/api/tokens/${tokenId}`, { session: admin })
-        .catch(() => {});
-    if (dry)
-      log(
-        `\nThe history is in ${path.join(scratch, 'work')} (a dry run keeps it, to look at).`
-      );
-    else fs.rmSync(scratch, { recursive: true, force: true });
-    if (git) fs.rmSync(git.home, { recursive: true, force: true });
+    process.off('SIGINT', onSignal);
+    process.off('SIGTERM', onSignal);
+    await cleanup({ keepDryRun: dry });
   }
 }
 

@@ -282,6 +282,12 @@ export function q(v) {
   return `'${text.replaceAll("'", "''")}'`;
 }
 
+/** An environment without the seed's own credentials: wrangler has no use for them. */
+function withoutSeedSecrets(env) {
+  const { SEED_ADMIN, SEED_PASSWORD, SEED_TEAMMATE_PASSWORD, ...rest } = env;
+  return rest;
+}
+
 /** The local D1 of the dev server, through wrangler (it must run from the checkout the server runs from). */
 export class D1 {
   constructor({ wrangler, cwd }) {
@@ -309,7 +315,7 @@ export class D1 {
           encoding: 'utf8',
           maxBuffer: 256 * 1024 * 1024,
           env: {
-            ...process.env,
+            ...withoutSeedSecrets(process.env),
             WRANGLER_SEND_METRICS: 'false',
             NO_COLOR: '1',
           },

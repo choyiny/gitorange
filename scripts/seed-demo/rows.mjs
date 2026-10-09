@@ -130,26 +130,45 @@ export function historyStatements(ctx) {
   const audit = (action, target, ms) =>
     `UPDATE audit_events SET created_at = ${ms} WHERE repository_id = ${q(repoId)} AND action = ${q(action)} AND target = ${q(target)}`;
 
-  // The repository, its collaborator and the teammate.
+  // The repository and its collaborator (both made by this run).
   const created = clock.at(REPO.createdAt);
   out.push(
     `UPDATE repositories SET created_at = ${created} WHERE id = ${q(repoId)}`,
     audit('repository.created', ctx.repoFull, created * 1000),
-    audit('collaborator.added', TEAMMATE.username, (created + 60) * 1000),
-    `UPDATE users SET created_at = ${clock.ms(TEAMMATE.joinedAt)}, updated_at = ${clock.ms(TEAMMATE.joinedAt)} WHERE username = ${q(TEAMMATE.username)}`,
-    `UPDATE invitations SET created_at = ${clock.at(TEAMMATE.joinedAt) - 600}, accepted_at = ${clock.at(TEAMMATE.joinedAt)} WHERE email = ${q(TEAMMATE.email)}`,
-    // The access token used to push the history (deleted again once it was done).
-    `UPDATE audit_events SET created_at = ${(created + 120) * 1000} WHERE action = 'token.created' AND target = 'seed-demo'`,
-    `UPDATE audit_events SET created_at = ${(created + 130) * 1000} WHERE action = 'token.deleted' AND target = 'seed-demo'`
+    audit('collaborator.added', TEAMMATE.username, (created + 60) * 1000)
   );
 
-  // The crew: created and invited before the first pull request was reviewed.
+  // Only what this run created is backdated (`ctx.created`): a teammate, agents or tokens that were already there are
+  // somebody's own data and keep their dates.
+  const made = ctx.created;
+  const recent = clock.now * 1000 - 86_400_000;
+  if (made.cho)
+    out.push(
+      `UPDATE users SET created_at = ${clock.ms(TEAMMATE.joinedAt)}, updated_at = ${clock.ms(TEAMMATE.joinedAt)} WHERE username = ${q(TEAMMATE.username)}`,
+      `UPDATE invitations SET created_at = ${clock.at(TEAMMATE.joinedAt) - 600}, accepted_at = ${clock.at(TEAMMATE.joinedAt)} WHERE id = (SELECT id FROM invitations WHERE email = ${q(TEAMMATE.email)} ORDER BY created_at DESC LIMIT 1)`
+    );
+  // The access token used to push the history (deleted again once it was done).
+  if (made.tokenId) {
+    const token = `json_extract(data, '$.token') = ${q(made.tokenId)}`;
+    out.push(
+      `UPDATE audit_events SET created_at = ${(created + 120) * 1000} WHERE action = 'token.created' AND ${token}`,
+      `UPDATE audit_events SET created_at = ${(created + 130) * 1000} WHERE action = 'token.deleted' AND ${token}`
+    );
+  }
+
+  // The crew this run created: created and invited before the first pull request was reviewed.
   const added = clock.at(AGENTS_ADDED);
+  if (made.agents.length) {
+    const ids = made.agents.map((a) => q(a.id)).join(', ');
+    const handles = made.agents.map((a) => q(a.handle)).join(', ');
+    out.push(
+      `UPDATE users SET created_at = ${added * 1000 - 120_000}, updated_at = ${added * 1000 - 120_000} WHERE id IN (${ids})`,
+      `UPDATE agents SET created_at = ${added - 120} WHERE user_id IN (${ids})`,
+      `UPDATE repositories SET created_at = ${added - 120} WHERE id IN (SELECT repository_id FROM agents WHERE user_id IN (${ids}) AND repository_id IS NOT NULL)`,
+      `UPDATE audit_events SET created_at = ${added * 1000 - 120_000} + (rowid % 60) * 1000 WHERE action = 'agent.created' AND repository_id IS NULL AND target IN (${handles}) AND created_at > ${recent}`
+    );
+  }
   out.push(
-    `UPDATE users SET created_at = ${added * 1000 - 120_000}, updated_at = ${added * 1000 - 120_000} WHERE id IN (SELECT user_id FROM agents)`,
-    `UPDATE agents SET created_at = ${added - 120}`,
-    `UPDATE repositories SET created_at = ${added - 120} WHERE id IN (SELECT repository_id FROM agents WHERE repository_id IS NOT NULL)`,
-    `UPDATE audit_events SET created_at = ${added * 1000 - 120_000} + (rowid % 60) * 1000 WHERE action = 'agent.created' AND repository_id IS NULL`,
     `UPDATE repository_agents SET created_at = ${added} WHERE repository_id = ${q(repoId)}`,
     `UPDATE audit_events SET created_at = ${added * 1000} + (rowid % 60) * 1000 WHERE action = 'agent.invited' AND repository_id = ${q(repoId)}`
   );

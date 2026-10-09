@@ -159,6 +159,8 @@ export function lineTotal(item: LineItem): number {
                 kind: 'dismiss',
                 by: 'admin',
                 at: { d: 9, h: 15, m: 50 },
+                reason:
+                  'Line items stay a few per invoice, so a scan is fine for now.',
                 teach:
                   'Tables under a few thousand rows do not need an index yet.',
               },
