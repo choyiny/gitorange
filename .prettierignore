@@ -6,3 +6,6 @@ worker/worker-configuration.d.ts
 .claude/hooks
 .superpowers
 .claude/worktrees
+docs/design/crew/*.js
+docs/design/crew/*.css
+docs/design/crew/index.html

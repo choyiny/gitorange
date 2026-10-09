@@ -1,0 +1,282 @@
+/* Dev skin: GitHub's Primer colours, system type and shapes. Light and dark. Selected from the account menu. */
+:root[data-skin="dev"] {
+  --bg: #ffffff;
+  --surface: #ffffff;
+  --surface-2: #f6f8fa;
+  --surface-3: #eff2f5;
+  --ink: #1f2328;
+  --ink-2: #1f2328;
+  --muted: #59636e;
+  --faint: #818b98;
+  --line: #d1d9e0;
+  --line-2: #d1d9e0;
+  --line-3: #eff2f5;
+  --accent: #0969da;
+  --accent-2: #0550ae;
+  --accent-tint: #ddf4ff;
+  --accent-tint-2: #b6e3ff;
+  --on-accent: #ffffff;
+  --ok: #1a7f37;
+  --ok-bg: #dafbe1;
+  --ok-line: #aceebb;
+  --warn: #9a6700;
+  --warn-bg: #fff8c5;
+  --warn-line: #eac54f;
+  --change: #bc4c00;
+  --change-bg: #fff1e5;
+  --change-line: #ffc499;
+  --bad: #d1242f;
+  --bad-bg: #ffebe9;
+  --bad-line: #ffcecb;
+  --run: #8250df;
+  --run-bg: #fbefff;
+  --run-line: #e7d4ff;
+  --primary: #1f883d;
+  --primary-hover: #1c8139;
+  --font:
+    -apple-system, BlinkMacSystemFont, "Segoe UI", "Noto Sans", Helvetica,
+    Arial, sans-serif;
+  --mono:
+    ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, "Liberation Mono",
+    monospace;
+  --wordmark: var(--font);
+  --r: 6px;
+  --r-sm: 6px;
+  --sh: 0 1px 0 rgba(31, 35, 40, 0.04);
+  --sh-md: 0 3px 6px rgba(140, 149, 159, 0.15);
+  --sh-lg: 0 8px 24px rgba(140, 149, 159, 0.2);
+  color-scheme: light;
+}
+@media (prefers-color-scheme: dark) {
+  :root[data-skin="dev"]:not([data-theme="light"]) {
+    --bg: #0d1117;
+    --surface: #0d1117;
+    --surface-2: #151b23;
+    --surface-3: #212830;
+    --ink: #f0f6fc;
+    --ink-2: #f0f6fc;
+    --muted: #9198a1;
+    --faint: #656c76;
+    --line: #3d444d;
+    --line-2: #3d444d;
+    --line-3: #262c36;
+    --accent: #4493f8;
+    --accent-2: #79c0ff;
+    --accent-tint: #121d2f;
+    --accent-tint-2: #1f3a5f;
+    --on-accent: #ffffff;
+    --ok: #3fb950;
+    --ok-bg: #12261e;
+    --ok-line: #23633a;
+    --warn: #d29922;
+    --warn-bg: #272115;
+    --warn-line: #5c4a1a;
+    --change: #db6d28;
+    --change-bg: #2c1b10;
+    --change-line: #6b3a1a;
+    --bad: #f85149;
+    --bad-bg: #2d1416;
+    --bad-line: #6e2a2a;
+    --run: #ab7df8;
+    --run-bg: #211833;
+    --run-line: #4c3580;
+    --primary: #238636;
+    --primary-hover: #29903b;
+    --sh: none;
+    --sh-md: 0 3px 6px #010409;
+    --sh-lg: 0 8px 24px #010409;
+    color-scheme: dark;
+  }
+}
+:root[data-skin="dev"][data-theme="dark"] {
+  --bg: #0d1117;
+  --surface: #0d1117;
+  --surface-2: #151b23;
+  --surface-3: #212830;
+  --ink: #f0f6fc;
+  --ink-2: #f0f6fc;
+  --muted: #9198a1;
+  --faint: #656c76;
+  --line: #3d444d;
+  --line-2: #3d444d;
+  --line-3: #262c36;
+  --accent: #4493f8;
+  --accent-2: #79c0ff;
+  --accent-tint: #121d2f;
+  --accent-tint-2: #1f3a5f;
+  --on-accent: #ffffff;
+  --ok: #3fb950;
+  --ok-bg: #12261e;
+  --ok-line: #23633a;
+  --warn: #d29922;
+  --warn-bg: #272115;
+  --warn-line: #5c4a1a;
+  --change: #db6d28;
+  --change-bg: #2c1b10;
+  --change-line: #6b3a1a;
+  --bad: #f85149;
+  --bad-bg: #2d1416;
+  --bad-line: #6e2a2a;
+  --run: #ab7df8;
+  --run-bg: #211833;
+  --run-line: #4c3580;
+  --primary: #238636;
+  --primary-hover: #29903b;
+  --sh: none;
+  --sh-md: 0 3px 6px #010409;
+  --sh-lg: 0 8px 24px #010409;
+  color-scheme: dark;
+}
+
+/* Chrome: GitHub's header and sidebar, light and dark */
+:root[data-skin="dev"] .app,
+:root[data-skin="dev"] .app[data-chrome] {
+  --chrome-bg: #f6f8fa;
+  --chrome-edge: #d1d9e0;
+  --chrome-fg: #1f2328;
+  --chrome-fg-2: #1f2328;
+  --chrome-dim: #59636e;
+  --chrome-faint: #818b98;
+  --chrome-soft: #ffffff;
+  --chrome-hover: rgba(208, 215, 222, 0.32);
+  --chrome-hover-2: rgba(208, 215, 222, 0.48);
+  --chrome-on: rgba(208, 215, 222, 0.48);
+  --chrome-line: #d1d9e0;
+  --chrome-line-2: #d1d9e0;
+  --chrome-accent: #0969da;
+  --chrome-warn-bg: #fff8c5;
+  --chrome-warn: #9a6700;
+  --chrome-grain: none;
+  --chrome-gutter: 0px;
+}
+@media (prefers-color-scheme: dark) {
+  :root[data-skin="dev"]:not([data-theme="light"]) .app,
+  :root[data-skin="dev"]:not([data-theme="light"]) .app[data-chrome] {
+    --chrome-bg: #010409;
+    --chrome-edge: #3d444d;
+    --chrome-fg: #f0f6fc;
+    --chrome-fg-2: #f0f6fc;
+    --chrome-dim: #9198a1;
+    --chrome-faint: #656c76;
+    --chrome-soft: #0d1117;
+    --chrome-hover: rgba(101, 108, 118, 0.2);
+    --chrome-hover-2: rgba(101, 108, 118, 0.3);
+    --chrome-on: rgba(101, 108, 118, 0.3);
+    --chrome-line: #3d444d;
+    --chrome-line-2: #3d444d;
+    --chrome-accent: #4493f8;
+    --chrome-warn-bg: #272115;
+    --chrome-warn: #d29922;
+    --chrome-grain: none;
+  }
+}
+:root[data-skin="dev"][data-theme="dark"] .app,
+:root[data-skin="dev"][data-theme="dark"] .app[data-chrome] {
+  --chrome-bg: #010409;
+  --chrome-edge: #3d444d;
+  --chrome-fg: #f0f6fc;
+  --chrome-fg-2: #f0f6fc;
+  --chrome-dim: #9198a1;
+  --chrome-faint: #656c76;
+  --chrome-soft: #0d1117;
+  --chrome-hover: rgba(101, 108, 118, 0.2);
+  --chrome-hover-2: rgba(101, 108, 118, 0.3);
+  --chrome-on: rgba(101, 108, 118, 0.3);
+  --chrome-line: #3d444d;
+  --chrome-line-2: #3d444d;
+  --chrome-accent: #4493f8;
+  --chrome-warn-bg: #272115;
+  --chrome-warn: #d29922;
+  --chrome-grain: none;
+}
+
+/* Shapes and details */
+:root[data-skin="dev"] body {
+  font-size: 14px;
+  letter-spacing: 0;
+}
+:root[data-skin="dev"] .snav {
+  border-right: 1px solid var(--chrome-line);
+}
+:root[data-skin="dev"] .topnav {
+  border-bottom: 1px solid var(--chrome-line);
+}
+:root[data-skin="dev"] .content {
+  margin: 0;
+  border: 0;
+  border-radius: 0;
+  padding: 24px 32px 40px;
+}
+:root[data-skin="dev"] .brand-wordmark {
+  font-weight: 700;
+  letter-spacing: -0.01em;
+  font-size: 17px;
+}
+:root[data-skin="dev"] .snav-item[aria-current="page"] {
+  box-shadow: inset 3px 0 0 var(--chrome-accent);
+}
+:root[data-skin="dev"] .btn {
+  border-radius: 6px;
+  font-weight: 500;
+  background: var(--surface-2);
+  border-color: rgba(31, 35, 40, 0.15);
+  color: var(--ink);
+  box-shadow: 0 1px 0 rgba(31, 35, 40, 0.04);
+}
+:root[data-skin="dev"][data-theme="dark"] .btn {
+  border-color: rgba(240, 246, 252, 0.1);
+  background: #212830;
+}
+:root[data-skin="dev"] .btn.primary,
+:root[data-skin="dev"] a.btn.primary {
+  background: var(--primary);
+  border-color: rgba(31, 35, 40, 0.15);
+  color: #ffffff;
+}
+:root[data-skin="dev"] .btn.primary:hover {
+  background: var(--primary-hover);
+  color: #ffffff;
+}
+:root[data-skin="dev"] .btn.quiet {
+  background: transparent;
+  border-color: transparent;
+  box-shadow: none;
+}
+:root[data-skin="dev"] .chip {
+  border-radius: 2em;
+  font-weight: 500;
+}
+:root[data-skin="dev"] .panel,
+:root[data-skin="dev"] .stat {
+  box-shadow: none;
+}
+:root[data-skin="dev"] .phead .ph-title {
+  font-weight: 600;
+  letter-spacing: -0.01em;
+}
+:root[data-skin="dev"] .eyebrow {
+  font-family: var(--font);
+  letter-spacing: 0.02em;
+}
+:root[data-skin="dev"] .gsearch {
+  border-radius: 6px;
+}
+:root[data-skin="dev"] .tool {
+  border-radius: 6px;
+}
+:root[data-skin="dev"] .rtabs a[aria-current="page"] {
+  border-bottom-color: #fd8c73;
+}
+:root[data-skin="dev"] .ptabs a[aria-current="page"] {
+  border-bottom-color: #fd8c73;
+}
+:root[data-skin="dev"] .ask,
+:root[data-skin="dev"] .mergebox {
+  border-radius: 6px;
+}
+@media (prefers-color-scheme: dark) {
+  :root[data-skin="dev"]:not([data-theme="light"]) .btn {
+    border-color: rgba(240, 246, 252, 0.1);
+    background: #212830;
+  }
+}
