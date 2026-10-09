@@ -1,17 +1,19 @@
 import { describe, expect, it } from 'vitest';
 import {
   CLEARED,
+  EMPTY_RESULTS,
+  SEARCH_DEBOUNCE_MS,
   SEARCH_GROUPS,
+  SEARCH_MAX_CHARS,
   blurCloses,
   flattenSections,
   hitsFromResults,
   jumpHits,
-  localResults,
   pageHits,
   searchKey,
   searchSections,
+  searchTerm,
   type SearchHit,
-  type SearchResults,
 } from './searchKeys';
 
 const hit = (kind: SearchHit['kind'], label: string): SearchHit => ({
@@ -20,15 +22,6 @@ const hit = (kind: SearchHit['kind'], label: string): SearchHit => ({
   sub: null,
   to: `/${kind}/${label}`,
 });
-
-const empty: SearchResults = {
-  repos: [],
-  pulls: [],
-  agents: [],
-  people: [],
-  branches: [],
-  files: [],
-};
 
 describe('searchSections (grouping)', () => {
   it('groups hits in the spec order, whatever order they arrive in', () => {
@@ -178,81 +171,44 @@ describe('blurCloses (leaving the search box)', () => {
   });
 });
 
-describe('localResults (the client-side source until /api/search)', () => {
-  const data = {
-    repos: [
-      {
-        fullName: 'choyiny/gitorange',
-        description: 'A code host',
-        updatedAt: '2026-10-08T00:00:00Z',
-      },
-      {
-        fullName: 'mahmoud/orange-notes',
-        description: null,
-        updatedAt: '2026-10-07T00:00:00Z',
-      },
-      {
-        fullName: 'mahmoud/website',
-        description: 'Uses Orange colours',
-        updatedAt: '2026-10-06T00:00:00Z',
-      },
-    ],
-    agents: [
-      { username: 'dataagent', name: 'Data', color: '#199e70' },
-      { username: 'securityagent', name: 'Security' },
-    ],
-    people: [
-      { username: 'mahmoud', name: 'Mahmoud Halat' },
-      { username: 'cho', name: 'Cho Yin Yong' },
-    ],
-  };
-
-  it('filters repositories, agents and people case-insensitively', () => {
-    const r = localResults('ORANGE', data);
-    expect(r.repos.map((x) => x.name)).toEqual([
-      'mahmoud/orange-notes',
-      'choyiny/gitorange',
-      'mahmoud/website',
-    ]);
-    expect(localResults('data', data).agents).toEqual([
-      { handle: 'dataagent', name: 'Data', color: '#199e70' },
-    ]);
-    expect(localResults('yong', data).people).toEqual([
-      { login: 'cho', name: 'Cho Yin Yong' },
-    ]);
+describe('searchTerm (what is sent to /api/search)', () => {
+  it('trims what was typed, and sends nothing for a blank box', () => {
+    expect(searchTerm('  auth  ')).toBe('auth');
+    expect(searchTerm('   ')).toBe('');
+    expect(searchTerm('')).toBe('');
   });
 
-  it('ranks a name that starts with the query above one that contains it', () => {
-    expect(localResults('m', data).people.map((p) => p.login)).toEqual([
-      'mahmoud',
-    ]);
-    expect(localResults('a', data).agents.map((a) => a.handle)).toEqual([
-      'dataagent',
-      'securityagent',
-    ]);
+  it('keeps inner spaces and "#12"-style pull request numbers', () => {
+    expect(searchTerm(' fix login ')).toBe('fix login');
+    expect(searchTerm('#12')).toBe('#12');
   });
 
-  it("searches the current repository's branches, and nothing it can't know", () => {
-    const r = localResults('fix', {
-      ...data,
-      repo: { fullName: 'choyiny/gitorange', branches: ['main', 'fix-x'] },
+  it('caps the query where the API stops reading, far below the length it refuses', () => {
+    const long = 'a'.repeat(300);
+    expect(searchTerm(long)).toHaveLength(SEARCH_MAX_CHARS);
+    expect(SEARCH_MAX_CHARS).toBeLessThanOrEqual(200);
+    // A cut that lands after a space doesn't leave the space on the end.
+    expect(searchTerm('a'.repeat(SEARCH_MAX_CHARS - 1) + ' b')).toBe(
+      'a'.repeat(SEARCH_MAX_CHARS - 1)
+    );
+  });
+
+  it('waits a moment for typing to pause', () => {
+    expect(SEARCH_DEBOUNCE_MS).toBe(150);
+  });
+});
+
+describe('EMPTY_RESULTS', () => {
+  it('has all six lists, empty, in the shape of the API', () => {
+    expect(EMPTY_RESULTS).toEqual({
+      repos: [],
+      pulls: [],
+      agents: [],
+      people: [],
+      branches: [],
+      files: [],
     });
-    expect(r.branches).toEqual([{ repo: 'choyiny/gitorange', name: 'fix-x' }]);
-    expect(r.pulls).toEqual([]);
-    expect(r.files).toEqual([]);
-  });
-
-  it('returns at most eight of each, like the API', () => {
-    const many = Array.from({ length: 12 }, (_, i) => ({
-      fullName: `o/r${i}`,
-      description: null,
-      updatedAt: '',
-    }));
-    expect(localResults('r', { ...data, repos: many }).repos).toHaveLength(8);
-  });
-
-  it('returns nothing for a blank query', () => {
-    expect(localResults('  ', data)).toEqual(empty);
+    expect(hitsFromResults(EMPTY_RESULTS)).toEqual([]);
   });
 });
 
@@ -269,6 +225,7 @@ describe('hitsFromResults', () => {
       },
       { defaultBranch: 'main' }
     );
+    expect(hits.find((h) => h.kind === 'pull')?.sub).toBe('o/r · open');
     expect(hits.map((h) => [h.kind, h.label, h.to])).toEqual([
       ['repo', 'o/r', '/o/r'],
       ['pull', '#4 Fix', '/o/r/pull/4'],

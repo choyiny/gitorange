@@ -1,21 +1,31 @@
 /**
- * Global search (top band): where results come from, how they group, and what the keys do. Pure, so the rules are
- * unit-tested; `src/components/shell/GlobalSearch.tsx` draws it.
- *
- * Results always take the shape of `GET /api/search` (`SearchResults`, the lane B/C contract). Until that endpoint
- * exists, `localResults` builds the same shape from data the app already loads (repositories, agents, people, the
- * current repository's branches); swapping in `api.search(q, repo)` changes only the data source.
+ * Global search (top band): what is asked of `GET /api/search`, how results group, and what the keys do. Pure, so
+ * the rules are unit-tested; `src/components/shell/GlobalSearch.tsx` draws it and fetches with `api.search(q, repo)`.
  */
-import { agentColor } from './agentLook';
+import type { SearchResults } from './uiApi';
 
-/** `GET /api/search?q=&repo=o/n` (each list ≤ 8; branches and files only when `repo` is given). */
-export interface SearchResults {
-  repos: { name: string; description: string | null }[];
-  pulls: { repo: string; number: number; title: string; state: string }[];
-  agents: { handle: string; name: string; color: string }[];
-  people: { login: string; name: string | null }[];
-  branches: { repo: string; name: string }[];
-  files: { repo: string; path: string }[];
+export type { SearchResults };
+
+/** Nothing found (and the value before the first answer): one shared object, so memoised rows stay put. */
+export const EMPTY_RESULTS: SearchResults = Object.freeze({
+  repos: [],
+  pulls: [],
+  agents: [],
+  people: [],
+  branches: [],
+  files: [],
+}) as SearchResults;
+
+/** How long typing must pause before a request goes out. */
+export const SEARCH_DEBOUNCE_MS = 150;
+/** An answer is reused this long (reopening the box, backspacing to an earlier query) before asking again. */
+export const SEARCH_STALE_MS = 15_000;
+/** The API reads the first 100 characters of a query and refuses one over 200. */
+export const SEARCH_MAX_CHARS = 100;
+
+/** What to send for what was typed: trimmed and capped; empty means there is nothing to search for. */
+export function searchTerm(typed: string): string {
+  return typed.trim().slice(0, SEARCH_MAX_CHARS).trimEnd();
 }
 
 export type SearchKind =
@@ -52,8 +62,6 @@ export interface SearchSection {
 export const PER_GROUP = 5;
 /** Rows in the "Jump to" list shown before anything is typed. */
 export const JUMP_MAX = 8;
-/** The API's cap per list, kept by the local source too. */
-export const RESULT_MAX = 8;
 
 /** Hits grouped in `SEARCH_GROUPS` order, each group capped, empty groups dropped. A blank query is "Jump to". */
 export function searchSections(
@@ -195,62 +203,6 @@ function pick<T>(
     .map((x) => x.item);
 }
 
-/** What the app already has loaded that search can look through. */
-export interface LocalSearchData {
-  repos: readonly { fullName: string; description: string | null }[];
-  agents: readonly { username: string; name: string; color?: string | null }[];
-  people: readonly { username: string; name: string | null }[];
-  /** The repository being viewed, for its branches. */
-  repo?: { fullName: string; branches: readonly string[] } | null;
-}
-
-/** The client-side stand-in for `GET /api/search`: same shape, no pull requests or files. */
-export function localResults(q: string, data: LocalSearchData): SearchResults {
-  const needle = q.trim().toLowerCase();
-  const out: SearchResults = {
-    repos: [],
-    pulls: [],
-    agents: [],
-    people: [],
-    branches: [],
-    files: [],
-  };
-  if (!needle) return out;
-  out.repos = pick(
-    data.repos,
-    needle,
-    (r) =>
-      rank(needle, [r.fullName.split('/')[1], r.fullName], [r.description]),
-    RESULT_MAX
-  ).map((r) => ({ name: r.fullName, description: r.description }));
-  out.agents = pick(
-    data.agents,
-    needle,
-    (a) => rank(needle, [a.username, a.name]),
-    RESULT_MAX
-  ).map((a) => ({
-    handle: a.username,
-    name: a.name,
-    color: agentColor(a.username, a.color),
-  }));
-  out.people = pick(
-    data.people,
-    needle,
-    (p) => rank(needle, [p.username, p.name]),
-    RESULT_MAX
-  ).map((p) => ({ login: p.username, name: p.name }));
-  if (data.repo) {
-    const repo = data.repo.fullName;
-    out.branches = pick(
-      data.repo.branches,
-      needle,
-      (b) => rank(needle, [b]),
-      RESULT_MAX
-    ).map((name) => ({ repo, name }));
-  }
-  return out;
-}
-
 /** A ref or path in a URL: each segment encoded, slashes kept. */
 const pathSegments = (path: string) =>
   path.split('/').map(encodeURIComponent).join('/');
@@ -271,7 +223,7 @@ export function hitsFromResults(
     ...r.pulls.map<SearchHit>((x) => ({
       kind: 'pull',
       label: `#${x.number} ${x.title}`,
-      sub: x.repo,
+      sub: `${x.repo} · ${x.state}`,
       to: `/${x.repo}/pull/${x.number}`,
     })),
     ...r.agents.map<SearchHit>((x) => ({

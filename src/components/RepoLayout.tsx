@@ -112,8 +112,7 @@ export function RepoLayout() {
             agent: agent
               ? {
                   handle: agent.username,
-                  // Sent since crew redesign B1; typed in uiApi by C0.
-                  color: (agent as { color?: string | null }).color ?? null,
+                  color: agent.color,
                 }
               : null,
           }
