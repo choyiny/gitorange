@@ -421,12 +421,36 @@
   overflow-x: auto;
   text-align: center;
 }
-.pull-graph svg {
+.pull-graph > svg {
   max-width: 100%;
   height: auto;
 }
 .pull-graph g.node:focus-visible {
   outline: 2px solid var(--accent);
+}
+/* The list's icons under a node's title: checks, AI conflict resolution, the reviewers' robots. */
+.pg-icon-host {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  height: 100%;
+  pointer-events: none;
+}
+.pg-icons {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+.pg-icons .pg-avatars {
+  flex-wrap: nowrap;
+  gap: 2px;
+}
+/* Mermaid styles every path in a node (`#mermaid-N .node path`, and `#mermaid-N .<class> path` with !important), which
+   would fill the icons with the node's colours. `:is(…, #_)` takes the id's weight, so this wins whatever N is. */
+.pull-graph :is(svg[id^='mermaid-'], #_) .pg-icon-host path {
+  fill: currentColor !important;
+  stroke: none !important;
+  color: inherit !important;
 }
 
 /* ---------- Compare ---------- */

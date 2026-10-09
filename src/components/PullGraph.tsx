@@ -1,16 +1,29 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
 import { Link, useNavigate } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
 import { AlertIcon, GitBranchIcon } from '@primer/octicons-react';
-import { api, qk, type RepoDetail } from '@/lib/uiApi';
+import {
+  api,
+  qk,
+  type CommitRuns,
+  type Pull,
+  type RepoDetail,
+} from '@/lib/uiApi';
 import {
   decodeEntities,
+  ICON_SLOT,
   pullGraph,
   type PullGraph as Graph,
 } from '@/lib/pullGraph';
+import { sortReviewers } from '@/lib/pullBoard';
 import { renderMermaid } from '@/lib/mermaid';
 import { QueryError } from '@/components/actions/states';
 import { EmptyState } from '@/components/ui/EmptyState';
+import { STATE_ICON, useCommitStatuses } from '@/components/Checks';
+import { AiResolutionBadge } from '@/components/PullBadges';
+import { ReviewerAvatars } from '@/components/ReviewerAvatars';
+import { RunStatusIcon } from '@/components/RunStatusIcon';
 
 // The red is the one the diagram itself draws "must change for" with (src/lib/pullGraph.ts).
 const LEGEND: { label: string; dash?: string; color?: string }[] = [
@@ -65,8 +78,91 @@ function numberOf(el: Element): number | null {
   return m ? Number(m[1]) : null;
 }
 
-function TargetGraph({ graph, base }: { graph: Graph; base: string }) {
+/** What a PR's node shows under its title, as the list row does: checks, AI conflict resolution, reviewers. */
+type NodeIcons = {
+  checks: CommitRuns['state'] | null;
+  ai: Pull['aiResolution'];
+  reviewers: NonNullable<Pull['reviewers']>;
+};
+
+const MAX_REVIEWERS = 6;
+
+/** How many icon slots the icons take: one each (a reviewer's robot is one). */
+function slots(i: NodeIcons | undefined): number {
+  if (!i) return 0;
+  return (
+    (i.checks ? 1 : 0) +
+    (i.ai ? 1 : 0) +
+    Math.min(i.reviewers.length, MAX_REVIEWERS)
+  );
+}
+
+function IconRow({ icons }: { icons: NodeIcons }) {
+  return (
+    <span className="pg-icons">
+      {icons.checks && (
+        <span title={`Checks: ${icons.checks}`}>
+          <RunStatusIcon {...STATE_ICON[icons.checks]} size={14} />
+        </span>
+      )}
+      <AiResolutionBadge state={icons.ai} />
+      <ReviewerAvatars
+        reviewers={sortReviewers(icons.reviewers).slice(0, MAX_REVIEWERS)}
+        size={16}
+        className="reviewer-avatars pg-avatars"
+      />
+    </span>
+  );
+}
+
+const SVG_NS = 'http://www.w3.org/2000/svg';
+
+/**
+ * Swaps a node's icon line (the room pullGraph left, made of ICON_SLOT) for a foreignObject over the same box,
+ * and returns the element the icons render into; null when the node has no such line.
+ */
+function iconHost(node: Element): HTMLElement | null {
+  const rows = [...node.querySelectorAll('text tspan')].filter(
+    (t) => t.textContent && new RegExp(`^(${ICON_SLOT})+$`).test(t.textContent)
+  );
+  const row = rows[rows.length - 1] as SVGTextContentElement | undefined;
+  const text = row?.closest('text');
+  if (!row || !text?.parentNode) return null;
+  // getBBox on a tspan is the whole text's box in some browsers: measure the line from its characters instead.
+  const chars = row.getNumberOfChars();
+  if (!chars) return null;
+  const start = row.getStartPositionOfChar(0);
+  const end = row.getEndPositionOfChar(chars - 1);
+  const size = parseFloat(getComputedStyle(row).fontSize) || 16;
+  const height = Math.max(size * 1.25, 18);
+  row.setAttribute('visibility', 'hidden');
+  const fo = document.createElementNS(SVG_NS, 'foreignObject');
+  // A little wider than the measured room, so the last robot is never clipped.
+  fo.setAttribute('x', String(start.x - 4));
+  fo.setAttribute('y', String(start.y - size * 0.95));
+  fo.setAttribute('width', String(end.x - start.x + 8));
+  fo.setAttribute('height', String(height));
+  const transform = text.getAttribute('transform');
+  if (transform) fo.setAttribute('transform', transform);
+  const host = document.createElement('div');
+  host.className = 'pg-icon-host';
+  fo.append(host);
+  text.parentNode.append(fo);
+  return host;
+}
+
+function TargetGraph({
+  graph,
+  base,
+  icons,
+}: {
+  graph: Graph;
+  base: string;
+  icons: Map<number, NodeIcons>;
+}) {
   const ref = useRef<HTMLDivElement>(null);
+  // Where each drawn PR node's icons go (replaced with every redraw).
+  const [hosts, setHosts] = useState<[number, HTMLElement][]>([]);
   const navigate = useNavigate();
   const [status, setStatus] = useState<'drawing' | 'drawn' | 'failed'>(
     'drawing'
@@ -82,7 +178,10 @@ function TargetGraph({ graph, base }: { graph: Graph; base: string }) {
         // Sanitized SVG into a div React renders no children into.
         root.innerHTML = svg;
         decodeLabels(root);
+        // Shown now, not on the next render: the icon lines are measured below, and a hidden SVG has no layout.
+        root.hidden = false;
         setStatus('drawn');
+        const drawn: [number, HTMLElement][] = [];
         // Mermaid's strict mode drops `click`; nodes link to their PR here instead.
         for (const el of root.querySelectorAll('g.node')) {
           const n = numberOf(el);
@@ -96,6 +195,8 @@ function TargetGraph({ graph, base }: { graph: Graph; base: string }) {
             title.textContent = tip;
             el.prepend(title);
           }
+          const host = iconHost(el);
+          if (host) drawn.push([n, host]);
           const go = () => navigate(`${base}/pull/${n}`);
           el.setAttribute('role', 'link');
           el.setAttribute('tabindex', '0');
@@ -106,6 +207,7 @@ function TargetGraph({ graph, base }: { graph: Graph; base: string }) {
             if ((e as KeyboardEvent).key === 'Enter') go();
           });
         }
+        setHosts(drawn);
       },
       () => live && setStatus('failed')
     );
@@ -153,6 +255,10 @@ function TargetGraph({ graph, base }: { graph: Graph; base: string }) {
         <div className="sk sk-block" role="status" aria-label="Drawing" />
       )}
       <div ref={ref} className="pull-graph" hidden={status !== 'drawn'} />
+      {hosts.map(([n, host]) => {
+        const i = icons.get(n);
+        return i ? createPortal(<IconRow icons={i} />, host, `pr${n}`) : null;
+      })}
     </section>
   );
 }
@@ -164,7 +270,29 @@ export function PullGraph({ repo }: { repo: RepoDetail }) {
     queryKey: qk.pullTree(o, repo.name),
     queryFn: () => api.pullTree(o, repo.name),
   });
-  const graphs = useMemo(() => (q.data ? pullGraph(q.data) : null), [q.data]);
+  // The list's own data (the same queries, so the cache is shared): reviewers and AI resolution, then checks.
+  const open = useQuery({
+    queryKey: qk.pulls(o, repo.name, 'open'),
+    queryFn: () => api.pulls(o, repo.name, 'open'),
+  });
+  const statuses = useCommitStatuses(
+    repo,
+    (open.data?.pulls ?? []).map((p) => p.headSha)
+  );
+  const icons = useMemo(() => {
+    const m = new Map<number, NodeIcons>();
+    for (const p of open.data?.pulls ?? [])
+      m.set(p.number, {
+        checks: (p.headSha && statuses.data?.[p.headSha]?.state) || null,
+        ai: p.aiResolution,
+        reviewers: p.reviewers ?? [],
+      });
+    return m;
+  }, [open.data, statuses.data]);
+  const graphs = useMemo(
+    () => (q.data ? pullGraph(q.data, (n) => slots(icons.get(n))) : null),
+    [q.data, icons]
+  );
   const base = `/${repo.fullName}`;
   if (q.isError && !graphs)
     return (
@@ -197,7 +325,7 @@ export function PullGraph({ repo }: { repo: RepoDetail }) {
     <div className="pg">
       <Legend />
       {graphs.map((g) => (
-        <TargetGraph key={g.target} graph={g} base={base} />
+        <TargetGraph key={g.target} graph={g} base={base} icons={icons} />
       ))}
     </div>
   );

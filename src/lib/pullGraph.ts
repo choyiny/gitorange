@@ -1,4 +1,4 @@
-import { reasonText, stateLabel, stateText } from './pullState';
+import { reasonText, stateLabel } from './pullState';
 import type { PullStateName, StackDependency, StackTree } from './uiApi';
 
 /** One Mermaid flowchart per land target: how its open pull requests are slated to land. */
@@ -85,12 +85,17 @@ export function nodeTooltip(n: TipNode): string {
 const label = (...lines: string[]) =>
   `["${lines.map(mermaidText).join('<br/>')}"]`;
 
-/** A PR node's text: its whole title, then its status as the list shows it. */
-function nodeLabel(n: TipNode): string {
+/**
+ * One icon's room on a node's second line. The page draws the list's icons (checks, AI conflict resolution, the
+ * reviewers' robots) over that line after Mermaid has sized the node for it; the state is the node's colour, and
+ * its reasons are in the hover text.
+ */
+export const ICON_SLOT = 'MM';
+
+/** A PR node's text: its whole title, then room for `icons` icons (none: the title alone). */
+function nodeLabel(n: TipNode, icons: number): string {
   const title = `#${n.number} ${n.title}`;
-  if (!n.pullState) return label(title);
-  const { label: state, reason } = stateText(n.pullState);
-  return label(title, reason ? `${state} · ${reason}` : state);
+  return icons > 0 ? label(title, ICON_SLOT.repeat(icons)) : label(title);
 }
 
 const CLASS: Record<PullStateName, string> = {
@@ -133,12 +138,17 @@ function edgeFor(d: StackDependency, as: 'parent' | 'wait' | 'account'): Edge {
  * into its land target, so each graph flows down into the branch. Node ids carry only PR numbers
  * (`pr12`, `m9` for a merged PR, `land`); the page attaches navigation after rendering.
  */
-export function pullGraph(tree: StackTree): PullGraph[] {
+export function pullGraph(
+  tree: StackTree,
+  /** How many icons each open PR shows under its title (by number); none by default. */
+  icons: (pr: number) => number = () => 0
+): PullGraph[] {
   return tree.targets.map((t) => {
     const open = new Set(t.nodes.map((n) => n.number));
     const landedTitle = new Map(t.landed.map((l) => [l.number, l.title]));
     const nodeLines = [`  land${label(t.branch)}`];
-    for (const n of t.nodes) nodeLines.push(`  pr${n.number}${nodeLabel(n)}`);
+    for (const n of t.nodes)
+      nodeLines.push(`  pr${n.number}${nodeLabel(n, icons(n.number))}`);
     const tips: Record<string, string> = {};
     for (const n of t.nodes) tips[`pr${n.number}`] = nodeTooltip(n);
     const extra = new Set<string>();

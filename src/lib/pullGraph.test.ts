@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   decodeEntities,
+  ICON_SLOT,
   mermaidText,
   nodeTooltip,
   pullGraph,
@@ -75,7 +76,7 @@ describe('pullGraph', () => {
     expect(g.source).toMatch(/flowchart TD/);
     expect(g.source).toContain('land["main"]');
     expect(edges(g.source)).toEqual(['pr1 --> land', 'pr2 --> land']);
-    expect(g.source).toContain('pr1["#35;1 PR 1<br/>Ready"]');
+    expect(g.source).toContain('pr1["#35;1 PR 1"]');
   });
 
   it('turns off HTML labels', () => {
@@ -236,7 +237,7 @@ describe('pullGraph', () => {
     expect(label.split('<br/>')[0]).toBe(`#35;1 ${'a'.repeat(100)}`);
   });
 
-  it("shows each PR's status as the list does: its label, then the first reason", () => {
+  it('keeps the status off the node: the title, then room for the icons the page draws', () => {
     const [g] = pullGraph(
       tree({
         branch: 'main',
@@ -249,15 +250,10 @@ describe('pullGraph', () => {
               ],
             },
           }),
-          node(2, {
-            pullState: {
-              state: 'ready',
-              reasons: [{ kind: 'stacked_on', pr: 1 }],
-            },
-          }),
-          node(3, { pullState: { state: 'waiting', reasons: [] } }),
+          node(2, { pullState: { state: 'waiting', reasons: [] } }),
         ],
-      })
+      }),
+      (n) => (n === 1 ? 3 : 0)
     );
     const lines = (n: number) =>
       decodeEntities(
@@ -265,12 +261,10 @@ describe('pullGraph', () => {
           .match(new RegExp(`pr${n}\\["([^"]*)"\\]`))![1]
           .replace(/#(\d+);/g, '&#$1;')
       ).split('<br/>');
-    expect(lines(1)).toEqual([
-      '#1 PR 1',
-      'Requires human review · @secagent flagged 2 findings for a person',
-    ]);
-    expect(lines(2)).toEqual(['#2 PR 2', 'Ready, stacked on #1']);
-    expect(lines(3)).toEqual(['#3 PR 3', 'Waiting for checks']);
+    expect(lines(1)).toEqual(['#1 PR 1', ICON_SLOT.repeat(3)]);
+    expect(lines(2)).toEqual(['#2 PR 2']);
+    // The state and its reasons are still in the hover text.
+    expect(g.tips.pr1).toContain('@secagent flagged 2 findings for a person');
   });
 });
 
