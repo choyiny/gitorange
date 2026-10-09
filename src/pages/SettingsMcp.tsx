@@ -10,7 +10,7 @@ import {
 import { api, qk, type McpConnection, type McpTool } from '@/lib/uiApi';
 import { errorMessage } from '@/lib/api';
 import { timeAgo } from '@/lib/format';
-import { Header } from '@/components/Header';
+import { usePageHead } from '@/components/ui/PageHead';
 import { CopyButton } from '@/components/CopyButton';
 import { SettingsNav } from '@/components/SettingsNav';
 import { Spinner } from '@/components/Spinner';
@@ -202,6 +202,14 @@ function AppIdentity({ app }: { app: McpConnection }) {
 }
 
 export default function SettingsMcp() {
+  usePageHead({
+    icon: 'plug',
+    crumbs: [
+      { label: 'Settings', to: '/settings/tokens' },
+      { label: 'MCP server' },
+    ],
+    title: 'MCP server',
+  });
   const qc = useQueryClient();
   const appName = useAppName();
   const info = useQuery({ queryKey: qk.mcp, queryFn: api.mcp });
@@ -238,8 +246,10 @@ export default function SettingsMcp() {
 
   return (
     <>
-      <Header context={<span className="text-bold px-2">Settings</span>} />
-      <div className="container-lg px-3 py-4 d-flex" style={{ gap: 24 }}>
+      <div
+        className="container-lg px-3 py-4 d-flex flex-column flex-md-row"
+        style={{ gap: 24 }}
+      >
         <SettingsNav />
         <div className="flex-1" style={{ minWidth: 0 }}>
           <div className="Subhead">

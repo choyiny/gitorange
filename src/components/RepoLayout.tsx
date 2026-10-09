@@ -1,26 +1,20 @@
-import {
-  Link,
-  NavLink,
-  Outlet,
-  useLocation,
-  useParams,
-} from 'react-router-dom';
+import { useEffect, useMemo, useState } from 'react';
+import { Link, Outlet, useLocation, useParams } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
-import {
-  CodeIcon,
-  GitPullRequestIcon,
-  GearIcon,
-  GraphIcon,
-  PlayIcon,
-  RepoIcon,
-} from '@primer/octicons-react';
+import { RepoIcon } from '@primer/octicons-react';
 import { api, qk, type RepoDetail } from '@/lib/uiApi';
 import { ApiError } from '@/lib/api';
 import { useLiveRepo } from '@/lib/live';
-import { Header } from './Header';
+import { repoBand, repoRest, repoTabOf, repoTabs } from '@/lib/repoNav';
+import {
+  PageHeadContext,
+  usePageHead,
+  type PageHeadInfo,
+} from '@/components/ui/PageHead';
+import { useForgetRepo, useShellRepo } from '@/components/shell/AppShell';
+import { CrewIcon, PageIcon } from '@/components/shell/icons';
 import { Spinner } from './Spinner';
-import { VisibilityLabel } from './VisibilityLabel';
-import { NotFound } from '@/pages/NotFound';
+import { NOT_FOUND_HEAD, NotFound } from '@/pages/NotFound';
 
 export function useRepoParams() {
   const { owner = '', repo = '' } = useParams();
@@ -43,129 +37,148 @@ export function useRepo() {
   });
 }
 
-function Tab({
-  to,
-  icon,
-  label,
-  count,
-  end,
-}: {
-  to: string;
-  icon: React.ReactNode;
-  label: string;
-  count?: number;
-  end?: boolean;
-}) {
+/**
+ * The agent whose instructions live in `<handle>/<handle>`, if this is such a repository. Agent repositories
+ * always have the owner's name, so other repositories never load the agent list.
+ */
+function useRepoAgent(owner: string, repo: string) {
+  const isCandidate = owner.toLowerCase() === repo.toLowerCase();
+  const agents = useQuery({
+    queryKey: qk.agents,
+    queryFn: api.agents,
+    enabled: isCandidate,
+  });
+  if (!isCandidate) return null;
   return (
-    <NavLink
-      to={to}
-      end={end}
-      className={({ isActive }) =>
-        `UnderlineNav-item${isActive ? ' selected' : ''}`
-      }
-      aria-current={undefined}
-    >
-      {({ isActive }) => (
-        <>
-          <span className="UnderlineNav-octicon">{icon}</span>
-          <span data-content={label} className={isActive ? 'text-bold' : ''}>
-            {label}
-          </span>
-          {count !== undefined && count > 0 && (
-            <span className="Counter repo-tab-count">{count}</span>
-          )}
-        </>
-      )}
-    </NavLink>
+    agents.data?.find(
+      (a) => a.username.toLowerCase() === owner.toLowerCase()
+    ) ?? null
   );
 }
 
+const VISIBILITY_TITLE = {
+  private: 'Only you, collaborators, and site admins can see this',
+  internal: 'Every member can see this',
+} as const;
+
+/**
+ * Every repository page: the repository header and its tabs at the top of the work panel, the repository in the
+ * top band's trail, and the loaded `RepoDetail` for the page (Outlet context). Pages name themselves with
+ * `usePageHead` (crumbs relative to the repository); until they do, the trail comes from the URL (`repoBand`).
+ */
 export function RepoLayout() {
   const { owner, repo } = useRepoParams();
   const q = useRepo();
-  // Subscribe only once the user is known to have access.
-  useLiveRepo(q.data ? owner : '', q.data ? repo : '');
-  const { pathname } = useLocation();
-  if (q.error instanceof ApiError && q.error.status === 404)
-    return <NotFound />;
   const data = q.data;
+  // Subscribe only once the user is known to have access.
+  useLiveRepo(data ? owner : '', data ? repo : '');
+  const agent = useRepoAgent(owner, repo);
+  const { pathname } = useLocation();
   const base = `/${owner}/${repo}`;
-  const codeActive =
-    !/^\/[^/]+\/[^/]+\/(pulls?|compare|settings|actions|insights)(\/|$)/.test(
-      pathname
-    );
+  const rest = repoRest(pathname);
+  const isAgentRepo = !!agent;
+
+  const missing = q.error instanceof ApiError && q.error.status === 404;
+
+  // What the page published (null: it hasn't, so the trail comes from the URL).
+  const [pageHead, setPageHead] = useState<PageHeadInfo | null>(null);
+  const fallback = repoBand(rest, base, isAgentRepo);
+  const own: PageHeadInfo = pageHead ?? fallback;
+  const activeTab = pageHead?.tab ?? repoTabOf(rest, isAgentRepo);
+  usePageHead(
+    missing
+      ? NOT_FOUND_HEAD
+      : {
+          icon: own.icon ?? fallback.icon,
+          crumbs: [
+            { label: owner, to: `/${owner}` },
+            { label: repo, to: base },
+            ...own.crumbs,
+          ],
+          title: own.title,
+          tab: activeTab,
+          documentTitle: `${own.documentTitle ?? own.title} · ${owner}/${repo}`,
+        }
+  );
+
+  const shellRepo = useMemo(
+    () =>
+      data
+        ? {
+            fullName: data.fullName,
+            defaultBranch: data.defaultBranch,
+            branches: data.branches.map((b) => b.name),
+            admin: data.permissions.admin,
+            agent: agent
+              ? {
+                  handle: agent.username,
+                  // Sent since crew redesign B1; typed in uiApi by C0.
+                  color: (agent as { color?: string | null }).color ?? null,
+                }
+              : null,
+          }
+        : null,
+    [data, agent]
+  );
+  useShellRepo(shellRepo);
+
+  const forget = useForgetRepo();
+  useEffect(() => {
+    if (missing) forget(`${owner}/${repo}`);
+  }, [missing, forget, owner, repo]);
+
+  if (missing) return <NotFound />;
+
+  const tabs = repoTabs(isAgentRepo, !!data?.permissions.admin);
   return (
     <>
-      <Header
-        context={
-          <>
+      <div className="rhead">
+        <div className="rhead-row">
+          <span className="rhead-name">
+            {isAgentRepo ? <CrewIcon /> : <RepoIcon />}
             <Link to={`/${owner}`}>{owner}</Link>
             <span className="sep">/</span>
-            <Link to={base}>{repo}</Link>
-          </>
-        }
-        nav={
-          <nav className="UnderlineNav" aria-label="Repository">
-            <div className="UnderlineNav-body">
-              <NavLink
-                to={base}
-                end
-                className={() =>
-                  `UnderlineNav-item${codeActive ? ' selected' : ''}`
-                }
-              >
-                <span className="UnderlineNav-octicon">
-                  <CodeIcon />
-                </span>
-                <span className={codeActive ? 'text-bold' : ''}>Code</span>
-              </NavLink>
-              <Tab
-                to={`${base}/pulls`}
-                icon={<GitPullRequestIcon />}
-                label="Pull requests"
-                count={data?.openPullCount}
-              />
-              <Tab to={`${base}/actions`} icon={<PlayIcon />} label="Actions" />
-              <Tab
-                to={`${base}/insights`}
-                icon={<GraphIcon />}
-                label="Insights"
-              />
-              {data?.permissions.admin && (
-                <Tab
-                  to={`${base}/settings`}
-                  icon={<GearIcon />}
-                  label="Settings"
-                />
+            <Link to={base}>
+              <b>{repo}</b>
+            </Link>
+          </span>
+          {data && (
+            <span className="vis" title={VISIBILITY_TITLE[data.visibility]}>
+              {data.visibility === 'private' ? 'Private' : 'Internal'}
+            </span>
+          )}
+          {agent && (
+            <>
+              <span className="vis">Agent instructions</span>
+              <Link className="rhead-link" to={`/${agent.username}`}>
+                {agent.name}&rsquo;s profile
+              </Link>
+            </>
+          )}
+        </div>
+        <nav className="rtabs" aria-label="Repository">
+          {tabs.map((t) => (
+            <Link
+              key={t.id}
+              to={t.path ? `${base}/${t.path}` : base}
+              aria-current={t.id === activeTab ? 'page' : undefined}
+            >
+              <PageIcon name={t.icon} />
+              {t.label}
+              {t.id === 'pulls' && !!data?.openPullCount && (
+                <span className="count">{data.openPullCount}</span>
               )}
-            </div>
-          </nav>
-        }
-      />
-      <main>
-        {!data ? (
-          <Spinner />
-        ) : (
-          <>
-            <div className="container-xl px-3 px-md-4 px-lg-5 pt-4">
-              <div className="d-flex flex-items-center mb-3" style={{ gap: 8 }}>
-                <RepoIcon className="color-fg-muted" />
-                <strong className="f3 text-normal">
-                  <Link to={`/${owner}`} className="color-fg-default">
-                    {owner}
-                  </Link>
-                  <span className="mx-1 color-fg-muted">/</span>
-                  <Link to={base} className="text-bold color-fg-default">
-                    {repo}
-                  </Link>
-                </strong>
-                <VisibilityLabel visibility={data.visibility} />
-              </div>
-            </div>
-            <Outlet context={data satisfies RepoDetail} />
-          </>
-        )}
-      </main>
+            </Link>
+          ))}
+        </nav>
+      </div>
+      {!data ? (
+        <Spinner />
+      ) : (
+        <PageHeadContext.Provider value={setPageHead}>
+          <Outlet context={data satisfies RepoDetail} />
+        </PageHeadContext.Provider>
+      )}
     </>
   );
 }

@@ -1,0 +1,50 @@
+/* Pages not yet redesigned (crew redesign lane C) keep Primer's layout classes. Inside the work panel these rules
+   keep them looking as they did before the shell. Page-neutral on purpose: each rule targets Primer's own classes,
+   never a page. Delete a rule once no page needs it (lane D removes this file). */
+
+/* The panel already insets and centres the page, so a page's outer Primer container drops its own padding. It
+   fills the column: as a grid item its auto margins would otherwise size it to its content, and a long line of
+   code would push it past the panel's edge. */
+.view > :is(.container-sm, .container-md, .container-lg, .container-xl) {
+  width: 100%;
+  padding-left: 0 !important;
+  padding-right: 0 !important;
+  padding-top: 0 !important;
+  padding-bottom: 0 !important;
+}
+
+/* Primer spaced bare paragraphs 10px apart; the design system's base sets `p { margin: 0 }`. Same specificity as
+   that base rule (later wins), so classed paragraphs (utilities, .markdown-body, flashes) keep their own. */
+:where(.view > :is(.container-sm, .container-md, .container-lg, .container-xl))
+  p {
+  margin-bottom: 10px;
+}
+
+/* The design system underlines links on hover inside a page; Primer's navigation items never did. */
+.view
+  a:is(
+    .UnderlineNav-item,
+    .menu-item,
+    .select-panel-item,
+    .tabnav-tab,
+    .subnav-item,
+    .filter-item,
+    .Box-row-link
+  ):hover {
+  text-decoration: none;
+}
+
+/* The panel clips sideways overflow (the page itself never scrolls sideways), so a row of tabs too wide for a
+   phone scrolls within itself instead of losing its last tabs. */
+@media (max-width: 767.98px) {
+  .view :is(.tabnav, .UnderlineNav) {
+    overflow-x: auto;
+    overflow-y: hidden;
+    scrollbar-width: none;
+  }
+}
+
+/* Sticky diff headers sit 16px below the panel's top edge, like every sticky element in the panel. */
+.view .file-header {
+  top: 16px;
+}

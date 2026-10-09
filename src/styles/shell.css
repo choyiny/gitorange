@@ -67,6 +67,31 @@ body:has(.app) {
   max-width: 1180px;
   margin-inline: auto;
 }
+/* One column that never grows past the panel: wide content (a long line of code, a big table) scrolls inside its
+   own box instead of widening the page, which the panel would clip. */
+.content,
+.content > .view {
+  grid-template-columns: minmax(0, 1fr);
+}
+/* The panel takes focus from "Skip to content"; it shows no ring for that. */
+.content:focus {
+  outline: none;
+}
+.skip-link {
+  position: fixed;
+  top: 8px;
+  left: 8px;
+  z-index: 100;
+  padding: 8px 12px;
+  border-radius: 8px;
+  background: var(--surface);
+  color: var(--ink);
+  box-shadow: var(--sh-lg);
+  transform: translateY(-200%);
+}
+.skip-link:focus {
+  transform: none;
+}
 
 /* ---------- The rail ---------- */
 .snav {
@@ -429,6 +454,14 @@ body:has(.app) {
   color: var(--muted);
   display: block;
 }
+.ws-item > svg {
+  flex: none;
+  color: var(--muted);
+}
+button.ws-item {
+  font: inherit;
+  cursor: pointer;
+}
 .ws-item .wd {
   width: 16px;
   height: 16px;
@@ -644,6 +677,19 @@ body:has(.app) {
   width: 12px;
   height: 12px;
 }
+/* Site admins: the deployment is misconfigured (Site admin → Setup). */
+.tool.tool-alert {
+  gap: 6px;
+  border-color: transparent;
+  background: var(--critical);
+  color: #fff;
+  font-size: 12.5px;
+  font-weight: 600;
+}
+.tool.tool-alert:hover {
+  background: color-mix(in srgb, var(--critical) 88%, #000);
+  color: #fff;
+}
 .tool-dot {
   position: absolute;
   top: -5px;
@@ -677,8 +723,13 @@ body:has(.app) {
 .acct-btn:hover {
   background: var(--chrome-hover-2);
 }
-.acct-btn .identicon {
+.acct-btn .identicon,
+.acct-btn .avatar {
   box-shadow: 0 0 0 1.5px var(--chrome-line-2);
+}
+.acct-btn .avatar,
+.acct-head .avatar {
+  border-radius: 50%;
 }
 .acct-btn .chev {
   width: 12px;
@@ -809,9 +860,18 @@ body:has(.app) {
 .rtabs a > svg {
   color: var(--muted);
 }
-.rtabs a:hover {
+.rtabs a:hover,
+.view .rtabs a:not(.btn):hover {
   background: var(--surface-3);
   text-decoration: none;
+}
+/* An agent repository's link to the agent's profile. */
+.rhead-link {
+  margin-left: auto;
+  font-size: 13px;
+}
+.rtabs .count {
+  margin-left: 2px;
 }
 .rtabs a[aria-current='page'] {
   color: var(--ink);
@@ -856,12 +916,29 @@ body:has(.app) {
   .ph-ic {
     display: none;
   }
+  /* No room for the trail: the page's <h1> stays for assistive tech and focus, out of sight. */
   .ph-trail {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip-path: inset(50%);
+    white-space: nowrap;
+  }
+  .tool-alert .tool-label {
     display: none;
   }
   .gsearch {
     width: auto;
     flex: 1;
+    min-width: 0;
+  }
+  /* Search takes the room the trail had. */
+  .ph-grow {
+    display: none;
+  }
+  .gs-menu {
+    min-width: 0;
   }
   .content {
     margin: 0 8px 8px;
@@ -886,11 +963,25 @@ body:has(.app) {
   .gsearch .gs-kbd {
     display: none;
   }
-  .tool-wrap:has([data-menu='create']) {
+  /* Results take the screen's width, under the band. */
+  .gs-menu {
+    position: fixed;
+    top: 48px;
+    left: 8px;
+    right: 8px;
+  }
+  /* New repository and the rest stay in search (Pages) and on their pages. */
+  .tool-wrap[data-menu-root='create'] {
     display: none;
   }
   .acct-btn .chev {
     display: none;
+  }
+  .ph-tools {
+    gap: 4px;
+  }
+  .tool {
+    padding: 0 7px;
   }
 }
 

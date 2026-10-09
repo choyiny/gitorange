@@ -16,7 +16,7 @@ import {
 import { api, qk, type UsageLine, type UsageReport } from '@/lib/uiApi';
 import { errorMessage } from '@/lib/api';
 import { timeAgo } from '@/lib/format';
-import { Header } from '@/components/Header';
+import { usePageHead } from '@/components/ui/PageHead';
 import { AdminNav } from '@/components/AdminNav';
 import { Spinner } from '@/components/Spinner';
 
@@ -258,6 +258,11 @@ function Breakdown({
 }
 
 export default function AdminUsage() {
+  usePageHead({
+    icon: 'shield',
+    crumbs: [{ label: 'Site admin', to: '/admin' }, { label: 'Usage & cost' }],
+    title: 'Usage & cost',
+  });
   const qc = useQueryClient();
   const [params, setParams] = useSearchParams();
   const month = params.get('month') || thisMonth();
@@ -290,7 +295,6 @@ export default function AdminUsage() {
 
   return (
     <>
-      <Header context={<span className="text-bold px-2">Site admin</span>} />
       <div className="container-lg px-3 py-4">
         <AdminNav />
         <div className="Subhead">

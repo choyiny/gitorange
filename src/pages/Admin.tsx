@@ -5,7 +5,7 @@ import { PeopleIcon, MailIcon, OrganizationIcon } from '@primer/octicons-react';
 import { api, qk } from '@/lib/uiApi';
 import { errorMessage } from '@/lib/api';
 import { timeAgo } from '@/lib/format';
-import { Header } from '@/components/Header';
+import { usePageHead } from '@/components/ui/PageHead';
 import { Avatar } from '@/components/Avatar';
 import { CopyButton } from '@/components/CopyButton';
 import { Spinner } from '@/components/Spinner';
@@ -14,6 +14,11 @@ import { AdminSettings } from '@/components/AdminSettings';
 import { AdminNav } from '@/components/AdminNav';
 
 export default function Admin() {
+  usePageHead({
+    icon: 'shield',
+    crumbs: [{ label: 'Site admin' }],
+    title: 'Site admin',
+  });
   const qc = useQueryClient();
   const [params] = useSearchParams();
   const members = useQuery({ queryKey: qk.members, queryFn: api.members });
@@ -75,7 +80,6 @@ export default function Admin() {
 
   return (
     <>
-      <Header context={<span className="text-bold px-2">Site admin</span>} />
       <div className="container-lg px-3 py-4">
         <AdminSetup />
         <AdminNav />

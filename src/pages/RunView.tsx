@@ -235,10 +235,10 @@ export default function RunView() {
           conclusion={run.conclusion}
           size={24}
         />
-        <h1 className="f2 text-normal flex-1" style={{ minWidth: 0 }}>
+        <h2 className="f2 text-normal flex-1" style={{ minWidth: 0 }}>
           {run.displayTitle}{' '}
           <span className="color-fg-muted">#{run.runNumber}</span>
-        </h1>
+        </h2>
         {repo.permissions.write &&
           (run.status === 'completed' ? (
             <button

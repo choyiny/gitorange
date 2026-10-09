@@ -628,7 +628,7 @@ export default function PullView() {
   const [editing, setEditing] = useState(false);
   const [title, setTitle] = useState('');
   if (q.error instanceof ApiError && q.error.status === 404)
-    return <NotFound inline />;
+    return <NotFound />;
   if (!q.data) return <Spinner />;
   const d = q.data;
   const pr = d.pull;
@@ -670,13 +670,13 @@ export default function PullView() {
           </div>
         ) : (
           <div className="d-flex flex-items-start" style={{ gap: 8 }}>
-            <h1
+            <h2
               className="f1 text-normal flex-1"
               style={{ wordBreak: 'break-word' }}
             >
               {pr.title}{' '}
               <span className="color-fg-muted f1-light">#{pr.number}</span>
-            </h1>
+            </h2>
             {canEdit && (
               <button
                 className="btn btn-sm mt-2"
