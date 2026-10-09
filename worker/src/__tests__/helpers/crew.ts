@@ -113,6 +113,13 @@ export async function crewRepo(opts: { actions?: boolean } = {}) {
       base?: string;
       sha?: string | null;
       authorId?: string;
+      /** `landed_commits`: null (the default) is a pull request merged before fast-forward landing existed. */
+      landed?: number | null;
+      /**
+       * Pin `refs/pull/<n>/head` at the head branch's tip now, as the old merges did (default: when the branch
+       * exists). `false` leaves no pin.
+       */
+      pin?: boolean;
     } = {}
   ) {
     const author =
@@ -130,8 +137,8 @@ export async function crewRepo(opts: { actions?: boolean } = {}) {
       .bind(number + 1, repoId)
       .run();
     await t.env.DB.prepare(
-      `INSERT INTO pull_requests (id, repository_id, number, title, author_id, base_ref, land_target, head_ref, state, merge_commit_sha, merged_at, closed_at, created_at, updated_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'merged', ?, ?, ?, ?, ?)`
+      `INSERT INTO pull_requests (id, repository_id, number, title, author_id, base_ref, land_target, head_ref, state, merge_commit_sha, landed_commits, merged_at, closed_at, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'merged', ?, ?, ?, ?, ?, ?)`
     )
       .bind(
         `${repoId}-m${number}`,
@@ -143,12 +150,16 @@ export async function crewRepo(opts: { actions?: boolean } = {}) {
         opts.base ?? 'main',
         head,
         opts.sha === undefined ? main : opts.sha,
+        opts.landed ?? null,
         at,
         at,
         at - 3600,
         at
       )
       .run();
+    const tip = repo.refs.get(`refs/heads/${head}`);
+    if (tip && opts.pin !== false)
+      repo.refs.set(`refs/pull/${number}/head`, tip);
   }
 
   return {

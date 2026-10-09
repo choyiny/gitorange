@@ -15,6 +15,7 @@ import { recordAudit } from './audit';
 import { usersByCommitEmail } from './commit-authors';
 import { landTargetIs, landTargetOf } from './land-target';
 import { GHOST, personRefs, type PersonRef } from './person-ref';
+import { pullRef } from '../merge/land';
 import { protectedBy } from './protected-branches';
 
 // Branches: the list with each branch's pull request, the merged branches nobody deleted (and their clean-up), and the
@@ -96,15 +97,20 @@ async function branchPulls(db: DrizzleDB, git: GitService, repo: Repository) {
     if (protectedBy(repo.protectedBranches, tip.name)) return false;
     const pr = newest.get(tip.name);
     if (!pr || pr.state !== 'merged' || inUse.has(tip.name)) return false;
-    // Landed by fast-forward, the branch ends where it landed: anything past that was pushed since, and never merged.
-    if (
-      pr.landedCommits !== null &&
-      pr.mergeCommitSha &&
-      tip.sha !== pr.mergeCommitSha
-    )
-      return false;
-    return true;
+    return unchangedSinceMerge(pr, tip.sha);
   };
+
+  /**
+   * Whether the branch still ends where its pull request landed it: anything past that was pushed since, and never
+   * merged, so Clean up must not delete it. Needs evidence, and with none the answer is no:
+   *  - landed by fast-forward (`landed_commits` set): the tip is the landed head, `merge_commit_sha`;
+   *  - landed before that (squash or merge commit, `landed_commits` null): the merge pinned the head it merged at
+   *    `refs/pull/<n>/head` and nothing moves that pin afterwards, so the tip must still be it.
+   */
+  const unchangedSinceMerge = (pr: PullRequest, tip: string): boolean =>
+    pr.landedCommits !== null
+      ? pr.mergeCommitSha !== null && tip === pr.mergeCommitSha
+      : refs.get(pullRef(pr.number)) === tip;
 
   return { refs, tips, newest, open, mergedNotDeleted };
 }
@@ -242,7 +248,8 @@ function leftoverOf({
 /**
  * Deletes every merged, not deleted branch (never the default branch, a protected one, or one an open pull request
  * uses), each with compare-and-swap on the tip it was read at, so a branch someone pushed to since is kept. Records one
- * `branches.cleaned` audit row naming them; nothing when none were deleted. Returns the names deleted.
+ * `branches.cleaned` audit row naming them and the tip each had; nothing when none were deleted. Returns the names
+ * deleted.
  */
 export async function cleanBranches(
   db: DrizzleDB,
@@ -251,11 +258,14 @@ export async function cleanBranches(
   actorId: string
 ): Promise<string[]> {
   const deleted: string[] = [];
+  // Each deleted branch's tip, so a branch deleted by mistake can be put back from the audit log.
+  const shas: Record<string, string> = {};
   // One at a time: a refused deletion (the branch moved) must not stop, or hide, the others.
   for (const b of leftoverOf(await branchPulls(db, git, repo))) {
     try {
       await git.deleteBranch(b.name, b.sha);
       deleted.push(b.name);
+      shas[b.name] = b.sha;
     } catch (e) {
       console.warn('[branches] could not delete', repo.id, b.name, e);
     }
@@ -266,7 +276,7 @@ export async function cleanBranches(
       actorId,
       action: 'branches.cleaned',
       target: `${deleted.length} ${deleted.length === 1 ? 'branch' : 'branches'}`,
-      data: { branches: deleted },
+      data: { branches: deleted, shas },
     });
   return deleted;
 }

@@ -315,6 +315,10 @@ describe('POST /api/repos/{o}/{r}/branches/clean', () => {
 
   it('records one audit row listing the names, and nothing when there was nothing to delete', async () => {
     const s = await withMerged();
+    const tips = {
+      a: s.repo.refs.get('refs/heads/a'),
+      b: s.repo.refs.get('refs/heads/b'),
+    };
     await clean(s);
     const { results } = await auditRows(s);
     expect(results).toHaveLength(1);
@@ -323,10 +327,72 @@ describe('POST /api/repos/{o}/{r}/branches/clean', () => {
       action: 'branches.cleaned',
       target: '2 branches',
     });
-    expect(JSON.parse(results[0].data)).toEqual({ branches: ['a', 'b'] });
+    // With the tip each had, so a branch deleted by mistake can be put back.
+    expect(JSON.parse(results[0].data)).toEqual({
+      branches: ['a', 'b'],
+      shas: tips,
+    });
     const again = await clean(s);
     expect(await again.json()).toEqual({ deleted: [] });
     expect((await auditRows(s)).results).toHaveLength(1);
+  });
+
+  it('leaves a branch alone that got commits after a legacy (pre fast-forward) merge, and takes one that did not', async () => {
+    const s = await crewRepo();
+    const now = Date.now();
+    // Merged when merging made a commit (landed_commits null): the merge pinned the head it merged.
+    s.repo.refs.set('refs/heads/legacy-same', s.main);
+    s.repo.refs.set('refs/heads/legacy-moved', s.main);
+    s.repo.refs.set('refs/heads/legacy-unpinned', s.main);
+    await s.mergedRow(1, 'legacy-same', now - DAY);
+    await s.mergedRow(2, 'legacy-moved', now - DAY);
+    await s.mergedRow(3, 'legacy-unpinned', now - DAY, { pin: false });
+    // Work pushed to one branch after its merge, and to the unpinned one: nothing says what was merged.
+    const moved = await commitPaths(
+      s.repo,
+      'legacy-moved',
+      { ...FILES, 'later.txt': 'unmerged work\n' },
+      'After the merge'
+    );
+    const b = byName(await branches(s));
+    expect(b['legacy-same'].mergedNotDeleted).toBe(true);
+    expect(b['legacy-moved']).toMatchObject({
+      sha: moved,
+      mergedNotDeleted: false,
+    });
+    expect(b['legacy-unpinned'].mergedNotDeleted).toBe(false);
+
+    const res = await clean(s);
+    expect(await res.json()).toEqual({ deleted: ['legacy-same'] });
+    const refs = [...s.repo.refs.keys()];
+    expect(refs).toContain('refs/heads/legacy-moved');
+    expect(refs).toContain('refs/heads/legacy-unpinned');
+    expect(refs).not.toContain('refs/heads/legacy-same');
+    expect(s.repo.refs.get('refs/heads/legacy-moved')).toBe(moved);
+    // The map's leftovers agree.
+    const map = (await (
+      await call(s.t, `${BASE}/branches/map`, { cookie: s.admin })
+    ).json()) as { leftover: { branch: string }[] };
+    expect(map.leftover.map((l) => l.branch)).toEqual([]);
+  });
+
+  it('counts a fast-forward landed row only with the landed commit still at the tip', async () => {
+    const s = await crewRepo();
+    const now = Date.now();
+    s.repo.refs.set('refs/heads/ff-same', s.main);
+    s.repo.refs.set('refs/heads/ff-moved', s.main);
+    s.repo.refs.set('refs/heads/ff-no-sha', s.main);
+    await s.mergedRow(1, 'ff-same', now - DAY, { landed: 1, sha: s.main });
+    await s.mergedRow(2, 'ff-moved', now - DAY, {
+      landed: 1,
+      sha: 'a'.repeat(40),
+    });
+    // Landed by fast-forward but with no recorded commit: nothing to compare the tip with.
+    await s.mergedRow(3, 'ff-no-sha', now - DAY, { landed: 1, sha: null });
+    const b = byName(await branches(s));
+    expect(b['ff-same'].mergedNotDeleted).toBe(true);
+    expect(b['ff-moved'].mergedNotDeleted).toBe(false);
+    expect(b['ff-no-sha'].mergedNotDeleted).toBe(false);
   });
 
   it('needs push rights', async () => {
