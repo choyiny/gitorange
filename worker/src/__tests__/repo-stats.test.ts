@@ -446,6 +446,110 @@ describe('GET /api/repos?stats=1', () => {
     ]);
   });
 
+  it('does not keep an older commit’s status once a newer commit did not need the agent', async () => {
+    const s = await boardRepo();
+    await call(s.t, '/api/admin/agents', {
+      cookie: s.admin,
+      json: { handle: 'secagent', name: 'Sec' },
+    });
+    await call(s.t, '/api/repos/octocat/app/agents/secagent', {
+      cookie: s.admin,
+      method: 'PUT',
+    });
+    const agent = (await s.t.env.DB.prepare(
+      `SELECT id FROM users WHERE username = 'secagent'`
+    ).first<{ id: string }>())!.id;
+    const p1 = await s.open('p1');
+    const p2 = await s.open('p2');
+    const idOf = async (n: number) =>
+      (await s.t.env.DB.prepare('SELECT id FROM pull_requests WHERE number = ?')
+        .bind(n)
+        .first<{ id: string }>())!.id;
+    // Clef writes a row per invited agent per head: `not_needed` (not requested) for the ones it didn't wake.
+    const row = async (
+      n: number,
+      head: string,
+      status: string,
+      requested: number,
+      at: number
+    ) =>
+      s.t.env.DB.prepare(
+        `INSERT INTO pr_reviewers (id, pull_request_id, head_sha, agent_id, requested, status, created_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?)`
+      )
+        .bind(
+          crypto.randomUUID(),
+          await idOf(n),
+          head,
+          agent,
+          requested,
+          status,
+          at
+        )
+        .run();
+    const status = async () =>
+      (await s.board()).get('octocat/app')!.stats!.agents[0].status;
+
+    // It flagged the first commit; the author pushed a second one it isn't needed for.
+    await row(p1, 'h1', 'flagged', 1, 100);
+    expect(await status()).toBe('flagged');
+    await row(p1, 'h2', 'not_needed', 0, 200);
+    expect(await status()).toBe('idle');
+
+    // Another pull request it is working on still counts; the superseded flag on the first doesn't.
+    await row(p2, 'h1', 'reviewing', 1, 150);
+    expect(await status()).toBe('reviewing');
+    await row(p2, 'h2', 'not_needed', 0, 250);
+    expect(await status()).toBe('idle');
+  });
+
+  it('leaves a repository’s counts empty, not the whole board failed, when its states cannot be read at all', async () => {
+    const s = await boardRepo();
+    await s.open('one');
+    await s.open('two');
+    const found = (await findRepoById(s.db, s.repoId))!;
+    /** The same database, except that statements naming these tables throw. */
+    const breaking = (tables: RegExp) =>
+      drizzle(
+        new Proxy(s.t.env.DB, {
+          get(target, prop) {
+            if (prop === 'prepare')
+              return (sql: string) => {
+                if (tables.test(sql)) throw new Error('D1 is down');
+                return target.prepare(sql);
+              };
+            const value = Reflect.get(target, prop);
+            return typeof value === 'function' ? value.bind(target) : value;
+          },
+        }),
+        { schema }
+      );
+    const empty = {
+      open: 2,
+      needsPerson: 0,
+      changesRequested: 0,
+      checking: 0,
+      queued: 0,
+    };
+
+    // Computing the states fails, and so does the fallback to the recorded ones.
+    const computing = await repoStats(
+      s.t.env,
+      breaking(/workflow_runs|pr_events/),
+      [found.repo]
+    );
+    expect(computing.get(s.repoId)!.pulls).toEqual(empty);
+    expect(computing.get(s.repoId)!.branchCount).toBe(3);
+
+    // Without refs the states come from the recorded ones, which cannot be read either.
+    s.t.fake.repos.clear();
+    const recorded = await repoStats(s.t.env, breaking(/pr_events/), [
+      found.repo,
+    ]);
+    expect(recorded.get(s.repoId)!.pulls).toEqual(empty);
+    expect(recorded.get(s.repoId)!.branchCount).toBeNull();
+  });
+
   it('counts branches, and says null when the refs cannot be read', async () => {
     const s = await boardRepo();
     await s.open('one');

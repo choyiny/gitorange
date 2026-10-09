@@ -1,4 +1,4 @@
-import { and, desc, eq, isNotNull, ne, sql, type SQL } from 'drizzle-orm';
+import { and, desc, eq, isNotNull, sql, type SQL } from 'drizzle-orm';
 import {
   prClassifications,
   prReviewers,
@@ -94,19 +94,58 @@ export function currentStatus(
     : { status: 'idle', number: null };
 }
 
+/** One agent's review of one open pull request, as `currentReviews` returns it. */
+export type CurrentReview = {
+  pullRequestId: string;
+  repositoryId: string;
+  agentId: string;
+  number: number;
+  status: ReviewerStatus;
+};
+
 /**
- * The newest review of each open pull request, per repository, for one agent or several: `rows` newest first, one
- * per (pull request, agent) kept. Keyed `<repository id>:<agent id>`.
+ * What each agent is doing on the open pull requests of `repositoryIds` (`agentId`: only that agent), keyed
+ * `<repository id>:<agent id>`: its newest review of each open pull request, newest first. The one read behind the
+ * board's agent chips and an agent's `repos`.
+ *
+ * Clef writes a review row for every invited agent on every head commit, with status `not_needed` for the agents it
+ * didn't wake. So the newest row is picked first, `not_needed` included, and only then dropped: an agent that flagged
+ * an earlier head and isn't needed at the current one is not on that pull request any more, and must not keep showing the
+ * old head's `flagged` or `changes_requested`.
  */
-export function newestPerPull<
-  R extends { pullRequestId: string; repositoryId: string; agentId: string },
->(rows: R[]): Map<string, R[]> {
+export async function currentReviews(
+  db: DrizzleDB,
+  repositoryIds: string[],
+  agentId?: string
+): Promise<Map<string, CurrentReview[]>> {
+  const out = new Map<string, CurrentReview[]>();
+  if (!repositoryIds.length) return out;
+  const rows = await db
+    .select({
+      pullRequestId: prReviewers.pullRequestId,
+      repositoryId: pullRequests.repositoryId,
+      agentId: prReviewers.agentId,
+      number: pullRequests.number,
+      status: prReviewers.status,
+      requested: prReviewers.requested,
+    })
+    .from(prReviewers)
+    .innerJoin(pullRequests, eq(pullRequests.id, prReviewers.pullRequestId))
+    .where(
+      and(
+        agentId ? eq(prReviewers.agentId, agentId) : undefined,
+        eq(pullRequests.state, 'open'),
+        sql`${pullRequests.repositoryId} IN (SELECT value FROM json_each(${JSON.stringify(repositoryIds)}))`
+      )
+    )
+    .orderBy(desc(prReviewers.createdAt), sql`${prReviewers}.rowid DESC`)
+    .all();
   const seen = new Set<string>();
-  const out = new Map<string, R[]>();
-  for (const r of rows) {
+  for (const { requested, ...r } of rows) {
     const once = `${r.pullRequestId}:${r.agentId}`;
     if (seen.has(once)) continue;
     seen.add(once);
+    if (!requested || r.status === 'not_needed') continue;
     const key = `${r.repositoryId}:${r.agentId}`;
     out.set(key, [...(out.get(key) ?? []), r]);
   }
@@ -219,31 +258,11 @@ export async function agentStats(
   }
 
   // Where it works now: its newest review of each open pull request, in each repository it is invited to.
-  const repoIds = invited.map((r) => r.repo.id);
-  const open = repoIds.length
-    ? await db
-        .select({
-          pullRequestId: prReviewers.pullRequestId,
-          repositoryId: pullRequests.repositoryId,
-          agentId: prReviewers.agentId,
-          number: pullRequests.number,
-          status: prReviewers.status,
-        })
-        .from(prReviewers)
-        .innerJoin(pullRequests, eq(pullRequests.id, prReviewers.pullRequestId))
-        .where(
-          and(
-            eq(prReviewers.agentId, id),
-            eq(prReviewers.requested, true),
-            ne(prReviewers.status, 'not_needed'),
-            eq(pullRequests.state, 'open'),
-            sql`${pullRequests.repositoryId} IN (SELECT value FROM json_each(${JSON.stringify(repoIds)}))`
-          )
-        )
-        .orderBy(desc(prReviewers.createdAt), sql`${prReviewers}.rowid DESC`)
-        .all()
-    : [];
-  const reviewing = newestPerPull(open);
+  const reviewing = await currentReviews(
+    db,
+    invited.map((r) => r.repo.id),
+    id
+  );
   const repos = invited
     .map(({ repo, namespace }) => ({
       repo: `${namespace.username}/${repo.name}`,
@@ -273,7 +292,7 @@ export async function agentStats(
 /** How far back Clef's and Fixer's numbers reach. */
 const WEEK = 7 * DAY;
 
-/** A decision's duration in a few words: "41 ms", "1.5 s", "20 s", "3 min". */
+/** A review's duration in a few words: "41 ms", "1.5 s", "20 s", "3 min". */
 export function durationText(ms: number): string {
   if (ms < 1000) return `${Math.round(ms)} ms`;
   if (ms < 60_000) return `${Math.round(ms / 100) / 10} s`;
@@ -284,8 +303,11 @@ export function durationText(ms: number): string {
  * Clef and Fixer, with their last seven days (rolling), in repositories `viewer` can see.
  *
  * Clef: the changes it routed (reviews that got past summarizing: Clef had picked the agents, so `reviewing` or `done`)
- * and the median `duration_ms` of the reviews that finished. "Test runs picked" has no stored data (a relevance
- * decision is printed into its Actions step's log and never written to D1), so that stat is left out.
+ * and the median `duration_ms` of the reviews that finished, labelled "per review". That duration is the whole review
+ * of one commit, from its start to when every agent it woke had answered (`executeHeadReview`'s `finish` step): it
+ * includes the agents' time, not only Clef's own decision, and nothing records Clef's alone. "Test runs picked" has no
+ * stored data either (a relevance decision is printed into its Actions step's log and never written to D1), so that
+ * stat is left out.
  * Fixer: the runs of its two kinds (`rebase`, and the older `conflict_resolution`): all of them are attempts, the
  * succeeded ones were combined by Fixer itself, and a failed one is handed back to the author, who may still get the pull
  * request merged: distinct pull requests with a failed run that merged after it started count as "merged anyway".
@@ -337,7 +359,7 @@ export async function builtinAgents(
   ];
   const ms = median[0]?.median;
   if (ms !== null && ms !== undefined)
-    clef.push({ label: 'per decision', value: durationText(ms) });
+    clef.push({ label: 'per review', value: durationText(ms) });
 
   return [
     {

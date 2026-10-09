@@ -1,8 +1,7 @@
-import { and, asc, desc, eq, isNull, ne, sql, type SQL } from 'drizzle-orm';
+import { and, asc, eq, isNull, sql, type SQL } from 'drizzle-orm';
 import type { AnySQLiteColumn } from 'drizzle-orm/sqlite-core';
 import {
   agents,
-  prReviewers,
   pullRequests,
   repositories,
   repositoryAgents,
@@ -18,9 +17,9 @@ import { pullStates } from '../pulls/signals';
 import type { PullState, ReasonKind } from '../pulls/state';
 import { reviewConfigured } from '../review/head';
 import {
+  currentReviews,
   currentStatus,
   lastUtcDays,
-  newestPerPull,
   type AgentStatus,
 } from './agent-stats';
 import { gitFor } from './repos';
@@ -244,7 +243,7 @@ export async function repoStats(
   const days = lastUtcDays(7, now);
   const sinceSeconds = Date.parse(days[0]) / 1000;
 
-  const [openRows, mergedRows, agentRows, reviewerRows] = await Promise.all([
+  const [openRows, mergedRows, agentRows, reviewing] = await Promise.all([
     db
       .select()
       .from(pullRequests)
@@ -274,27 +273,11 @@ export async function repoStats(
       )
       .orderBy(asc(users.username))
       .all(),
-    // Each agent's reviews of open pull requests, newest first (the newest row of a pull request is its current one).
-    db
-      .select({
-        pullRequestId: prReviewers.pullRequestId,
-        repositoryId: pullRequests.repositoryId,
-        agentId: prReviewers.agentId,
-        number: pullRequests.number,
-        status: prReviewers.status,
-      })
-      .from(prReviewers)
-      .innerJoin(pullRequests, eq(pullRequests.id, prReviewers.pullRequestId))
-      .where(
-        and(
-          inRepos(pullRequests.repositoryId),
-          eq(pullRequests.state, 'open'),
-          eq(prReviewers.requested, true),
-          ne(prReviewers.status, 'not_needed')
-        )
-      )
-      .orderBy(desc(prReviewers.createdAt), sql`${prReviewers}.rowid DESC`)
-      .all(),
+    // What each agent is doing on the open pull requests: its newest review of each (agent-stats.ts).
+    currentReviews(
+      db,
+      repos.map((r) => r.id)
+    ),
   ]);
 
   const openBy = new Map<string, PullRequest[]>();
@@ -312,7 +295,6 @@ export async function repoStats(
   const agentsBy = new Map<string, typeof agentRows>();
   for (const a of agentRows)
     agentsBy.set(a.repositoryId, [...(agentsBy.get(a.repositoryId) ?? []), a]);
-  const reviewing = newestPerPull(reviewerRows);
 
   const oneRepo = async (repo: Repository): Promise<RepoStats> => {
     const prs = openBy.get(repo.id) ?? [];
@@ -324,25 +306,33 @@ export async function repoStats(
       console.warn('[repo-stats] could not read refs', repo.id, e);
     }
 
+    // The states last recorded, for when they can't be computed. If even that fails, this repository's counts stay empty
+    // rather than failing the whole board.
+    const recorded = () =>
+      latestStates(
+        db,
+        prs.map((p) => p.id)
+      ).catch((e) => {
+        console.error(
+          '[repo-stats] could not read recorded states',
+          repo.id,
+          e
+        );
+        return new Map<string, PullState>();
+      });
     let states = new Map<string, PullState>();
     if (prs.length) {
-      try {
-        states = refs
-          ? await pullStates(db, git, repo.id, prs, {
-              refs,
-              reviewConfigured: reviewConfigured(env),
-            })
-          : await latestStates(
-              db,
-              prs.map((p) => p.id)
-            );
-      } catch (e) {
-        console.error('[repo-stats] could not compute states', repo.id, e);
-        states = await latestStates(
-          db,
-          prs.map((p) => p.id)
-        );
-      }
+      if (refs) {
+        try {
+          states = await pullStates(db, git, repo.id, prs, {
+            refs,
+            reviewConfigured: reviewConfigured(env),
+          });
+        } catch (e) {
+          console.error('[repo-stats] could not compute states', repo.id, e);
+          states = await recorded();
+        }
+      } else states = await recorded();
     }
     const pulls = {
       open: prs.length,

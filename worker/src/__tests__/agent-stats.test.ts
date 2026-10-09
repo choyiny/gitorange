@@ -449,6 +449,41 @@ describe('GET /api/agents/{handle}/stats', () => {
     });
   });
 
+  it('does not keep an older commit’s status once a newer commit did not need it', async () => {
+    const w = await world();
+    const notNeeded = async (id: string, prId: string, at: number) =>
+      w.exec(
+        `INSERT INTO pr_reviewers (id, pull_request_id, head_sha, agent_id, requested, status, created_at)
+         VALUES (?, ?, 'h2', (SELECT id FROM users WHERE username = 'secagent'), 0, 'not_needed', ?)`,
+        id,
+        prId,
+        at
+      );
+    // #2: flagged at h1, then not needed at h2. #3: reviewing.
+    await w.reviewer('r1', 'a2', 'h1', 'secagent', 'flagged', ago(3));
+    await w.reviewer('r2', 'a3', 'h1', 'secagent', 'reviewing', ago(2));
+    expect((await w.stats(w.admin)).repos[0]).toEqual({
+      repo: 'octocat/app',
+      status: 'flagged',
+      number: 2,
+    });
+    await notNeeded('r3', 'a2', ago(1));
+    expect((await w.stats(w.admin)).repos[0]).toEqual({
+      repo: 'octocat/app',
+      status: 'reviewing',
+      number: 3,
+    });
+    // Not needed at the newest commit of #3 as well: it is on nothing.
+    await notNeeded('r4', 'a3', ago(0.5));
+    expect((await w.stats(w.admin)).repos[0]).toEqual({
+      repo: 'octocat/app',
+      status: 'idle',
+      number: null,
+    });
+    // Those rows are still reviews it did before: the earlier ones count, a not-needed one doesn't.
+    expect((await w.stats(w.admin)).reviews).toBe(2);
+  });
+
   it('leaves out what the viewer cannot see, from every number', async () => {
     const w = await seeded();
     expect(await w.stats(w.bob)).toMatchObject({
@@ -521,13 +556,13 @@ describe('GET /api/agents/builtin', () => {
     const clef = (await w.builtin(w.admin))[0];
     expect(clef.stats).toEqual([
       { label: 'changes routed', value: '7' },
-      { label: 'per decision', value: '45 ms' },
+      { label: 'per review', value: '45 ms' },
     ]);
     // Test runs picked has no data behind it (the relevance decision is only in the run's log): left out.
     expect(clef.stats.map((s) => s.label)).not.toContain('test runs picked');
     expect((await w.builtin(w.bob))[0].stats).toEqual([
       { label: 'changes routed', value: '6' },
-      { label: 'per decision', value: '50 ms' },
+      { label: 'per review', value: '50 ms' },
     ]);
   });
 
@@ -538,7 +573,7 @@ describe('GET /api/agents/builtin', () => {
     ]);
     await w.classification('c1', 'a1', 'c1', 'done', ago(1), 1500);
     expect((await w.builtin(w.admin))[0].stats[1]).toEqual({
-      label: 'per decision',
+      label: 'per review',
       value: '1.5 s',
     });
     await w.exec(`UPDATE pr_classifications SET duration_ms = 180000`);
