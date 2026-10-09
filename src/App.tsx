@@ -43,6 +43,7 @@ import SettingsTokens from './pages/SettingsTokens';
 import SettingsEmails, { VerifyEmail } from './pages/SettingsEmails';
 import Admin from './pages/Admin';
 import AdminUsage from './pages/AdminUsage';
+import AdminAudit from './pages/AdminAudit';
 import AdminAgents from './pages/AdminAgents';
 import { NotFound } from './pages/NotFound';
 
@@ -137,6 +138,14 @@ const App = () => (
                 element={
                   <AdminOnly>
                     <AdminUsage />
+                  </AdminOnly>
+                }
+              />
+              <Route
+                path="/admin/audit"
+                element={
+                  <AdminOnly>
+                    <AdminAudit />
                   </AdminOnly>
                 }
               />

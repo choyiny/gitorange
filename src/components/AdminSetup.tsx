@@ -4,6 +4,8 @@ import {
   AlertFillIcon,
   CheckCircleFillIcon,
   ChecklistIcon,
+  ChevronDownIcon,
+  ChevronRightIcon,
   LinkExternalIcon,
   SyncIcon,
   XCircleFillIcon,
@@ -16,72 +18,72 @@ import {
   type SetupCheck,
   type SetupStatus,
 } from '@/lib/setupChecks';
+import { Chip } from '@/components/ui/Chip';
+import { Section } from '@/components/ui/Section';
+import { PendingButton } from '@/components/ui/PendingButton';
+import { LoadError, Notice } from '@/components/Notice';
+import { RowsSkeleton } from '@/components/SetFrame';
 import { CopyButton } from './CopyButton';
-import { Spinner } from './Spinner';
+
+const plural = (n: number, word: string) => `${n} ${word}${n === 1 ? '' : 's'}`;
 
 function StatusIcon({ status }: { status: SetupStatus }) {
   if (status === 'error')
-    return <XCircleFillIcon className="color-fg-danger" aria-label="Error" />;
+    return <XCircleFillIcon className="st bad" aria-label="Error" />;
   if (status === 'warning')
-    return (
-      <AlertFillIcon className="color-fg-attention" aria-label="Warning" />
-    );
-  return <CheckCircleFillIcon className="color-fg-success" aria-label="OK" />;
+    return <AlertFillIcon className="st warn" aria-label="Warning" />;
+  return <CheckCircleFillIcon className="st ok" aria-label="OK" />;
 }
 
 function AiGatewayTest() {
   const test = useMutation({ mutationFn: testAiGateway });
   return (
-    <div className="mt-2">
-      <button
-        className="btn btn-sm"
-        disabled={test.isPending}
-        onClick={() => test.mutate()}
-      >
-        {test.isPending ? 'Testing…' : 'Test'}
-      </button>
-      <span className="f6 color-fg-muted ml-2">
-        Sends one tiny Workers AI request (a few tokens) through the gateway.
-      </span>
+    <div className="gw-test">
+      <div className="gw-row">
+        <PendingButton
+          className="small"
+          pending={test.isPending}
+          pendingLabel="Testing…"
+          onClick={() => test.mutate()}
+        >
+          Test
+        </PendingButton>
+        <span className="small muted">
+          Sends one tiny Workers AI request (a few tokens) through the gateway.
+        </span>
+      </div>
       {test.data && (
-        <div
-          className={`flash ${test.data.ok && (test.data.logged || !test.data.gateway) ? 'flash-success' : 'flash-warn'} mt-2 f6`}
+        <Notice
+          tone={
+            test.data.ok && (test.data.logged || !test.data.gateway)
+              ? 'ok'
+              : 'warn'
+          }
         >
           {test.data.detail}
-        </div>
+        </Notice>
       )}
-      {test.error && (
-        <div className="flash flash-error mt-2 f6">
-          {errorMessage(test.error)}
-        </div>
-      )}
+      {test.error && <Notice tone="bad">{errorMessage(test.error)}</Notice>}
     </div>
   );
 }
 
 function CheckRow({ check }: { check: SetupCheck }) {
   return (
-    <div className="Box-row d-flex" style={{ gap: 12 }}>
-      <div className="pt-1 flex-shrink-0">
-        <StatusIcon status={check.status} />
-      </div>
-      <div className="flex-1" style={{ minWidth: 0 }}>
-        <div className="d-flex flex-wrap flex-items-center" style={{ gap: 8 }}>
-          <span
-            className="text-bold text-mono"
-            style={{ overflowWrap: 'anywhere' }}
-          >
-            {check.title}
-          </span>
-          <span className="Label">{check.category}</span>
+    <li className="check">
+      <StatusIcon status={check.status} />
+      <div className="check-body">
+        <div className="check-title">
+          <b className="mono">{check.title}</b>
+          <Chip tone="off">{check.category}</Chip>
         </div>
-        <div className="f6 color-fg-muted mt-1">{check.detail}</div>
+        <p className="small muted">{check.detail}</p>
         {check.fix.length > 0 && check.status !== 'ok' && (
-          <div className="mt-2">
-            <div className="f6 text-bold mb-1">How to fix</div>
-            <ol className="f6 pl-3">
+          <div className="howfix">
+            <b className="small">How to fix</b>
+            <ol className="small">
               {check.fix.map((s, i) => (
-                <li key={i} className="mb-2">
+                <li key={i}>
                   {s.text}
                   {s.link && (
                     <>
@@ -92,19 +94,11 @@ function CheckRow({ check }: { check: SetupCheck }) {
                     </>
                   )}
                   {s.code && (
-                    <div
-                      className="d-flex flex-items-start mt-1 color-bg-subtle border rounded-2"
-                      style={{ gap: 4 }}
-                    >
-                      <pre
-                        className="flex-1 p-2 text-mono f6 m-0"
-                        style={{ overflowX: 'auto', whiteSpace: 'pre' }}
-                      >
-                        {s.code}
-                      </pre>
+                    <div className="codebox">
+                      <pre className="mono">{s.code}</pre>
                       <CopyButton
                         text={s.code}
-                        className="btn-octicon m-1"
+                        className="btn small quiet"
                         label="Copy command"
                       />
                     </div>
@@ -115,7 +109,7 @@ function CheckRow({ check }: { check: SetupCheck }) {
           </div>
         )}
         {check.status === 'ok' && check.fix.some((s) => s.link) && (
-          <div className="f6 mt-1">
+          <p className="small">
             {check.fix.map((s, i) =>
               s.link ? (
                 <a key={i} href={s.link} target="_blank" rel="noreferrer">
@@ -123,15 +117,15 @@ function CheckRow({ check }: { check: SetupCheck }) {
                 </a>
               ) : null
             )}
-          </div>
+          </p>
         )}
         {check.id === 'ai-gateway' && <AiGatewayTest />}
       </div>
-    </div>
+    </li>
   );
 }
 
-/** Site admin → Setup: misconfigured secrets, bindings, and variables, with steps to fix. */
+/** Site admin → Setup checks: misconfigured secrets, bindings, and variables, with steps to fix. */
 export function AdminSetup() {
   const setup = useSetupChecks();
   const [showOk, setShowOk] = useState(false);
@@ -140,80 +134,89 @@ export function AdminSetup() {
   const ok = checks.filter((c) => c.status === 'ok');
   const counts = setup.data?.counts;
   return (
-    <section id="setup" className="mb-5">
-      <div className="Subhead">
-        <h2
-          className="Subhead-heading d-flex flex-items-center"
-          style={{ gap: 8 }}
-        >
-          <ChecklistIcon size={24} /> Setup
-        </h2>
-        <div className="Subhead-actions">
+    <div id="setup">
+      <Section
+        title={
+          <>
+            <ChecklistIcon size={16} /> Setup checks
+          </>
+        }
+        actions={
           <button
-            className="btn btn-sm d-inline-flex flex-items-center"
-            style={{ gap: 4 }}
+            type="button"
+            className="btn small"
             disabled={setup.isFetching}
             onClick={() => setup.refetch()}
           >
-            <SyncIcon /> {setup.isFetching ? 'Checking…' : 'Re-check'}
+            <SyncIcon size={14} />
+            {setup.isFetching ? 'Checking…' : 'Re-check'}
           </button>
-        </div>
-        <div className="Subhead-description">
-          This deployment's secrets, bindings, and variables. Secret values are
-          never shown; only whether they're set.
-        </div>
-      </div>
-      {setup.isPending ? (
-        <Spinner />
-      ) : setup.error ? (
-        <div className="flash flash-error">
-          Couldn't run the checks: {errorMessage(setup.error)}
-        </div>
-      ) : (
-        <>
-          <div
-            className={`flash ${counts!.error ? 'flash-error' : counts!.warning ? 'flash-warn' : 'flash-success'} mb-3 d-flex flex-wrap flex-items-center`}
-            style={{ gap: 12 }}
-          >
-            <span className="text-bold flex-1">
-              {counts!.error
-                ? `${counts!.error} error${counts!.error === 1 ? '' : 's'} to fix`
-                : counts!.warning
-                  ? 'No errors; some features are off or misconfigured'
-                  : 'Everything is set up'}
-            </span>
-            <span className="f6">
-              {counts!.error} errors · {counts!.warning} warnings · {counts!.ok}{' '}
-              OK · checked {timeAgo(setup.data!.checkedAt)}
-            </span>
-          </div>
-          {problems.length > 0 && (
-            <div className="Box mb-3">
-              {problems.map((c) => (
-                <CheckRow key={c.id} check={c} />
-              ))}
-            </div>
-          )}
-          <div className="Box">
-            <button
-              type="button"
-              className="Box-header d-flex flex-items-center width-full text-left border-0"
-              style={{ gap: 8, cursor: 'pointer' }}
-              aria-expanded={showOk}
-              onClick={() => setShowOk(!showOk)}
+        }
+      >
+        <p className="small muted">
+          This deployment&apos;s secrets, bindings, and variables. Secret values
+          are never shown; only whether they&apos;re set.
+        </p>
+        {setup.isPending ? (
+          <RowsSkeleton rows={3} />
+        ) : setup.error ? (
+          <LoadError
+            what="the setup checks"
+            error={setup.error}
+            onRetry={() => setup.refetch()}
+          />
+        ) : (
+          <>
+            <Notice
+              tone={counts!.error ? 'bad' : counts!.warning ? 'warn' : 'ok'}
             >
-              <CheckCircleFillIcon className="color-fg-success" />
-              <span className="Box-title flex-1">
-                {ok.length} check{ok.length === 1 ? '' : 's'} passed
+              <b>
+                {counts!.error
+                  ? `${counts!.error} error${counts!.error === 1 ? '' : 's'} to fix`
+                  : counts!.warning
+                    ? 'No errors; some features are off or misconfigured'
+                    : 'Everything is set up'}
+              </b>
+              <span className="muted small block">
+                {plural(counts!.error, 'error')} ·{' '}
+                {plural(counts!.warning, 'warning')} · {counts!.ok} OK · checked{' '}
+                {timeAgo(setup.data!.checkedAt)}
               </span>
-              <span className="f6 color-fg-muted">
-                {showOk ? 'Hide' : 'Show'}
-              </span>
-            </button>
-            {showOk && ok.map((c) => <CheckRow key={c.id} check={c} />)}
-          </div>
-        </>
-      )}
-    </section>
+            </Notice>
+            {problems.length > 0 && (
+              <div className="panel">
+                <ul className="rowlist">
+                  {problems.map((c) => (
+                    <CheckRow key={c.id} check={c} />
+                  ))}
+                </ul>
+              </div>
+            )}
+            <div className="panel">
+              <button
+                type="button"
+                className="fold"
+                aria-expanded={showOk}
+                onClick={() => setShowOk(!showOk)}
+              >
+                <CheckCircleFillIcon className="st ok" />
+                <b className="grow">
+                  {ok.length} check{ok.length === 1 ? '' : 's'} passed
+                </b>
+                <span className="small muted">{showOk ? 'Hide' : 'Show'}</span>
+                {showOk ? <ChevronDownIcon /> : <ChevronRightIcon />}
+              </button>
+              {showOk && (
+                <ul className="rowlist">
+                  {ok.map((c) => (
+                    <CheckRow key={c.id} check={c} />
+                  ))}
+                </ul>
+              )}
+            </div>
+          </>
+        )}
+      </Section>
+    </div>
   );
 }

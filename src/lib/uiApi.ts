@@ -714,6 +714,33 @@ export type UsageReport = {
   notMeasured: string[];
 };
 
+/** One thing that happened, in the audit log (an instance-wide or a repository's own). */
+export interface AuditEvent {
+  id: string;
+  /** Epoch milliseconds. */
+  at: number;
+  actor: {
+    kind: 'person' | 'agent' | 'ai' | 'system';
+    /** Username or agent handle; for `ai`, the person GitOrange AI decided for. */
+    login: string | null;
+    name: string | null;
+  };
+  /** The app it went through: a connected MCP app's name, or "GitOrange AI". */
+  via: string | null;
+  /** An `audit_events` action, or `pull.<kind>` for a pull request timeline entry. */
+  action: string;
+  /** What it was done to, as people read it: "#12", a branch, a handle, a setting. */
+  target: string;
+  data: Record<string, unknown>;
+  /** `owner/name`, null for an instance event. */
+  repo: string | null;
+  pull: number | null;
+}
+export interface AuditPage {
+  events: AuditEvent[];
+  nextCursor: string | null;
+}
+
 const r = (owner: string, repo: string) =>
   `/api/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}`;
 const q = (params: Record<string, string | number>) =>
@@ -998,6 +1025,9 @@ export const api = {
       days: string[];
       errors: Record<string, Record<string, string>>;
     }>('/api/admin/usage/sync', { method: 'POST' }),
+  /** The instance-wide audit log, newest first (site admins). */
+  adminAudit: (cursor?: string | null) =>
+    apiFetch<AuditPage>(`/api/admin/audit${cursor ? `?${q({ cursor })}` : ''}`),
   insights: (o: string, n: string, days: number) =>
     apiFetch<RepoInsights>(`${r(o, n)}/insights?${q({ days })}`),
   adminSettings: () => apiFetch<AdminSettingsView>('/api/admin/settings'),
@@ -1057,6 +1087,7 @@ export const qk = {
   approvals: ['approvals'] as const,
   adminSettings: ['admin', 'settings'] as const,
   usage: (month: string) => ['usage', month] as const,
+  adminAudit: ['admin', 'audit'] as const,
   mcpConnections: ['mcp', 'connections'] as const,
   namespace: (u: string) => ['namespace', u] as const,
   team: ['team'] as const,

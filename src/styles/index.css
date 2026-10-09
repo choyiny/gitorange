@@ -5,4 +5,7 @@
 @import './primer-bridge.css';
 @import './shell.css';
 @import './components.css';
+@import './pages/account.css';
+@import './pages/admin.css';
+@import './pages/auth.css';
 @import './legacy.css';

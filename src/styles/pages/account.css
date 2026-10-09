@@ -1,0 +1,478 @@
+/* Settings, Site admin and the pieces they share: the side-nav frame, messages, forms, row lists, the audit log
+   rows. Ported from docs/design/crew/repo.css (.setlayout, .setnav, forms, rows) and views.css (.switch).
+   Tokens only. */
+
+/* ---------- The frame: a side nav and the page beside it ---------- */
+.setlayout {
+  display: grid;
+  grid-template-columns: 220px minmax(0, 1fr);
+  gap: 22px;
+  align-items: start;
+}
+.setnav {
+  display: grid;
+  gap: 2px;
+  position: sticky;
+  top: 16px;
+}
+.view .setnav a {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 7px 10px;
+  border-radius: 8px;
+  color: var(--ink-2);
+  font-size: 13.5px;
+  text-decoration: none;
+}
+.setnav a > svg {
+  flex: none;
+  width: 15px;
+  height: 15px;
+  color: var(--muted);
+}
+.view .setnav a:hover {
+  background: var(--surface-3);
+  text-decoration: none;
+}
+.view .setnav a[aria-current='page'] {
+  background: var(--surface);
+  box-shadow:
+    inset 2px 0 0 var(--accent),
+    var(--sh);
+  font-weight: 600;
+  color: var(--ink);
+}
+.setbody {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 22px;
+  min-width: 0;
+}
+@media (max-width: 980px) {
+  .setlayout {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  /* A row of tabs that scrolls inside itself, so every page stays one tap away. */
+  .setnav {
+    position: static;
+    display: flex;
+    gap: 4px;
+    overflow-x: auto;
+    scrollbar-width: none;
+    padding-bottom: 2px;
+  }
+  .view .setnav a {
+    white-space: nowrap;
+    flex: none;
+  }
+}
+
+/* ---------- Messages inside a page ---------- */
+.notice {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 10px 13px;
+  border: 1px solid var(--line);
+  border-radius: var(--r);
+  background: var(--surface);
+  font-size: 13.5px;
+  line-height: 1.45;
+}
+.notice > svg {
+  flex: none;
+  margin-top: 2px;
+  color: var(--muted);
+}
+.notice > .grow {
+  flex: 1 1 220px;
+  min-width: 0;
+}
+.notice > .grow > * + * {
+  margin-top: 6px;
+}
+.notice .block {
+  display: block;
+}
+.notice.ok {
+  background: var(--ok-bg);
+  border-color: var(--ok-line);
+}
+.notice.ok > svg {
+  color: var(--ok);
+}
+.notice.warn {
+  background: var(--warn-bg);
+  border-color: var(--warn-line);
+}
+.notice.warn > svg {
+  color: var(--warn);
+}
+.notice.bad {
+  background: var(--bad-bg);
+  border-color: var(--bad-line);
+}
+.notice.bad > svg {
+  color: var(--bad);
+}
+.attention {
+  color: var(--warn);
+}
+
+/* ---------- Forms ---------- */
+.fld {
+  display: grid;
+  gap: 6px;
+  min-width: 0;
+}
+.fld > label,
+.lbl {
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--ink-2);
+}
+.fld .form-control,
+.fld .form-select {
+  width: 100%;
+  max-width: 100%;
+}
+.hint {
+  font-size: 12.5px;
+  color: var(--muted);
+}
+.frow {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  align-items: flex-end;
+}
+.frow > .fld {
+  flex: 1 1 180px;
+}
+.frow > .fld.grow2 {
+  flex: 2 1 240px;
+}
+.frow > .btn {
+  flex: none;
+}
+.formpad {
+  padding: 14px 16px;
+  display: grid;
+  gap: 12px;
+  min-width: 0;
+}
+.panel > .formpad {
+  border-top: 1px solid var(--line);
+}
+.formtitle {
+  font-size: 14px;
+  font-weight: 600;
+}
+.panel .pad > h2 {
+  font-size: 15px;
+  font-weight: 700;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.topline {
+  border-top: 1px solid var(--line);
+}
+.copyrow {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+.copyrow input {
+  flex: 1;
+  min-width: 0;
+}
+.newtoken {
+  padding: 14px 16px;
+  display: grid;
+  gap: 8px;
+  background: var(--ok-bg);
+  border-top: 1px solid var(--ok-line);
+}
+.labelform {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  align-items: center;
+}
+.linkish {
+  justify-self: start;
+  background: none;
+  border: 0;
+  padding: 0;
+  font: inherit;
+  color: var(--muted);
+  text-decoration: underline dotted;
+  text-underline-offset: 3px;
+  text-align: left;
+}
+.linkish:hover {
+  color: var(--ink);
+}
+.confirm {
+  display: inline-flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  align-items: center;
+}
+.btn.block {
+  width: 100%;
+  justify-content: center;
+  box-sizing: border-box;
+}
+
+/* A switch: one thing on or off. */
+.tgl {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  cursor: pointer;
+}
+.tgl input {
+  appearance: none;
+  width: 36px;
+  height: 20px;
+  border-radius: 999px;
+  background: var(--line-2);
+  position: relative;
+  cursor: pointer;
+  margin: 0;
+  flex: none;
+  transition: background 0.15s;
+}
+.tgl input::after {
+  content: '';
+  position: absolute;
+  top: 3px;
+  left: 3px;
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  background: var(--surface);
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.25);
+  transition: transform 0.15s;
+}
+.tgl input:checked {
+  background: var(--accent);
+}
+.tgl input:checked::after {
+  transform: translateX(16px);
+}
+.tgl input:disabled {
+  opacity: 0.55;
+  cursor: default;
+}
+
+/* ---------- Row lists inside panels ---------- */
+.rowlist {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+.rowlist > li {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 12px;
+  padding: 11px 16px;
+  border-top: 1px solid var(--line);
+  min-width: 0;
+}
+.rowlist > li:first-child {
+  border-top: 0;
+}
+.panel > .pad + .rowlist > li:first-child {
+  border-top: 1px solid var(--line);
+}
+.rowlist .ic {
+  flex: none;
+  color: var(--muted);
+}
+.rowlist .grow {
+  flex: 1 1 200px;
+  min-width: 0;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 2px;
+}
+.rowlist .ctl {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  margin-left: auto;
+}
+.rowlist .ctl.stack {
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 4px;
+}
+.rowlist .sub {
+  flex: 1 0 100%;
+}
+.rowlist > li.top {
+  align-items: flex-start;
+}
+.rowlist > li.top .ic {
+  margin-top: 2px;
+}
+.rowlist > li.split {
+  justify-content: space-between;
+  flex-wrap: nowrap;
+}
+.wrap {
+  overflow-wrap: anywhere;
+}
+.foot {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+/* ---------- Connected apps, tools, set-up steps ---------- */
+.delegate {
+  border-left: 3px solid var(--accent);
+}
+.delegate > p {
+  max-width: 78ch;
+}
+.rowlist > li.mcp-tool {
+  display: grid;
+  gap: 4px;
+}
+.mcp-tool-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+.params {
+  margin: 4px 0 0;
+  padding-left: 18px;
+  display: grid;
+  gap: 2px;
+}
+.snippet {
+  border: 1px solid var(--line);
+  border-radius: var(--r-sm);
+  background: var(--surface-2);
+  min-width: 0;
+}
+.snippet-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 4px 6px 4px 12px;
+  border-bottom: 1px solid var(--line);
+  font-size: 12px;
+}
+.snippet pre {
+  margin: 0;
+  padding: 10px 12px;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  font-size: 12.5px;
+}
+.segscroll {
+  max-width: 100%;
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+.segscroll .seg {
+  width: max-content;
+}
+.steps {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 10px;
+  min-width: 0;
+}
+.steps ol {
+  margin: 0;
+  list-style: decimal;
+  padding-left: 20px;
+  display: grid;
+  gap: 8px;
+}
+.steps code,
+.setbody p code {
+  overflow-wrap: anywhere;
+}
+
+/* ---------- The audit log: one sentence per event ---------- */
+.aud-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+.aud-row {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  gap: 12px;
+  align-items: start;
+  padding: 12px 16px;
+  border-top: 1px solid var(--line);
+}
+.aud-row:first-child {
+  border-top: 0;
+}
+.aud-what {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 2px;
+  min-width: 0;
+}
+.aud-line {
+  overflow-wrap: anywhere;
+  padding-top: 5px;
+}
+.aud-who {
+  font-weight: 700;
+}
+.aud-detail {
+  color: var(--muted);
+  font-size: 12.5px;
+  overflow-wrap: anywhere;
+}
+.aud-row .when {
+  padding-top: 6px;
+}
+.aud-tile {
+  display: inline-grid;
+  place-items: center;
+  border-radius: 8px;
+  flex: none;
+  background: var(--surface-3);
+  color: var(--ink-2);
+}
+.aud-tile.ai {
+  background: var(--accent-tint);
+  color: var(--accent);
+  box-shadow: inset 0 0 0 1px var(--accent-tint-2);
+}
+.aud-more {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-wrap: wrap;
+  gap: 12px;
+  padding: 12px 16px;
+  border-top: 1px solid var(--line);
+}
+@media (max-width: 640px) {
+  .aud-row {
+    grid-template-columns: auto minmax(0, 1fr);
+  }
+  .aud-row .when {
+    grid-column: 2;
+    padding-top: 0;
+  }
+}

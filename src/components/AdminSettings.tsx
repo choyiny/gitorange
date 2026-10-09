@@ -1,10 +1,13 @@
 import { useEffect, useState } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { GearIcon } from '@primer/octicons-react';
+import { SlidersIcon } from '@primer/octicons-react';
 import { api, qk, type InstanceSetting } from '@/lib/uiApi';
 import { errorMessage } from '@/lib/api';
 import { timeAgo } from '@/lib/format';
-import { Spinner } from './Spinner';
+import { Section } from '@/components/ui/Section';
+import { PendingButton } from '@/components/ui/PendingButton';
+import { LoadError, Notice } from '@/components/Notice';
+import { RowsSkeleton } from '@/components/SetFrame';
 
 const GROUPS: InstanceSetting['group'][] = [
   'General',
@@ -25,7 +28,7 @@ function SettingRow({
   const numeric = !retention && typeof s.default === 'number';
   const [text, setText] = useState('');
   const [forever, setForever] = useState(false);
-  const [busy, setBusy] = useState(false);
+  const [busy, setBusy] = useState<'save' | 'reset' | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [saved, setSaved] = useState(false);
 
@@ -46,8 +49,8 @@ function SettingRow({
       : text.trim();
   const dirty = current !== s.value;
 
-  const run = async (fn: () => Promise<unknown>) => {
-    setBusy(true);
+  const run = async (kind: 'save' | 'reset', fn: () => Promise<unknown>) => {
+    setBusy(kind);
     setError(null);
     setSaved(false);
     try {
@@ -57,7 +60,7 @@ function SettingRow({
     } catch (e) {
       setError(errorMessage(e));
     } finally {
-      setBusy(false);
+      setBusy(null);
     }
   };
 
@@ -69,92 +72,92 @@ function SettingRow({
         : String(s.default);
 
   return (
-    <form
-      className="Box-row"
-      onSubmit={(e) => {
-        e.preventDefault();
-        void run(() => api.saveSetting(s.key, current));
-      }}
-    >
-      <label className="d-block text-bold mb-1" htmlFor={`setting-${s.key}`}>
-        {s.label}
-      </label>
-      <p className="f6 color-fg-muted mb-2">{s.description}</p>
-      <div className="d-flex flex-wrap flex-items-center" style={{ gap: 8 }}>
-        {retention ? (
-          <>
+    <li className="setting">
+      <form
+        onSubmit={(e) => {
+          e.preventDefault();
+          void run('save', () => api.saveSetting(s.key, current));
+        }}
+      >
+        <label className="setting-label" htmlFor={`setting-${s.key}`}>
+          {s.label}
+        </label>
+        <p className="small muted">{s.description}</p>
+        <div className="setting-input">
+          {retention ? (
+            <>
+              <input
+                id={`setting-${s.key}`}
+                className="form-control short"
+                type="number"
+                min={1}
+                max={400}
+                value={text}
+                disabled={forever}
+                onChange={(e) => setText(e.target.value)}
+                required={!forever}
+              />
+              <span className="muted">days</span>
+              <label className="check-inline small">
+                <input
+                  type="checkbox"
+                  checked={forever}
+                  onChange={(e) => setForever(e.target.checked)}
+                />
+                Keep forever
+              </label>
+            </>
+          ) : numeric ? (
             <input
               id={`setting-${s.key}`}
-              className="form-control"
+              className="form-control short"
               type="number"
-              min={1}
-              max={400}
-              style={{ width: 100 }}
+              min={s.min ?? 1}
+              max={s.max}
+              step={1}
               value={text}
-              disabled={forever}
               onChange={(e) => setText(e.target.value)}
-              required={!forever}
+              required
             />
-            <span className="color-fg-muted">days</span>
-            <label
-              className="d-inline-flex flex-items-center f6 ml-2"
-              style={{ gap: 4 }}
-            >
-              <input
-                type="checkbox"
-                checked={forever}
-                onChange={(e) => setForever(e.target.checked)}
-              />
-              Keep forever
-            </label>
-          </>
-        ) : numeric ? (
-          <input
-            id={`setting-${s.key}`}
-            className="form-control"
-            type="number"
-            min={s.min ?? 1}
-            max={s.max}
-            step={1}
-            style={{ width: 140 }}
-            value={text}
-            onChange={(e) => setText(e.target.value)}
-            required
-          />
-        ) : (
-          <input
-            id={`setting-${s.key}`}
-            className="form-control flex-1"
-            style={{ minWidth: 200 }}
-            value={text}
-            onChange={(e) => setText(e.target.value)}
-            required
-          />
-        )}
-        <button className="btn btn-sm" type="submit" disabled={busy || !dirty}>
-          {busy ? 'Saving…' : 'Save'}
-        </button>
-        {s.overridden && (
-          <button
-            type="button"
-            className="btn btn-sm btn-invisible"
-            disabled={busy}
-            onClick={() => void run(() => api.resetSetting(s.key))}
+          ) : (
+            <input
+              id={`setting-${s.key}`}
+              className="form-control wide"
+              value={text}
+              onChange={(e) => setText(e.target.value)}
+              required
+            />
+          )}
+          <PendingButton
+            type="submit"
+            className="small"
+            pending={busy === 'save'}
+            pendingLabel="Saving…"
+            disabled={busy !== null || !dirty}
           >
-            Reset to default
-          </button>
-        )}
-      </div>
-      <div className="f6 color-fg-muted mt-1">
-        {s.overridden
-          ? `Set here${s.updatedAt ? ` ${timeAgo(s.updatedAt)}` : ''}. Default: ${defaultText}.`
-          : `Using the default (${defaultText}).`}
-        {saved && !error && (
-          <span className="color-fg-success ml-2">Saved.</span>
-        )}
-      </div>
-      {error && <div className="flash flash-error mt-2 f6">{error}</div>}
-    </form>
+            Save
+          </PendingButton>
+          {s.overridden && (
+            <PendingButton
+              className="small quiet"
+              pending={busy === 'reset'}
+              pendingLabel="Resetting…"
+              disabled={busy !== null}
+              onClick={() => void run('reset', () => api.resetSetting(s.key))}
+            >
+              Reset to default
+            </PendingButton>
+          )}
+        </div>
+        <p className="small muted">
+          {s.overridden
+            ? `Set here${s.updatedAt ? ` ${timeAgo(s.updatedAt)}` : ''}. Default: ${defaultText}.`
+            : `Using the default (${defaultText}).`}
+          {saved && !error && <span className="saved"> Saved.</span>}
+        </p>
+        {error && <Notice tone="bad">{error}</Notice>}
+      </form>
+    </li>
   );
 }
 
@@ -170,54 +173,60 @@ export function AdminSettings() {
   });
   const refresh = () => {
     void qc.invalidateQueries({ queryKey: qk.adminSettings });
-    // The instance name shows in the header and page titles.
+    // The instance name shows in the rail and page titles.
     void qc.invalidateQueries({ queryKey: qk.setup });
   };
   return (
-    <>
-      <div className="Subhead">
-        <h2
-          className="Subhead-heading d-flex flex-items-center"
-          style={{ gap: 8 }}
-        >
-          <GearIcon size={24} /> Settings
-        </h2>
-        <div className="Subhead-description">
+    <div id="settings">
+      <Section
+        title={
+          <>
+            <SlidersIcon size={16} /> Instance settings
+          </>
+        }
+      >
+        <p className="small muted">
           Instance-wide settings. Defaults come from the deploy&apos;s
           configuration; anything set here takes effect right away, without a
           deploy.
-        </div>
-      </div>
-      {q.isPending ? (
-        <Spinner />
-      ) : q.error ? (
-        <div className="flash flash-error mb-5">{errorMessage(q.error)}</div>
-      ) : (
-        GROUPS.map((group) => (
-          <div key={group} className="Box mb-4">
-            <div className="Box-header">
-              <h3 className="Box-title">{group}</h3>
-            </div>
-            {q.data.settings
-              .filter((s) => s.group === group)
-              .map((s) => (
-                <SettingRow key={s.key} s={s} onSaved={refresh} />
-              ))}
-            {group === 'Actions' && (
-              <div className="Box-row f6 color-fg-muted">
-                {q.data.actions.runs} workflow run
-                {q.data.actions.runs === 1 ? '' : 's'} stored
-                {q.data.actions.oldestFinishedAt &&
-                  `; the oldest finished ${timeAgo(q.data.actions.oldestFinishedAt)}`}
-                .{' '}
-                {q.data.actions.retention
-                  ? `Cleanup last ran ${timeAgo(q.data.actions.retention.at)} and deleted ${q.data.actions.retention.deletedRuns} run${q.data.actions.retention.deletedRuns === 1 ? '' : 's'}${q.data.actions.retention.more ? ' (more remain; it continues tomorrow)' : ''}.`
-                  : 'Cleanup runs once a day.'}
+        </p>
+        {q.isPending ? (
+          <RowsSkeleton rows={4} />
+        ) : q.isError ? (
+          <LoadError
+            what="the instance settings"
+            error={q.error}
+            onRetry={() => q.refetch()}
+          />
+        ) : (
+          GROUPS.map((group) => (
+            <div key={group} className="panel">
+              <div className="pad">
+                <h3 className="group-title">{group}</h3>
               </div>
-            )}
-          </div>
-        ))
-      )}
-    </>
+              <ul className="rowlist">
+                {q.data.settings
+                  .filter((s) => s.group === group)
+                  .map((s) => (
+                    <SettingRow key={s.key} s={s} onSaved={refresh} />
+                  ))}
+                {group === 'Actions' && (
+                  <li className="setting-foot small muted">
+                    {q.data.actions.runs} workflow run
+                    {q.data.actions.runs === 1 ? '' : 's'} stored
+                    {q.data.actions.oldestFinishedAt &&
+                      `; the oldest finished ${timeAgo(q.data.actions.oldestFinishedAt)}`}
+                    .{' '}
+                    {q.data.actions.retention
+                      ? `Cleanup last ran ${timeAgo(q.data.actions.retention.at)} and deleted ${q.data.actions.retention.deletedRuns} run${q.data.actions.retention.deletedRuns === 1 ? '' : 's'}${q.data.actions.retention.more ? ' (more remain; it continues tomorrow)' : ''}.`
+                      : 'Cleanup runs once a day.'}
+                  </li>
+                )}
+              </ul>
+            </div>
+          ))
+        )}
+      </Section>
+    </div>
   );
 }

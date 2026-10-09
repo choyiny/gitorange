@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import { Link } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import {
   AlertIcon,
@@ -6,37 +7,40 @@ import {
   PencilIcon,
   PlugIcon,
   ShieldCheckIcon,
+  SparkleFillIcon,
 } from '@primer/octicons-react';
 import { api, qk, type McpConnection, type McpTool } from '@/lib/uiApi';
 import { errorMessage } from '@/lib/api';
 import { timeAgo } from '@/lib/format';
-import { usePageHead } from '@/components/ui/PageHead';
+import { PageHead } from '@/components/ui/PageHead';
+import { Chip } from '@/components/ui/Chip';
+import { EmptyState } from '@/components/ui/EmptyState';
+import { Seg } from '@/components/ui/Seg';
+import { Section } from '@/components/ui/Section';
+import { PendingButton } from '@/components/ui/PendingButton';
 import { CopyButton } from '@/components/CopyButton';
-import { SettingsNav } from '@/components/SettingsNav';
-import { Spinner } from '@/components/Spinner';
+import { InlineConfirm } from '@/components/InlineConfirm';
+import { LoadError, Notice } from '@/components/Notice';
+import { RowsSkeleton, SettingsFrame } from '@/components/SetFrame';
 import { useAppName } from '@/lib/appName';
 
 type Client = 'claude-code' | 'claude' | 'cursor' | 'codex' | 'other';
-const CLIENTS: { id: Client; label: string }[] = [
-  { id: 'claude-code', label: 'Claude Code' },
-  { id: 'claude', label: 'Claude.ai & Desktop' },
-  { id: 'cursor', label: 'Cursor' },
-  { id: 'codex', label: 'Codex' },
-  { id: 'other', label: 'Other clients' },
+const CLIENTS: { value: Client; label: string }[] = [
+  { value: 'claude-code', label: 'Claude Code' },
+  { value: 'claude', label: 'Claude.ai & Desktop' },
+  { value: 'cursor', label: 'Cursor' },
+  { value: 'codex', label: 'Codex' },
+  { value: 'other', label: 'Other clients' },
 ];
 
 function Snippet({ text, label }: { text: string; label?: string }) {
   return (
-    <div className="Box mb-3">
-      <div className="Box-header d-flex flex-items-center flex-justify-between py-1 px-2">
-        <span className="f6 color-fg-muted text-mono">
-          {label ?? 'Terminal'}
-        </span>
-        <CopyButton text={text} className="btn btn-sm btn-invisible" />
+    <div className="snippet">
+      <div className="snippet-head">
+        <span className="mono muted">{label ?? 'Terminal'}</span>
+        <CopyButton text={text} className="btn small quiet" />
       </div>
-      <pre className="p-3 f6 text-mono m-0" style={{ whiteSpace: 'pre-wrap' }}>
-        {text}
-      </pre>
+      <pre className="mono">{text}</pre>
     </div>
   );
 }
@@ -55,22 +59,21 @@ function SetupSteps({
   if (client === 'claude-code')
     return (
       <>
-        <p className="mb-2">Add the server from your terminal:</p>
+        <p>Add the server from your terminal:</p>
         <Snippet
           text={`claude mcp add --transport http ${serverName} ${url}`}
         />
-        <p className="mb-0">
+        <p>
           Then start Claude Code, run <code>/mcp</code>, choose{' '}
-          <strong>{serverName}</strong>, and select{' '}
-          <strong>Authenticate</strong>. Your browser opens {appName}: sign in
-          and allow access.
+          <b>{serverName}</b>, and select <b>Authenticate</b>. Your browser
+          opens {appName}: sign in and allow access.
         </p>
       </>
     );
   if (client === 'claude')
     return (
-      <ol className="pl-3 mb-0">
-        <li className="mb-2">
+      <ol>
+        <li>
           Open{' '}
           <a
             href="https://claude.ai/customize/connectors?modal=add-custom-connector"
@@ -81,14 +84,12 @@ function SetupSteps({
           </a>{' '}
           (in Claude.ai or the Claude desktop app).
         </li>
-        <li className="mb-2">
-          Name it <strong>{appName}</strong> and paste the server URL{' '}
-          <code>{url}</code>.
+        <li>
+          Name it <b>{appName}</b> and paste the server URL <code>{url}</code>.
         </li>
         <li>
-          Select <strong>Connect</strong>, sign in to {appName}, and allow
-          access. The connector then works in Claude on the web, desktop, and
-          mobile.
+          Select <b>Connect</b>, sign in to {appName}, and allow access. The
+          connector then works in Claude on the web, desktop, and mobile.
         </li>
       </ol>
     );
@@ -96,15 +97,15 @@ function SetupSteps({
     const config = btoa(JSON.stringify({ url }));
     return (
       <>
-        <p className="mb-2">
+        <p>
           <a
-            className="btn btn-sm btn-primary"
+            className="btn small primary"
             href={`cursor://anysphere.cursor-deeplink/mcp/install?name=${serverName}&config=${encodeURIComponent(config)}`}
           >
             Add to Cursor
           </a>
         </p>
-        <p className="mb-2">
+        <p>
           Or add it to <code>~/.cursor/mcp.json</code> (or a project&apos;s{' '}
           <code>.cursor/mcp.json</code>):
         </p>
@@ -116,9 +117,9 @@ function SetupSteps({
             2
           )}
         />
-        <p className="mb-0">
-          Cursor shows <strong>Needs login</strong> next to the server in
-          Settings → MCP; select it to sign in to {appName}.
+        <p>
+          Cursor shows <b>Needs login</b> next to the server in Settings → MCP;
+          select it to sign in to {appName}.
         </p>
       </>
     );
@@ -126,11 +127,11 @@ function SetupSteps({
   if (client === 'codex')
     return (
       <>
-        <p className="mb-2">Add the server from your terminal, then sign in:</p>
+        <p>Add the server from your terminal, then sign in:</p>
         <Snippet
           text={`codex mcp add ${serverName} --url ${url}\ncodex mcp login ${serverName}`}
         />
-        <p className="mb-0">
+        <p>
           Or add it to <code>~/.codex/config.toml</code> under{' '}
           <code>[mcp_servers.{serverName}]</code> with{' '}
           <code>url = &quot;{url}&quot;</code>.
@@ -138,12 +139,12 @@ function SetupSteps({
       </>
     );
   return (
-    <p className="mb-0">
+    <p>
       Any MCP client that supports remote servers works. Add a{' '}
-      <strong>Streamable HTTP</strong> server with the URL <code>{url}</code>.
-      The client discovers {appName}&apos;s sign-in automatically (OAuth 2.1
-      with PKCE and dynamic client registration), so there&apos;s no token to
-      copy: you sign in and approve access in your browser.
+      <b>Streamable HTTP</b> server with the URL <code>{url}</code>. The client
+      discovers {appName}&apos;s sign-in automatically (OAuth 2.1 with PKCE and
+      dynamic client registration), so there&apos;s no token to copy: you sign
+      in and approve access in your browser.
     </p>
   );
 }
@@ -152,29 +153,23 @@ function ToolRow({ tool }: { tool: McpTool }) {
   const params = Object.entries(tool.inputSchema.properties ?? {});
   const required = new Set(tool.inputSchema.required ?? []);
   return (
-    <div className="Box-row">
-      <div className="d-flex flex-items-center flex-wrap" style={{ gap: 8 }}>
-        <span className="text-bold">{tool.title}</span>
-        <code className="f6 color-fg-muted">{tool.name}</code>
+    <li className="mcp-tool">
+      <div className="mcp-tool-head">
+        <b>{tool.title}</b>
+        <code className="muted">{tool.name}</code>
         {tool.annotations.readOnlyHint ? (
-          <span
-            className="Label d-inline-flex flex-items-center"
-            style={{ gap: 4 }}
-          >
-            <EyeIcon size={12} /> Read-only
-          </span>
+          <Chip tone="off" icon={<EyeIcon size={12} />}>
+            Read-only
+          </Chip>
         ) : (
-          <span
-            className="Label Label--attention d-inline-flex flex-items-center"
-            style={{ gap: 4 }}
-          >
-            <PencilIcon size={12} /> Makes changes
-          </span>
+          <Chip tone="warn" icon={<PencilIcon size={12} />}>
+            Makes changes
+          </Chip>
         )}
       </div>
-      <p className="f6 color-fg-muted mt-1 mb-0">{tool.description}</p>
+      <p className="small muted">{tool.description}</p>
       {params.length > 0 && (
-        <ul className="f6 mt-2 mb-0 pl-3 color-fg-muted">
+        <ul className="params small muted">
           {params.map(([name, p]) => (
             <li key={name}>
               <code>{name}</code>
@@ -185,7 +180,7 @@ function ToolRow({ tool }: { tool: McpTool }) {
           ))}
         </ul>
       )}
-    </div>
+    </li>
   );
 }
 
@@ -193,7 +188,7 @@ function ToolRow({ tool }: { tool: McpTool }) {
 function AppIdentity({ app }: { app: McpConnection }) {
   return (
     <>
-      <span className="text-mono" title={app.clientId}>
+      <span className="mono" title={app.clientId}>
         {app.clientId.slice(0, 8)}
       </span>
       {app.redirectHost && <>, redirects to {app.redirectHost}</>}
@@ -201,15 +196,8 @@ function AppIdentity({ app }: { app: McpConnection }) {
   );
 }
 
+/** Settings → MCP server: connect an AI tool, see what it can do, and manage the apps you connected. */
 export default function SettingsMcp() {
-  usePageHead({
-    icon: 'plug',
-    crumbs: [
-      { label: 'Settings', to: '/settings/tokens' },
-      { label: 'MCP server' },
-    ],
-    title: 'MCP server',
-  });
   const qc = useQueryClient();
   const appName = useAppName();
   const info = useQuery({ queryKey: qk.mcp, queryFn: api.mcp });
@@ -246,60 +234,225 @@ export default function SettingsMcp() {
 
   return (
     <>
-      <div
-        className="container-lg px-3 py-4 d-flex flex-column flex-md-row"
-        style={{ gap: 24 }}
-      >
-        <SettingsNav />
-        <div className="flex-1" style={{ minWidth: 0 }}>
-          <div className="Subhead">
-            <h2 className="Subhead-heading">MCP server</h2>
-            <div className="Subhead-description">
-              Connect Claude, Cursor, and other AI tools to {appName} through
-              the Model Context Protocol. They act as you, so they see the
-              repositories you can see, and they can create repositories for
-              you.
-            </div>
-          </div>
-          {!info.data ? (
-            <Spinner />
-          ) : (
-            <>
-              <label className="d-block text-bold f6 mb-1">Server URL</label>
-              <div className="input-group mb-4" style={{ maxWidth: 560 }}>
-                <input
-                  className="form-control input-monospace"
-                  readOnly
-                  value={info.data.serverUrl}
-                  aria-label="MCP server URL"
-                  onFocus={(e) => e.currentTarget.select()}
-                />
-                <span className="input-group-button">
-                  <CopyButton text={info.data.serverUrl} className="btn" />
-                </span>
+      <PageHead
+        icon="plug"
+        crumbs={[
+          { label: 'Settings', to: '/settings/tokens' },
+          { label: 'MCP server' },
+        ]}
+        title="MCP server"
+        lede={`Connect Claude, Cursor and other AI tools to ${appName} through the Model Context Protocol. They act as you, so they see the repositories you can see, and they can create repositories for you.`}
+      />
+      <SettingsFrame>
+        <Section title="Connected apps" className="mcp-apps">
+          {error && <Notice tone="bad">{error}</Notice>}
+          <div className="panel">
+            {connections.isPending ? (
+              <div className="pad">
+                <RowsSkeleton rows={2} />
               </div>
-
-              <h3 className="f4 mb-2">Set it up</h3>
-              <div className="Box mb-4">
-                <div className="Box-header p-0 border-bottom-0">
-                  <nav
-                    className="tabnav-tabs px-2 pt-2"
-                    aria-label="MCP clients"
-                  >
-                    {CLIENTS.map((c) => (
-                      <button
-                        key={c.id}
-                        className="tabnav-tab"
-                        aria-selected={client === c.id}
-                        aria-current={client === c.id ? 'page' : undefined}
-                        onClick={() => setClient(c.id)}
+            ) : connections.isError ? (
+              <div className="pad">
+                <LoadError
+                  what="your connected apps"
+                  error={connections.error}
+                  onRetry={() => connections.refetch()}
+                />
+              </div>
+            ) : connections.data.length === 0 ? (
+              <EmptyState
+                picture={<PlugIcon size={20} />}
+                title="No apps are connected yet."
+                body="Apps appear here after you allow them access. Set one up below."
+              />
+            ) : (
+              <ul className="rowlist">
+                {connections.data.map((c) => (
+                  <li key={c.clientId} className="wrap-row">
+                    <span
+                      className={`mono-tile${/codex/i.test(c.name) ? ' codex' : ''}`}
+                      aria-hidden="true"
+                    >
+                      {c.name.trim().charAt(0).toUpperCase() || '?'}
+                    </span>
+                    <div className="grow">
+                      <b>
+                        {c.name}
+                        {c.moderator && (
+                          <>
+                            {' '}
+                            <Chip tone="warn">Moderator</Chip>
+                          </>
+                        )}
+                      </b>
+                      <span className="muted small">
+                        {c.connectedAt
+                          ? `Connected ${timeAgo(c.connectedAt)}`
+                          : 'Connected'}
+                        {' · '}
+                        <AppIdentity app={c} />
+                      </span>
+                    </div>
+                    <div className="ctl">
+                      <label className="tgl">
+                        <span className="small">Moderator</span>
+                        <input
+                          type="checkbox"
+                          role="switch"
+                          checked={c.moderator}
+                          disabled={moderator.isPending}
+                          aria-label={`${c.name} is a moderator`}
+                          onChange={(e) => {
+                            if (e.target.checked) setConfirming(c.clientId);
+                            else {
+                              setConfirming(null);
+                              moderator.mutate({
+                                clientId: c.clientId,
+                                on: false,
+                              });
+                            }
+                          }}
+                        />
+                      </label>
+                      <InlineConfirm
+                        label="Disconnect"
+                        confirmLabel={`Disconnect ${c.name}`}
+                        pendingLabel="Disconnecting…"
+                        accessibleName={`Disconnect ${c.name}`}
+                        pending={
+                          disconnect.isPending &&
+                          disconnect.variables === c.clientId
+                        }
+                        onConfirm={() => disconnect.mutate(c.clientId)}
+                      />
+                    </div>
+                    {c.moderator && enabled === c.clientId && (
+                      <p className="sub small muted" role="status">
+                        Reconnect the app to see the moderator tools.
+                      </p>
+                    )}
+                    {confirming === c.clientId && !c.moderator && (
+                      <div
+                        className="sub"
+                        role="group"
+                        aria-label={`Make ${c.name} a moderator`}
+                        aria-describedby={`moderator-confirm-${c.clientId}`}
                       >
-                        {c.label}
-                      </button>
-                    ))}
-                  </nav>
+                        <Notice
+                          tone="warn"
+                          action={
+                            <span className="confirm">
+                              <PendingButton
+                                className="small danger"
+                                // Moves focus into the confirmation as it opens.
+                                autoFocus
+                                pending={moderator.isPending}
+                                pendingLabel="Making moderator…"
+                                onClick={() =>
+                                  moderator.mutate({
+                                    clientId: c.clientId,
+                                    on: true,
+                                  })
+                                }
+                              >
+                                Make moderator
+                              </PendingButton>
+                              <button
+                                type="button"
+                                className="btn small"
+                                onClick={() => setConfirming(null)}
+                              >
+                                Cancel
+                              </button>
+                            </span>
+                          }
+                        >
+                          <span id={`moderator-confirm-${c.clientId}`}>
+                            Make <b>{c.name}</b> (<AppIdentity app={c} />) a
+                            moderator? A moderator can approve agent findings
+                            and pull requests as you.
+                          </span>
+                        </Notice>
+                      </div>
+                    )}
+                  </li>
+                ))}
+              </ul>
+            )}
+          </div>
+          <p className="foot small muted">
+            <ShieldCheckIcon size={14} /> Disconnecting stops an app
+            immediately; it has to ask for your approval again to reconnect.
+          </p>
+          <p className="foot small attention">
+            <AlertIcon size={14} /> A moderator can approve agent findings and
+            pull requests as you.
+          </p>
+        </Section>
+
+        <section className="panel pad delegate" aria-labelledby="mcp-delegate">
+          <h2 id="mcp-delegate">
+            <SparkleFillIcon size={16} /> Letting Claude answer for you
+          </h2>
+          <p>
+            A <b>moderator app</b> (above) is a tool you connected, such as
+            Claude Code. It can approve agent findings and pull requests as you.
+            Findings from Security and Data need your own written reason, so the
+            app has to ask you for it.
+          </p>
+          <p>
+            <b>Let Claude decide</b> is different: {appName}&apos;s own AI can
+            answer reviewer findings on your pull requests for you, one reviewer
+            at a time, and you can undo any answer while the pull request is
+            open. <b>Security and Data always come to you.</b>
+          </p>
+          <div className="actions">
+            <Link to="/approvals" className="btn small">
+              Turn it on in Approvals
+            </Link>
+          </div>
+        </section>
+
+        <Section title="Set it up">
+          {info.isPending ? (
+            <RowsSkeleton rows={2} />
+          ) : info.isError ? (
+            <LoadError
+              what="the server details"
+              error={info.error}
+              onRetry={() => info.refetch()}
+            />
+          ) : (
+            <div className="panel">
+              <div className="pad">
+                <label className="lbl" htmlFor="mcp-url">
+                  Server URL
+                </label>
+                <div className="copyrow">
+                  <input
+                    id="mcp-url"
+                    className="form-control mono"
+                    readOnly
+                    value={info.data.serverUrl}
+                    onFocus={(e) => e.currentTarget.select()}
+                  />
+                  <CopyButton
+                    text={info.data.serverUrl}
+                    className="btn small"
+                    label="Copy the server URL"
+                  />
                 </div>
-                <div className="Box-body border-top">
+              </div>
+              <div className="pad topline">
+                <div className="segscroll">
+                  <Seg<Client>
+                    label="MCP client"
+                    options={CLIENTS}
+                    value={client}
+                    onChange={setClient}
+                  />
+                </div>
+                <div className="steps">
                   <SetupSteps
                     client={client}
                     url={info.data.serverUrl}
@@ -307,161 +460,45 @@ export default function SettingsMcp() {
                     appName={appName}
                   />
                 </div>
-                <div className="Box-footer f6 color-fg-muted">
-                  To check it works, ask:{' '}
-                  <em>
-                    &ldquo;Which repositories do I have on {appName}? Use the{' '}
-                    {info.data.serverName} MCP server.&rdquo;
-                  </em>{' '}
-                  Naming the server makes the AI call it instead of guessing.
-                </div>
               </div>
-
-              <h3 className="f4 mb-2">Tools</h3>
-              <div className="Box mb-4">
-                {info.data.tools.map((t) => (
-                  <ToolRow key={t.name} tool={t} />
-                ))}
+              <div className="pad topline small muted">
+                To check it works, ask:{' '}
+                <em>
+                  &ldquo;Which repositories do I have on {appName}? Use the{' '}
+                  {info.data.serverName} MCP server.&rdquo;
+                </em>{' '}
+                Naming the server makes the AI call it instead of guessing.
               </div>
-
-              <h3 className="f4 mb-2">Moderator tools</h3>
-              <p className="f6 color-fg-muted mb-2">
-                Only apps you mark as a moderator below see these.
-              </p>
-              <div className="Box mb-4">
-                {info.data.moderatorTools.map((t) => (
-                  <ToolRow key={t.name} tool={t} />
-                ))}
-              </div>
-            </>
+            </div>
           )}
+        </Section>
 
-          <h3 className="f4 mb-2">Connected apps</h3>
-          {error && <div className="flash flash-error mb-3">{error}</div>}
-          <div className="Box">
-            {!connections.data ? (
-              <Spinner />
-            ) : connections.data.length === 0 ? (
-              <div className="Box-row color-fg-muted f6">
-                No apps are connected yet. Apps appear here after you allow them
-                access.
+        {info.data && (
+          <>
+            <Section title="Tools">
+              <div className="panel">
+                <ul className="rowlist">
+                  {info.data.tools.map((t) => (
+                    <ToolRow key={t.name} tool={t} />
+                  ))}
+                </ul>
               </div>
-            ) : (
-              connections.data.map((c) => (
-                <div key={c.clientId} className="Box-row">
-                  <div
-                    className="d-flex flex-items-center flex-wrap"
-                    style={{ gap: 12 }}
-                  >
-                    <PlugIcon className="color-fg-muted" />
-                    <div className="flex-1" style={{ minWidth: 160 }}>
-                      <div className="text-bold">
-                        {c.name}
-                        {c.moderator && (
-                          <span className="Label Label--attention ml-2">
-                            Moderator
-                          </span>
-                        )}
-                      </div>
-                      <div className="f6 color-fg-muted">
-                        {c.connectedAt
-                          ? `Connected ${timeAgo(c.connectedAt)}`
-                          : 'Connected'}
-                        {' · '}
-                        <AppIdentity app={c} />
-                      </div>
-                    </div>
-                    <label
-                      className="d-flex flex-items-center f6"
-                      style={{ gap: 4 }}
-                    >
-                      <input
-                        type="checkbox"
-                        checked={c.moderator}
-                        disabled={moderator.isPending}
-                        aria-label={`${c.name} is a moderator`}
-                        onChange={(e) => {
-                          if (e.target.checked) setConfirming(c.clientId);
-                          else {
-                            setConfirming(null);
-                            moderator.mutate({
-                              clientId: c.clientId,
-                              on: false,
-                            });
-                          }
-                        }}
-                      />
-                      Moderator
-                    </label>
-                    <button
-                      className="btn btn-sm btn-danger"
-                      disabled={disconnect.isPending}
-                      onClick={() => disconnect.mutate(c.clientId)}
-                    >
-                      Disconnect
-                    </button>
-                  </div>
-                  {c.moderator && enabled === c.clientId && (
-                    <p className="f6 color-fg-muted mt-2 mb-0" role="status">
-                      Reconnect the app to see the moderator tools.
-                    </p>
-                  )}
-                  {confirming === c.clientId && !c.moderator && (
-                    <div
-                      className="flash flash-warn mt-2 d-flex flex-items-center flex-wrap"
-                      style={{ gap: 8 }}
-                      role="group"
-                      aria-label={`Make ${c.name} a moderator`}
-                      aria-describedby={`moderator-confirm-${c.clientId}`}
-                    >
-                      <span
-                        id={`moderator-confirm-${c.clientId}`}
-                        className="flex-1"
-                        style={{ minWidth: 200 }}
-                      >
-                        Make <strong>{c.name}</strong> (<AppIdentity app={c} />)
-                        a moderator? A moderator can approve agent findings and
-                        pull requests as you.
-                      </span>
-                      <button
-                        className="btn btn-sm btn-danger"
-                        // Moves focus into the confirmation as it opens.
-                        autoFocus
-                        disabled={moderator.isPending}
-                        onClick={() =>
-                          moderator.mutate({ clientId: c.clientId, on: true })
-                        }
-                      >
-                        Make moderator
-                      </button>
-                      <button
-                        className="btn btn-sm"
-                        onClick={() => setConfirming(null)}
-                      >
-                        Cancel
-                      </button>
-                    </div>
-                  )}
-                </div>
-              ))
-            )}
-          </div>
-          <p
-            className="f6 color-fg-muted mt-2 d-flex flex-items-center"
-            style={{ gap: 4 }}
-          >
-            <ShieldCheckIcon size={14} /> Disconnecting stops an app
-            immediately; it has to ask for your approval again to reconnect.
-          </p>
-          <p
-            className="f6 color-fg-attention mt-1 d-flex flex-items-center"
-            style={{ gap: 4 }}
-          >
-            <AlertIcon size={14} /> A moderator can approve agent findings and
-            pull requests as you.
-          </p>
-        </div>
-      </div>
+            </Section>
+            <Section title="Moderator tools">
+              <p className="small muted">
+                Only apps you mark as a moderator above see these.
+              </p>
+              <div className="panel">
+                <ul className="rowlist">
+                  {info.data.moderatorTools.map((t) => (
+                    <ToolRow key={t.name} tool={t} />
+                  ))}
+                </ul>
+              </div>
+            </Section>
+          </>
+        )}
+      </SettingsFrame>
     </>
   );
 }

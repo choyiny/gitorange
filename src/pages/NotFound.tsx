@@ -8,16 +8,30 @@ export const NOT_FOUND_HEAD: PageHeadInfo = {
   title: 'Page not found',
 };
 
-/** 404, inside the shell (and inside a repository's header when the repository exists). */
+/**
+ * 404, inside the shell (and inside a repository's header when the repository exists). It is also what a person
+ * sees for a page they may not open, so it never says which.
+ */
 export function NotFound() {
   usePageHead(NOT_FOUND_HEAD);
   return (
-    <div className="container-md text-center py-6 px-3">
-      <h2 className="f00-light color-fg-muted mb-2">404</h2>
-      <p className="f3 mb-4">This is not the web page you are looking for.</p>
-      <Link to="/" className="btn">
-        Go to your dashboard
-      </Link>
-    </div>
+    <section className="notfound" aria-labelledby="not-found-title">
+      <p className="nf-code mono" aria-hidden="true">
+        404
+      </p>
+      <h2 id="not-found-title">This page does not exist</h2>
+      <p>
+        This is not the web page you are looking for. It may have moved, or you
+        may not have access to it.
+      </p>
+      <div className="actions">
+        <Link to="/" className="btn primary">
+          Go home
+        </Link>
+        <Link to="/repos" className="btn">
+          Browse repositories
+        </Link>
+      </div>
+    </section>
   );
 }
