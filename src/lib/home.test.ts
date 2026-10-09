@@ -3,6 +3,7 @@ import {
   brokenRepos,
   dateEyebrow,
   decisionsOf,
+  healthState,
   homeHeadline,
   homeLede,
   isNotable,
@@ -121,40 +122,119 @@ describe('decisionsOf', () => {
 });
 
 describe('homeHeadline', () => {
-  it('reassures when nothing is broken and says what needs you', () => {
-    expect(homeHeadline({ decisions: 1, others: 3, broken: [] })).toBe(
+  const fine = { kind: 'fine', checked: 3, total: 3 } as const;
+
+  it('reassures when every repository was checked and nothing is broken', () => {
+    const h = (decisions: number, others: number) =>
+      homeHeadline({ decisions, others, health: fine });
+    expect(h(1, 3)).toBe(
       'Nothing is broken. 1 decision and 3 other items need you.'
     );
-    expect(homeHeadline({ decisions: 1, others: 0, broken: [] })).toBe(
-      'Nothing is broken. 1 decision needs you.'
+    expect(h(1, 0)).toBe('Nothing is broken. 1 decision needs you.');
+    expect(h(2, 0)).toBe('Nothing is broken. 2 decisions need you.');
+    expect(h(0, 1)).toBe('Nothing is broken. 1 item needs you.');
+    expect(h(0, 4)).toBe('Nothing is broken. 4 items need you.');
+    expect(h(0, 0)).toBe('Nothing is broken. Nothing needs you.');
+  });
+
+  it('only claims what was checked when there are more repositories', () => {
+    expect(
+      homeHeadline({
+        decisions: 1,
+        others: 0,
+        health: { kind: 'fine', checked: 3, total: 7 },
+      })
+    ).toBe(
+      'Nothing is broken in your 3 busiest repositories. 1 decision needs you.'
     );
-    expect(homeHeadline({ decisions: 2, others: 0, broken: [] })).toBe(
-      'Nothing is broken. 2 decisions need you.'
-    );
-    expect(homeHeadline({ decisions: 0, others: 1, broken: [] })).toBe(
-      'Nothing is broken. 1 item needs you.'
-    );
-    expect(homeHeadline({ decisions: 0, others: 4, broken: [] })).toBe(
-      'Nothing is broken. 4 items need you.'
-    );
-    expect(homeHeadline({ decisions: 0, others: 0, broken: [] })).toBe(
-      'Nothing is broken. Nothing needs you.'
-    );
+    expect(
+      homeHeadline({
+        decisions: 0,
+        others: 0,
+        health: { kind: 'fine', checked: 1, total: 2 },
+      })
+    ).toBe('Nothing is broken in your busiest repository. Nothing needs you.');
   });
 
   it('says what is failing instead of reassuring', () => {
     expect(
-      homeHeadline({ decisions: 0, others: 0, broken: ['a/one', 'a/two'] })
+      homeHeadline({
+        decisions: 0,
+        others: 0,
+        health: { kind: 'failing', repos: ['a/one', 'a/two'] },
+      })
     ).toBe('Tests are failing on a/one and a/two. Nothing needs you.');
   });
 
-  it('does not claim nothing is broken when it could not check', () => {
-    expect(homeHeadline({ decisions: 1, others: 0, broken: null })).toBe(
-      '1 decision needs you.'
-    );
-    expect(homeHeadline({ decisions: 0, others: 0, broken: null })).toBe(
-      'Nothing needs you.'
-    );
+  it('makes no claim when health could not be read', () => {
+    expect(
+      homeHeadline({
+        decisions: 1,
+        others: 0,
+        health: { kind: 'unavailable' },
+      })
+    ).toBe('1 decision needs you.');
+    expect(
+      homeHeadline({
+        decisions: 0,
+        others: 0,
+        health: { kind: 'unavailable' },
+      })
+    ).toBe('Nothing needs you.');
+  });
+
+  it('says nothing while it is still loading', () => {
+    expect(
+      homeHeadline({ decisions: 1, others: 0, health: { kind: 'loading' } })
+    ).toBeNull();
+  });
+});
+
+describe('healthState', () => {
+  const base = {
+    loading: false,
+    unavailable: false,
+    total: 5,
+    checked: 3,
+    pending: 0,
+    failed: 0,
+    failing: [] as string[],
+  };
+
+  it('is loading until the board, the agents and every report have settled', () => {
+    expect(healthState({ ...base, loading: true })).toEqual({
+      kind: 'loading',
+    });
+    expect(healthState({ ...base, pending: 1 })).toEqual({ kind: 'loading' });
+    // Even a repository already known to fail waits for the others, so the sentence does not grow.
+    expect(healthState({ ...base, pending: 1, failing: ['a/b'] })).toEqual({
+      kind: 'loading',
+    });
+  });
+
+  it('is fine for as many repositories as were checked', () => {
+    expect(healthState(base)).toEqual({ kind: 'fine', checked: 3, total: 5 });
+    expect(healthState({ ...base, total: 0, checked: 0 })).toEqual({
+      kind: 'fine',
+      checked: 0,
+      total: 0,
+    });
+  });
+
+  it('reports failing tests whatever else failed', () => {
+    expect(healthState({ ...base, failing: ['a/b'], failed: 1 })).toEqual({
+      kind: 'failing',
+      repos: ['a/b'],
+    });
+  });
+
+  it('is unavailable when a report or the lists could not be read', () => {
+    expect(healthState({ ...base, failed: 1 })).toEqual({
+      kind: 'unavailable',
+    });
+    expect(healthState({ ...base, unavailable: true, loading: true })).toEqual({
+      kind: 'unavailable',
+    });
   });
 });
 

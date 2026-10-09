@@ -39,6 +39,7 @@ import {
   brokenRepos,
   dateEyebrow,
   decisionsOf,
+  healthState,
   homeHeadline,
   homeLede,
   mergeActivity,
@@ -68,7 +69,7 @@ const ACTIVITY_LIMIT = 8;
 const ASIDE_REPOS = 8;
 const RECENT_REPOS = 6;
 const REFRESH = {
-  refetchInterval: BOARD_REFRESH_MS * 2,
+  refetchInterval: BOARD_REFRESH_MS,
   refetchOnWindowFocus: true,
 } as const;
 
@@ -92,8 +93,14 @@ export default function Home() {
     refetchOnWindowFocus: true,
   });
 
+  // Which repository is a reviewer agent's decides what is code, what is busiest and what each list shows, so nothing
+  // is classified until both the repositories and the agents have loaded.
+  const loaded = !!stats.data && !!agents.data;
+  const boardFailed =
+    (!stats.data && stats.isError) || (!agents.data && agents.isError);
+  const boardLoading = !loaded && !boardFailed;
   const rows = useMemo(
-    () => boardRows(stats.data ?? [], agents.data ?? []),
+    () => (stats.data && agents.data ? boardRows(stats.data, agents.data) : []),
     [stats.data, agents.data]
   );
   const top = useMemo(() => topByActivity(rows, HEALTH_REPOS), [rows]);
@@ -137,16 +144,16 @@ export default function Home() {
       : []
   );
   const healthSettled = healths.every((h) => !h.isPending);
-  const anyHealthFailed = healths.some((h) => h.isError);
-  const failing = brokenRepos(reports);
-  // Nothing is "not broken" until every repository checked has answered, or when the repositories could not be read.
-  const broken = stats.isError
-    ? null
-    : failing.length
-      ? failing
-      : healthSettled && !anyHealthFailed
-        ? []
-        : null;
+  const codeRepos = rows.filter((r) => r.agent === null).length;
+  const health = healthState({
+    loading: boardLoading,
+    unavailable: boardFailed,
+    total: codeRepos,
+    checked: top.length,
+    pending: healths.filter((h) => h.isPending).length,
+    failed: healths.filter((h) => h.isError).length,
+    failing: brokenRepos(reports),
+  });
 
   const decisions = useMemo(
     () => decisionsOf(approvals.data?.items ?? [], user.username ?? null),
@@ -156,17 +163,14 @@ export default function Home() {
   const cards = decisions.slice(0, MAX_DECISIONS);
   const rest = Math.max(0, waiting - cards.length);
 
-  const ready =
-    !approvals.isPending &&
-    !stats.isPending &&
-    (top.length === 0 || healthSettled);
   const headline = approvals.isError
     ? 'We couldn’t check what needs you.'
     : homeHeadline({
         decisions: decisions.length,
         others: Math.max(0, waiting - decisions.length),
-        broken,
+        health,
       });
+  const ready = !approvals.isPending && headline !== null;
 
   const activity = useMemo(
     () =>
@@ -200,8 +204,7 @@ export default function Home() {
         .slice(0, RECENT_REPOS),
     [rows]
   );
-  const noRepos = stats.isSuccess && rows.length === 0;
-  const codeRepos = rows.filter((r) => r.agent === null).length;
+  const noRepos = stats.data?.length === 0;
 
   return (
     <>
@@ -210,7 +213,7 @@ export default function Home() {
         {ready ? (
           <>
             <h2 className="ph-title">{headline}</h2>
-            {stats.isSuccess && (
+            {loaded && (
               <p className="lede">
                 {homeLede({
                   merged7d: totals.merged7d,
@@ -298,11 +301,18 @@ export default function Home() {
             </section>
           )}
 
-          {stats.isError && (
+          {!stats.data && stats.isError && (
             <LoadError
               what="your repositories"
               error={stats.error}
               onRetry={() => stats.refetch()}
+            />
+          )}
+          {!agents.data && agents.isError && (
+            <LoadError
+              what="the reviewer agents"
+              error={agents.error}
+              onRetry={() => agents.refetch()}
             />
           )}
 
@@ -430,7 +440,7 @@ export default function Home() {
               </ul>
             </Section>
           )}
-          {stats.isPending && (
+          {boardLoading && (
             <div className="sk-rows" role="status" aria-label="Loading">
               <div className="sk sk-row tall" />
               <div className="sk sk-row tall" />
@@ -456,7 +466,7 @@ export default function Home() {
               value={find}
               onChange={(e) => setFind(e.target.value)}
             />
-            {stats.isPending ? (
+            {boardLoading ? (
               <div className="sk-rows">
                 <div className="sk sk-line w60" />
                 <div className="sk sk-line w50" />
@@ -472,7 +482,12 @@ export default function Home() {
                     </Link>
                   </li>
                 ))}
-                {stats.isSuccess && mine.length === 0 && (
+                {boardFailed && (
+                  <li className="muted small">
+                    Could not load your repositories.
+                  </li>
+                )}
+                {loaded && mine.length === 0 && (
                   <li className="muted small">
                     You don't have any repositories yet.
                   </li>
@@ -494,8 +509,10 @@ export default function Home() {
 
           <section className="panel pad">
             <h2>Your crew</h2>
-            {stats.isPending ? (
+            {boardLoading ? (
               <div className="sk sk-line w60" />
+            ) : boardFailed ? (
+              <p className="muted small">Could not load your crew.</p>
             ) : crew.length > 0 ? (
               <div className="crew-stack">
                 {crew.map((m) => (
@@ -586,7 +603,11 @@ function DecisionCard({
             ))}
         </span>
       </div>
-      <Link className="btn primary" to={`/approvals/${flag.id}`}>
+      <Link
+        className="btn primary"
+        to={`/approvals/${flag.id}`}
+        aria-label={`Answer ${name}'s question about ${item.repo.fullName}#${n}`}
+      >
         Answer
       </Link>
     </div>

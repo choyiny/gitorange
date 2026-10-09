@@ -37,8 +37,17 @@ export default function Repositories() {
   const agents = useAgentList();
   const needYou = useApprovalCount();
 
+  // Which repository is a reviewer agent's decides the filters, the counts and the buttons, so the board waits for both
+  // the repositories and the agents (a failure to load either is an error with Retry, never a half-sorted list).
+  const failure =
+    !stats.data && stats.isError
+      ? { what: 'the repositories', error: stats.error }
+      : !agents.data && agents.isError
+        ? { what: 'the reviewer agents', error: agents.error }
+        : null;
+  const loading = !stats.data || !agents.data;
   const rows = useMemo(
-    () => boardRows(stats.data ?? [], agents.data ?? []),
+    () => (stats.data && agents.data ? boardRows(stats.data, agents.data) : []),
     [stats.data, agents.data]
   );
   const crew = useMemo(() => crewActivity(rows), [rows]);
@@ -84,7 +93,16 @@ export default function Repositories() {
         }
       />
 
-      {!stats.data && !stats.isError ? (
+      {failure ? (
+        <LoadError
+          what={failure.what}
+          error={failure.error}
+          onRetry={() => {
+            if (!stats.data) void stats.refetch();
+            if (!agents.data) void agents.refetch();
+          }}
+        />
+      ) : loading ? (
         <div
           className="sk-rows"
           role="status"
@@ -95,12 +113,6 @@ export default function Repositories() {
           <div className="sk sk-row tall" />
           <div className="sk sk-row tall" />
         </div>
-      ) : !stats.data ? (
-        <LoadError
-          what="the repositories"
-          error={stats.error}
-          onRetry={() => stats.refetch()}
-        />
       ) : rows.length === 0 ? (
         <section className="panel">
           <EmptyState
@@ -116,14 +128,17 @@ export default function Repositories() {
         </section>
       ) : (
         <>
-          {stats.isError && (
+          {(stats.isError || agents.isError) && (
             <Notice
               tone="warn"
               action={
                 <button
                   type="button"
                   className="btn small"
-                  onClick={() => stats.refetch()}
+                  onClick={() => {
+                    void stats.refetch();
+                    void agents.refetch();
+                  }}
                 >
                   Retry
                 </button>

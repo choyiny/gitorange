@@ -52,17 +52,57 @@ const joinAnd = (xs: string[]) =>
     ? (xs[0] ?? '')
     : `${xs.slice(0, -1).join(', ')} and ${xs[xs.length - 1]}`;
 
+/** What is known about whether anything is broken, from the health of the repositories Home checked. */
+export type HealthState =
+  /** Still reading: the statement shows a placeholder rather than a claim that may change. */
+  | { kind: 'loading' }
+  /** The repositories, the reviewer agents or a health report could not be read: no claim either way. */
+  | { kind: 'unavailable' }
+  /** Tests on main are failing in these repositories. */
+  | { kind: 'failing'; repos: string[] }
+  /** Every report arrived and none has failing tests, for `checked` of `total` code repositories. */
+  | { kind: 'fine'; checked: number; total: number };
+
 /**
- * Home's statement. `decisions` are plain questions for the owner and `others` everything else waiting in Approvals.
- * `broken` lists the repositories whose tests on main are failing, or is null when health could not be read (then it
- * does not claim that nothing is broken).
+ * What can be said about health. Nothing before everything Home asked for has settled; a failure to read anything
+ * means no claim, unless a repository is known to be failing; and only when every report is in is it "fine", for
+ * as many repositories as were actually checked.
+ */
+export function healthState(input: {
+  /** The repository board or the reviewer agents are still loading. */
+  loading: boolean;
+  /** The repository board or the reviewer agents could not be loaded. */
+  unavailable: boolean;
+  /** Code repositories on the instance. */
+  total: number;
+  /** Health reports asked for (the busiest repositories). */
+  checked: number;
+  /** Of those, still loading. */
+  pending: number;
+  /** Of those, failed. */
+  failed: number;
+  /** The repositories whose answered reports show failing tests on main. */
+  failing: string[];
+}): HealthState {
+  if (input.unavailable) return { kind: 'unavailable' };
+  if (input.loading || input.pending > 0) return { kind: 'loading' };
+  if (input.failing.length) return { kind: 'failing', repos: input.failing };
+  if (input.failed > 0) return { kind: 'unavailable' };
+  return { kind: 'fine', checked: input.checked, total: input.total };
+}
+
+/**
+ * Home's statement, or null while it is not known yet. `decisions` are plain questions for the owner and `others`
+ * everything else waiting in Approvals. It only says nothing is broken for the repositories that were checked: with
+ * more code repositories than that, it says "in your 3 busiest repositories".
  */
 export function homeHeadline(input: {
   decisions: number;
   others: number;
-  broken: string[] | null;
-}): string {
-  const { decisions, others, broken } = input;
+  health: HealthState;
+}): string | null {
+  const { decisions, others, health } = input;
+  if (health.kind === 'loading') return null;
   const parts = [
     decisions > 0 && plural(decisions, 'decision'),
     others > 0 &&
@@ -71,9 +111,21 @@ export function homeHeadline(input: {
   const needs = parts.length
     ? `${joinAnd(parts)} ${decisions + others === 1 ? 'needs' : 'need'} you.`
     : 'Nothing needs you.';
-  if (broken === null) return needs;
-  if (broken.length) return `Tests are failing on ${joinAnd(broken)}. ${needs}`;
-  return `Nothing is broken. ${needs}`;
+  switch (health.kind) {
+    case 'unavailable':
+      return needs;
+    case 'failing':
+      return `Tests are failing on ${joinAnd(health.repos)}. ${needs}`;
+    case 'fine': {
+      const checked =
+        health.checked === 1
+          ? 'busiest repository'
+          : `${health.checked} busiest repositories`;
+      return health.checked >= health.total
+        ? `Nothing is broken. ${needs}`
+        : `Nothing is broken in your ${checked}. ${needs}`;
+    }
+  }
 }
 
 /** The sentence under Home's statement: what merged in the last seven days and how much needed no merge click. */

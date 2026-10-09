@@ -46,6 +46,9 @@ body:has(.app) {
 }
 /* The work panel is the only scroller, so its rounded inset and the chrome around it hold still. */
 .content {
+  /* The containing block for anything absolutely positioned inside a page (a visually hidden label, a menu), so
+     it scrolls with the panel and never stretches the window. */
+  position: relative;
   flex: 1;
   min-height: 0;
   overflow-x: hidden;

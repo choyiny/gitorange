@@ -308,8 +308,11 @@ describe('pullChip', () => {
       label: '2 queued to merge',
     });
   });
-  it('is all clear with nothing open, and plain when the buckets miss a pull request', () => {
-    expect(pullChip(p({}))).toEqual({ tone: 'good', label: 'All clear' });
+  it('is neutral with nothing open, and plain when the buckets miss a pull request', () => {
+    expect(pullChip(p({}))).toEqual({
+      tone: 'off',
+      label: 'No open pull requests',
+    });
     expect(pullChip(p({ open: 2 }))).toEqual({ tone: 'off', label: '2 open' });
   });
 });

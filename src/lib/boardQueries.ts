@@ -6,7 +6,7 @@ import { api, qk } from './uiApi';
  * followed and Approvals, never `['repos', 'stats']`, so Home and the board poll (and refresh when the window is
  * focused again).
  */
-export const BOARD_REFRESH_MS = 30_000;
+export const BOARD_REFRESH_MS = 60_000;
 
 /** Every repository you can see, with its board numbers. Shared by Home and the Repositories board. */
 export function useRepoStats() {

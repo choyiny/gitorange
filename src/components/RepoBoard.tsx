@@ -186,16 +186,28 @@ export function CodeRow({ row }: { row: BoardRow }) {
       <div className="board-health">
         <Chip tone={chip.tone}>{chip.label}</Chip>
         {s.pulls.needsPerson > 0 && (
-          <Link className="small" to="/approvals">
+          <Link
+            className="small"
+            to="/approvals"
+            aria-label={`Decide in Approvals: ${repo.fullName}`}
+          >
             Decide in Approvals
           </Link>
         )}
         <span className="board-actions">
-          <Link className="btn small" to={`/${repo.fullName}/branches`}>
+          <Link
+            className="btn small"
+            to={`/${repo.fullName}/branches`}
+            aria-label={`Branch map of ${repo.fullName}`}
+          >
             <GitBranchIcon size={14} />
             Branch map
           </Link>
-          <Link className="btn small primary" to={`/${repo.fullName}`}>
+          <Link
+            className="btn small primary"
+            to={`/${repo.fullName}`}
+            aria-label={`Open ${repo.fullName}`}
+          >
             Open
           </Link>
         </span>
@@ -314,10 +326,18 @@ export function AgentRow({
           <Chip tone="off">Off</Chip>
         )}
         <span className="board-actions">
-          <Link className="btn small" to={`/${handle}`}>
+          <Link
+            className="btn small"
+            to={`/${handle}`}
+            aria-label={`${agent?.name ?? handle}'s profile`}
+          >
             Profile
           </Link>
-          <Link className="btn small primary" to={`/${repo.fullName}`}>
+          <Link
+            className="btn small primary"
+            to={`/${repo.fullName}`}
+            aria-label={`Open ${repo.fullName}`}
+          >
             Open
           </Link>
         </span>

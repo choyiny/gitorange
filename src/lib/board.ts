@@ -189,7 +189,7 @@ export function pullChip(pulls: RepoStats['pulls']): {
   if (pulls.queued > 0)
     return { tone: 'good', label: `${pulls.queued} queued to merge` };
   if (pulls.open > 0) return { tone: 'off', label: `${pulls.open} open` };
-  return { tone: 'good', label: 'All clear' };
+  return { tone: 'off', label: 'No open pull requests' };
 }
 
 /** What blocks a merge, then what is in progress, then what is done: the order an agent's work is told in. */

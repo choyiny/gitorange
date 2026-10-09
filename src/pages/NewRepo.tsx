@@ -263,7 +263,33 @@ export default function NewRepo() {
               )}
             </fieldset>
 
-            {crew.length > 0 && (
+            {agents.isPending ? (
+              <fieldset className="newrepo-crew" aria-busy="true">
+                <legend>Reviewer agents</legend>
+                <div className="sk sk-line w50" />
+                <div className="sk sk-line w60" />
+              </fieldset>
+            ) : agents.isError ? (
+              <fieldset className="newrepo-crew">
+                <legend>Reviewer agents</legend>
+                <Notice
+                  tone="warn"
+                  action={
+                    <button
+                      type="button"
+                      className="btn small"
+                      onClick={() => agents.refetch()}
+                    >
+                      Retry
+                    </button>
+                  }
+                >
+                  Could not load the reviewer agents (
+                  {errorMessage(agents.error)}). You can add them in the
+                  repository's settings after creating it.
+                </Notice>
+              </fieldset>
+            ) : crew.length > 0 ? (
               <fieldset className="newrepo-crew">
                 <legend>Reviewer agents</legend>
                 {crew.map((a) => (
@@ -295,7 +321,7 @@ export default function NewRepo() {
                   can change this later in the repository's settings.
                 </span>
               </fieldset>
-            )}
+            ) : null}
 
             <label className="newrepo-readme">
               <input
