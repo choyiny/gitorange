@@ -5,6 +5,7 @@
   "type": "module",
   "scripts": {
     "dev": "node scripts/dev.mjs",
+    "seed:demo": "node scripts/seed-demo.mjs",
     "build": "vite build",
     "preview": "vite preview",
     "deploy": "vite build && wrangler deploy",

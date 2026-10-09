@@ -23,6 +23,7 @@ The app, API, and git endpoint share one origin: `git clone http://localhost:808
 | Script                              | What it does                                                                         |
 | ----------------------------------- | ------------------------------------------------------------------------------------ |
 | `yarn dev`                          | Vite dev server running the Worker in `env.dev`, under a memory watchdog (below)     |
+| `yarn seed:demo`                    | Fills a running local instance with demo data (see below)                            |
 | `yarn test`                         | Vitest inside workerd against a real local D1, with an in-memory Artifacts fake      |
 | `yarn typecheck`                    | Type-checks the SPA and the Worker                                                   |
 | `yarn format` / `yarn format:check` | Prettier                                                                             |
@@ -46,6 +47,33 @@ migrations/          Generated D1 migrations
 ```
 
 API docs are served at `/api/swagger-ui` while running.
+
+## Demo data
+
+`yarn seed:demo` fills a running local instance with a project to look at: a teammate (`cho`, Cho Yin), an `invoices`
+repository with ten days of history, eight merged pull requests (three with their branches left behind), six open ones
+(one stacked on another, opened by Claude Code, Codex and by hand), the reviewer crew with a finding in each state
+(an owner question, a change request, one assigned to `cho`, one decided by GitOrange AI), and a week of test runs.
+Every page of the redesign has something to show, and it makes a local demo possible.
+
+```bash
+yarn dev                                       # in one terminal; sign in once and create the first admin
+SEED_ADMIN=<admin username> SEED_PASSWORD=<their password> yarn seed:demo --url http://localhost:8080
+```
+
+- **Run it from the checkout `yarn dev` runs from.** The API cannot write reviews, backdated dates or test runs, so the
+  script writes those rows into that checkout's local D1 with `wrangler d1 execute DB --local --env dev`.
+- **Local only.** It refuses any URL whose host is not `localhost`, `127.0.0.1`, `[::1]`, `*.localhost` or `*.test`.
+- **It uses the real services in the `gitorange-dev` namespace** (Artifacts and Workers AI), as `yarn dev` does: it creates
+  the `invoices` repository and the crew's repositories, pushes the history over git, and opens and lands pull requests
+  through the API. Opening a pull request starts the usual background AI work, so a run takes a few minutes.
+- **Running it again finds the demo and stops.** `--reset` deletes the `invoices` repository and builds it again;
+  `--dry-run` builds the git history in a temporary folder and checks the SQL against the migrations, touching no server.
+- `cho` gets the password in `SEED_TEAMMATE_PASSWORD`, or the local demo default at the top of `scripts/seed-demo.mjs`.
+  Nothing else is printed or stored: the admin's password is only used to sign in, and the git token it creates is deleted
+  at the end.
+- The agents do not really run: their reviews and findings are written directly, as they would have been. Containers are
+  off locally, so the demo's test runs are written the same way.
 
 ## CI
 
