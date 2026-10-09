@@ -26,7 +26,10 @@ describe('adminSection', () => {
     expect(adminSection('/admin/usage', '')).toBe('usage');
     expect(adminSection('/admin/audit', '')).toBe('audit');
     expect(adminSection('/admin/agents', '')).toBe('agents');
-    expect(adminSection('/agents', '')).toBe('agents');
+  });
+  it('does not count the public Agents directory as Site admin', () => {
+    expect(adminSection('/agents', '')).toBeNull();
+    expect(adminSection('/agents/new', '')).toBeNull();
   });
   it('is not the Site admin outside it', () => {
     expect(adminSection('/settings/tokens', '')).toBeNull();
