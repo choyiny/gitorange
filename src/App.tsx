@@ -21,7 +21,8 @@ import { PageHeadProvider, useCurrentPageHead } from '@/components/ui/PageHead';
 import Setup from './pages/Setup';
 import Login from './pages/Login';
 import AcceptInvite from './pages/AcceptInvite';
-import Dashboard from './pages/Dashboard';
+import Home from './pages/Home';
+import Repositories from './pages/Repositories';
 import Approvals from './pages/Approvals';
 import NewRepo from './pages/NewRepo';
 import Profile from './pages/Profile';
@@ -107,9 +108,8 @@ const App = () => (
             {/* Signed in, but an authorization page of its own: no rail. */}
             <Route path="/oauth/consent" element={<OAuthConsent />} />
             <Route element={<AppShell />}>
-              <Route path="/" element={<Dashboard />} />
-              {/* The Repositories board (crew redesign C1); the dashboard lists them until then. */}
-              <Route path="/repos" element={<Dashboard />} />
+              <Route path="/" element={<Home />} />
+              <Route path="/repos" element={<Repositories />} />
               {/* The Agents directory (crew redesign C10); Site admin → Agents until then. */}
               <Route
                 path="/agents"

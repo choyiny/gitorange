@@ -12,4 +12,7 @@
 @import './pages/insights.css';
 @import './pages/code.css';
 @import './pages/commits.css';
+@import './pages/home.css';
+@import './pages/repos.css';
+@import './pages/new-repo.css';
 @import './legacy.css';
