@@ -73,14 +73,17 @@ const FIRST_KEY = /^(?:[A-Za-z_][\w.-]*|"[^"\n]*"|'[^'\n]*')[ \t]*:(?:[ \t]|$)/;
 
 /**
  * A leading `---` YAML block and the text after it. An agent's AGENT.md starts with its settings this way. It needs
- * a closing `---` line and must begin with a `key:`, so a horizontal rule is not mistaken for one.
+ * a closing `---` line and must begin with a `key:` (after any blank or `#` comment lines, which an agent's
+ * settings open with), so a horizontal rule is not mistaken for one.
  */
 export function splitFrontmatter(text: string): {
   frontmatter: string | null;
   body: string;
 } {
   const m = /^---[ \t]*\r?\n([\s\S]*?)\r?\n---[ \t]*(?:\r?\n|$)/.exec(text);
-  if (!m || !FIRST_KEY.test(m[1])) return { frontmatter: null, body: text };
+  const first = m?.[1].split(/\r?\n/).find((l) => l.trim() && !/^\s*#/.test(l));
+  if (!m || first === undefined || !FIRST_KEY.test(first))
+    return { frontmatter: null, body: text };
   return {
     frontmatter: m[1].replace(/\r/g, ''),
     body: text.slice(m[0].length).replace(/^(?:[ \t]*\r?\n)+/, ''),

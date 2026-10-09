@@ -1,7 +1,7 @@
 import { Link, useParams } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
 import {
-  DependabotIcon,
+  ClockIcon,
   MailIcon,
   OrganizationIcon,
   RepoIcon,
@@ -9,252 +9,184 @@ import {
 import { api, qk, type Namespace } from '@/lib/uiApi';
 import { ApiError } from '@/lib/api';
 import { useCurrentUser } from '@/lib/auth';
-import { timeAgo } from '@/lib/format';
-import { dismissedText, LESSON_STATUS, lessonNote } from '@/lib/lessons';
-import { usePageHead } from '@/components/ui/PageHead';
+import { fullDate, timeAgo } from '@/lib/format';
 import { Avatar } from '@/components/Avatar';
-import { REVIEWER_STATUS } from '@/components/ReviewersBox';
-import { Spinner } from '@/components/Spinner';
 import { VisibilityLabel } from '@/components/VisibilityLabel';
+import { useEnter } from '@/components/code/useEnter';
+import { LoadError } from '@/components/Notice';
+import { Chip } from '@/components/ui/Chip';
+import { EmptyState } from '@/components/ui/EmptyState';
+import { Section } from '@/components/ui/Section';
+import { Skeleton } from '@/components/ui/Skeleton';
+import { usePageHead } from '@/components/ui/PageHead';
+import AgentProfile from './AgentProfile';
 import { NOT_FOUND_HEAD, NotFound } from './NotFound';
 
-/** A person's page or the team's page, at `/<username>` or `/<team slug>`. */
+/**
+ * Whoever lives at `/<name>`: a person, the team or a reviewer agent. A person and the team get their repositories;
+ * an agent gets its own profile (`AgentProfile`).
+ */
 export default function Profile() {
   const { owner = '' } = useParams();
-  const me = useCurrentUser();
   const q = useQuery({
     queryKey: qk.namespace(owner),
     queryFn: () => api.namespace(owner),
   });
   const missing = q.error instanceof ApiError && q.error.status === 404;
+  const data = q.data;
   usePageHead(
     missing
       ? NOT_FOUND_HEAD
-      : {
-          icon: q.data?.agent ? 'crew' : 'person',
-          crumbs: [{ label: owner }],
-          title: owner,
-        }
+      : data?.agent
+        ? {
+            icon: 'crew',
+            crumbs: [
+              { label: 'Agents', to: '/agents' },
+              { label: data.agent.name },
+            ],
+            title: data.agent.name,
+          }
+        : {
+            icon: 'person',
+            crumbs: [{ label: owner }],
+            title: data?.owner.name || owner,
+          }
   );
+  const entering = useEnter(!!data);
   if (missing) return <NotFound />;
-  const data = q.data;
-  const isTeam = data?.kind === 'team';
-  const isMe = data?.kind === 'user' && data.owner.id === me?.id;
+  if (q.isError && !data)
+    return (
+      <LoadError
+        what={`@${owner}`}
+        error={q.error}
+        onRetry={() => void q.refetch()}
+      />
+    );
+  if (!data) return <Skeleton kind="detail" />;
   return (
-    <>
-      <nav className="UnderlineNav" aria-label="Profile">
-        <div className="UnderlineNav-body">
-          <span className="UnderlineNav-item selected">
-            <span className="UnderlineNav-octicon">
-              <RepoIcon />
-            </span>
-            <span className="text-bold">Repositories</span>
-            <span className="Counter repo-tab-count">
-              {data?.repositories.length ?? ''}
-            </span>
-          </span>
-        </div>
-      </nav>
-      {!data ? (
-        <Spinner />
+    <div className={entering}>
+      {data.agent ? (
+        <AgentProfile
+          key={data.agent.username}
+          agent={data.agent}
+          repositories={data.repositories}
+        />
       ) : (
-        <div
-          className="container-xl px-3 px-md-4 px-lg-5 py-4 d-flex flex-column flex-md-row"
-          style={{ gap: 24 }}
-        >
-          <div className="col-md-3">
-            <Avatar user={data.owner} size={260} square={isTeam} />
-            <h2 className="mt-3 lh-condensed">
-              <span className="d-block f3 text-bold">{data.owner.name}</span>
-              <span className="d-block f4 text-light color-fg-muted">
-                {data.owner.username}
-              </span>
-            </h2>
-            {data.agent ? (
-              <AgentAbout agent={data.agent} />
-            ) : isTeam ? (
-              <p
-                className="f6 color-fg-muted mt-2 d-flex flex-items-center"
-                style={{ gap: 4 }}
-              >
-                <OrganizationIcon /> Team · every member can see these
-                repositories
-              </p>
-            ) : (
-              <>
-                {data.owner.email && (
-                  <p
-                    className="f5 mt-2 d-flex flex-items-center"
-                    style={{ gap: 6, minWidth: 0 }}
-                  >
-                    <MailIcon className="color-fg-muted flex-shrink-0" />
-                    <a
-                      href={`mailto:${data.owner.email}`}
-                      className="color-fg-default text-truncate"
-                      title={data.owner.email}
-                    >
-                      {data.owner.email}
-                    </a>
-                  </p>
-                )}
-                <p className="f6 color-fg-muted mt-2">
-                  Joined {timeAgo(data.owner.createdAt)}
-                </p>
-              </>
-            )}
-          </div>
-          <div className="flex-1">
-            {(isTeam || isMe) && (
-              <div className="d-flex flex-justify-end mb-2">
-                <Link
-                  to={isTeam ? '/new?owner=team' : '/new'}
-                  className="btn btn-primary btn-sm d-inline-flex flex-items-center"
-                  style={{ gap: 4 }}
-                >
-                  <RepoIcon /> New
-                </Link>
-              </div>
-            )}
-            {data.repositories.length === 0 ? (
-              <div className="blankslate">
-                <h3 className="blankslate-heading">
-                  {isTeam
-                    ? `${data.owner.name} doesn't have any repositories yet.`
-                    : `${data.owner.username} doesn't have any repositories you can see yet.`}
-                </h3>
-              </div>
-            ) : (
-              <ul className="list-style-none">
-                {data.repositories.map((r) => (
-                  <li key={r.id} className="py-4 border-bottom">
-                    <h3 className="f3 text-normal mb-1">
-                      <Link to={`/${r.fullName}`} className="text-bold">
-                        {r.name}
-                      </Link>
-                      <VisibilityLabel
-                        visibility={r.visibility}
-                        className="ml-2 v-align-middle"
-                      />
-                    </h3>
-                    {r.description && (
-                      <p className="color-fg-muted f5 mb-2">{r.description}</p>
-                    )}
-                    <div className="f6 color-fg-muted">
-                      Updated {timeAgo(r.updatedAt)}
-                    </div>
-                  </li>
-                ))}
-              </ul>
-            )}
-          </div>
-        </div>
+        <PersonProfile key={data.owner.id} data={data} />
       )}
-    </>
+    </div>
   );
 }
 
-/** The left column of an agent's profile: what it is, what it reviews, where. */
-function AgentAbout({ agent }: { agent: NonNullable<Namespace['agent']> }) {
+/** A person's page or the team's: who they are, and the repositories you can see that they own. */
+function PersonProfile({ data }: { data: Namespace }) {
+  const me = useCurrentUser();
+  const isTeam = data.kind === 'team';
+  const isMe = data.kind === 'user' && data.owner.id === me?.id;
+  const members = useQuery({
+    queryKey: qk.members,
+    queryFn: api.members,
+    enabled: !isTeam,
+  });
+  const role = members.data?.find((m) => m.id === data.owner.id)?.role;
+  const name = data.owner.name || data.owner.username;
+  const canCreate = isTeam || isMe;
+  const newRepo = (
+    <Link
+      to={isTeam ? '/new?owner=team' : '/new'}
+      className="btn small primary"
+    >
+      <RepoIcon />
+      New repository
+    </Link>
+  );
   return (
-    <div className="mt-2">
-      <span
-        className={`Label ${agent.deletedAt ? 'Label--secondary' : 'Label--accent'} d-inline-flex flex-items-center`}
-        style={{ gap: 4 }}
-      >
-        <DependabotIcon size={12} />
-        {agent.deletedAt ? 'Deleted agent' : 'Agent'}
-      </span>
-      {agent.bio && <p className="f5 mt-2 mb-0">{agent.bio}</p>}
-      <div className="f6 text-bold mt-3">Reviews when</div>
-      <p className="f6 mt-1 mb-0">
-        {agent.trigger.ask}{' '}
-        <span className="color-fg-muted">
-          (Clef: yes with probability ≥ {agent.trigger.above})
-        </span>
-      </p>
-      {agent.configError && (
-        <div className="flash flash-warn f6 mt-2">
-          AGENT.md has an error, so this shows its last valid version:{' '}
-          {agent.configError}
+    <div className="profile">
+      <aside className="pf-side" aria-label={`About ${name}`}>
+        <div className="pf-photo">
+          <Avatar user={data.owner} size={168} square={isTeam} />
         </div>
-      )}
-      {agent.repository && (
-        <p className="f6 mt-3 mb-0 d-flex flex-items-center" style={{ gap: 4 }}>
-          <RepoIcon className="color-fg-muted" /> Defined in{' '}
-          <Link to={`/${agent.repository}`}>{agent.repository}</Link>
+        <h2 className="pf-name">{name}</h2>
+        <p className="pf-handle mono">@{data.owner.username}</p>
+        <p className="pf-badges">
+          {isTeam ? (
+            <Chip tone="info" icon={<OrganizationIcon size={12} />}>
+              Team
+            </Chip>
+          ) : role ? (
+            <Chip tone={role === 'admin' ? 'info' : 'off'}>
+              {role === 'admin' ? 'Site admin' : 'Member'}
+            </Chip>
+          ) : null}
         </p>
-      )}
-      {agent.invitedTo.length > 0 && (
-        <>
-          <div className="f6 text-bold mt-3">Invited to</div>
-          <ul className="list-style-none f6 mt-1">
-            {agent.invitedTo.map((r) => (
-              <li key={r.id}>
-                <Link to={`/${r.fullName}`}>{r.fullName}</Link>
+        {isTeam ? (
+          <p className="pf-bio small muted">
+            Every member can see these repositories.
+          </p>
+        ) : (
+          <ul className="pf-meta">
+            {data.owner.email && (
+              <li>
+                <MailIcon />
+                <a href={`mailto:${data.owner.email}`} title={data.owner.email}>
+                  {data.owner.email}
+                </a>
               </li>
-            ))}
+            )}
+            <li>
+              <ClockIcon />
+              <span title={fullDate(data.owner.createdAt)}>
+                Joined {timeAgo(data.owner.createdAt)}
+              </span>
+            </li>
           </ul>
-        </>
-      )}
-      {agent.recentReviews.length > 0 && (
-        <>
-          <div className="f6 text-bold mt-3 mb-1">Recent reviews</div>
-          <ul className="list-style-none f6">
-            {agent.recentReviews.map((r) => (
-              <li
-                key={`${r.repository}#${r.number}@${r.headSha}`}
-                className="mb-1"
-              >
-                <Link to={`/${r.repository}/pull/${r.number}`}>
-                  {r.repository}#{r.number}
-                </Link>{' '}
-                <span className={REVIEWER_STATUS[r.status].className}>
-                  {REVIEWER_STATUS[r.status].label}
-                </span>{' '}
-                <span className="color-fg-muted">· {timeAgo(r.createdAt)}</span>
-              </li>
-            ))}
-          </ul>
-        </>
-      )}
-      {agent.lessons.length > 0 && (
-        <>
-          <div className="f6 text-bold mt-3 mb-1">Learning</div>
-          <ul className="list-style-none f6">
-            {agent.lessons.map((l) => {
-              const note = lessonNote(l);
-              const sha = note?.kind === 'commit' ? note.sha : null;
-              return (
-                <li key={l.id} className="mb-2">
-                  <Link to={`/${l.repository}/pull/${l.number}`}>
-                    {l.repository}#{l.number}
-                  </Link>{' '}
-                  <span className={LESSON_STATUS[l.status].className}>
-                    {LESSON_STATUS[l.status].label}
-                  </span>{' '}
-                  <span className="color-fg-muted">
-                    · {timeAgo(l.finishedAt ?? l.createdAt)}
-                  </span>
-                  <div className="color-fg-muted wb-break-word">
-                    {dismissedText(l.findings)}
+        )}
+      </aside>
+      <div className="pf-main">
+        <Section
+          title={
+            <>
+              Repositories{' '}
+              <span className="num">{data.repositories.length}</span>
+            </>
+          }
+          actions={canCreate ? newRepo : undefined}
+        >
+          {data.repositories.length === 0 ? (
+            <div className="panel">
+              <EmptyState
+                picture={<RepoIcon size={20} />}
+                title={
+                  isTeam
+                    ? `${name} doesn’t have any repositories yet.`
+                    : `@${data.owner.username} doesn’t have any repositories you can see yet.`
+                }
+                body={
+                  canCreate
+                    ? 'Create one and it shows up here.'
+                    : 'Private repositories only show to their owner, collaborators and site admins.'
+                }
+              />
+            </div>
+          ) : (
+            <ul className="panel pf-repos">
+              {data.repositories.map((r) => (
+                <li key={r.id}>
+                  <div className="pf-repo-name">
+                    <RepoIcon />
+                    <Link to={`/${r.fullName}`}>{r.name}</Link>
+                    <VisibilityLabel visibility={r.visibility} />
                   </div>
-                  {sha &&
-                    (agent.repository ? (
-                      <Link to={`/${agent.repository}/commit/${sha}`}>
-                        <code>{sha.slice(0, 7)}</code>
-                      </Link>
-                    ) : (
-                      <code>{sha.slice(0, 7)}</code>
-                    ))}
-                  {note?.kind === 'text' && (
-                    <div className="wb-break-word">{note.text}</div>
-                  )}
+                  {r.description && <p className="muted">{r.description}</p>}
+                  <span className="muted small" title={fullDate(r.updatedAt)}>
+                    Updated {timeAgo(r.updatedAt)}
+                  </span>
                 </li>
-              );
-            })}
-          </ul>
-        </>
-      )}
+              ))}
+            </ul>
+          )}
+        </Section>
+      </div>
     </div>
   );
 }

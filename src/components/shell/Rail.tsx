@@ -255,15 +255,12 @@ export function Rail({
               current={current === 'approvals'}
               count={approvals}
             />
-            {/* Everyone once the Agents directory exists (crew redesign C10); until then /agents is Site admin → Agents. */}
-            {admin && (
-              <RailItem
-                to="/agents"
-                label="Agents"
-                icon={<CrewIcon />}
-                current={current === 'agents'}
-              />
-            )}
+            <RailItem
+              to="/agents"
+              label="Agents"
+              icon={<CrewIcon />}
+              current={current === 'agents'}
+            />
           </div>
           {recent.length > 0 && (
             <div

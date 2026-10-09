@@ -116,6 +116,19 @@ describe('splitFrontmatter', () => {
       '"quoted key": 1'
     );
   });
+  it('sees past the comment lines an agent’s settings open with', () => {
+    const r = splitFrontmatter(
+      '---\n# Shown on the profile at /securityagent. Edit this file.\n\nname: "Security"\ntrigger:\n  above: 0.4\n---\n\n# Security\n'
+    );
+    expect(r.frontmatter).toBe(
+      '# Shown on the profile at /securityagent. Edit this file.\n\nname: "Security"\ntrigger:\n  above: 0.4'
+    );
+    expect(r.body).toBe('# Security\n');
+  });
+  it('is not fooled by a block that is only comments', () => {
+    const text = '---\n# just a note\n---\n\nBody';
+    expect(splitFrontmatter(text)).toEqual({ frontmatter: null, body: text });
+  });
   it('leaves a document that does not start with one alone', () => {
     const text = '# Title\n\n---\n\ntext';
     expect(splitFrontmatter(text)).toEqual({ frontmatter: null, body: text });
