@@ -70,6 +70,13 @@ export async function openPull(opts: {
   body: string;
   base: string;
   head: string;
+  /**
+   * Provenance, self-reported by the MCP client that opens it (all null otherwise): the app's name, its coding
+   * session's label, and the person's original request.
+   */
+  createdVia?: string | null;
+  sessionLabel?: string | null;
+  request?: string | null;
   /** Runs follow-up work after the response. */
   after: (work: Promise<unknown>) => void;
 }): Promise<OpenPullResult> {
@@ -135,6 +142,9 @@ export async function openPull(opts: {
       landTarget: base,
       headRef: head,
       state: 'open',
+      createdVia: opts.createdVia ?? null,
+      sessionLabel: opts.sessionLabel ?? null,
+      request: opts.request ?? null,
       createdAt: now,
       updatedAt: now,
     }),

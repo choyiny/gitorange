@@ -528,6 +528,60 @@ describe('MCP pull request tools', () => {
     expect(refused.content[0].text).not.toContain('reset --hard');
   });
 
+  it('records the app, the session and the request it opened a pull request for, and shows them back', async () => {
+    const { t, token, repo } = await repoWithBranch();
+    const opened = await tool(t, token, 'gitorange_create_pull_request', {
+      repository: 'octocat/app',
+      head: 'feature',
+      title: 'Add a',
+      session: 's4',
+      request: 'Please add the a module',
+    });
+    expect(JSON.parse(opened.content[0].text)).toMatchObject({
+      created_via: 'Claude Code',
+      session: 's4',
+    });
+    const got = JSON.parse(
+      (
+        await tool(t, token, 'gitorange_get_pull_request', {
+          repository: 'octocat/app',
+          number: 1,
+        })
+      ).content[0].text
+    );
+    expect(got).toMatchObject({
+      created_via: 'Claude Code',
+      session: 's4',
+      request: 'Please add the a module',
+    });
+    // One opened without them (here by another app) shows nulls for the session and the request.
+    repo.refs.set('refs/heads/other', repo.refs.get('refs/heads/main')!);
+    await commitPaths(
+      repo,
+      'other',
+      { 'README.md': '# app\n', 'b.txt': 'b\n' },
+      'B'
+    );
+    await tool(t, token, 'gitorange_create_pull_request', {
+      repository: 'octocat/app',
+      head: 'other',
+      title: 'B',
+    });
+    const plain = JSON.parse(
+      (
+        await tool(t, token, 'gitorange_get_pull_request', {
+          repository: 'octocat/app',
+          number: 2,
+        })
+      ).content[0].text
+    );
+    expect(plain).toMatchObject({
+      created_via: 'Claude Code',
+      session: null,
+      request: null,
+    });
+  });
+
   it('says whose move it is, and lists what needs the agent', async () => {
     const { t, admin, token, repo } = await repoWithBranch();
     await tool(t, token, 'gitorange_create_pull_request', {
@@ -649,6 +703,8 @@ describe('MCP pull request tools', () => {
       title: 'Add a',
       base: 'main', // the default branch when base is omitted
       head: 'feature',
+      created_via: 'Claude Code', // the app behind the token
+      session: null,
       url: `${ORIGIN}/octocat/app/pull/1`,
     });
     await settle(t);

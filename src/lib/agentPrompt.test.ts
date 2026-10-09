@@ -28,6 +28,15 @@ describe('agentPrompt', () => {
     );
   });
 
+  it('has the agent pass the request and a session label when it opens a pull request itself', () => {
+    const p = agentPrompt(repo(false), 'https://git.example.com', 'Orange');
+    expect(p).toContain('gitorange_create_pull_request');
+    expect(p).toContain('`request`');
+    expect(p).toContain('what I originally asked you for');
+    expect(p).toContain('`session`');
+    expect(p).toContain("Orange's tools");
+  });
+
   it('helps add first files when the repository is empty', () => {
     expect(agentPrompt(repo(true), 'https://git.example.com')).toContain(
       'This repository is empty'

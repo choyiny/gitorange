@@ -37,6 +37,8 @@ export type ToolContext = {
   after: (work: Promise<unknown>) => void;
   /** This connection as a moderator, read for this call; set only when calling a moderator tool. */
   moderator: Moderator | null;
+  /** The OAuth app behind this connection (absent when a handler is called directly, outside /mcp). */
+  clientId?: string;
 };
 export type ToolResult = {
   content: Array<{ type: 'text'; text: string }>;

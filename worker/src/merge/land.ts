@@ -29,6 +29,7 @@ import {
 } from './rebase';
 import { checksAt, reviewGateFor, reviewReasonText } from '../review/gate';
 import { landTargetIs, landTargetOf } from '../lib/land-target';
+import { protectedBy } from '../lib/protected-branches';
 import { stackGate } from '../stack/gate';
 import { onPullClosed } from '../stack/retarget';
 import { refreshAgentConfig } from '../agents/refresh';
@@ -61,11 +62,6 @@ type LandOpts = {
   expectedHead?: string;
   /** Runs follow-up work (Actions, sweeps) after the merge. */
   after: (work: Promise<unknown>) => void;
-  /**
-   * Delete the head branch once it has landed (auto-merge), after its stacked children have been sent back to
-   * the land target, so a branch a child was stacked on isn't kept for that child.
-   */
-  deleteBranch?: boolean;
 };
 
 /**
@@ -222,10 +218,10 @@ export async function landPull(opts: LandOpts): Promise<LandResult> {
   // The agents whose change requests on it were dismissed learn from them (worker/src/learn/).
   opts.after(queueLessons(env, db, pr));
   // Children stacked on its branch go back to the land target; a reconcile restacks them. Only then is the
-  // branch free to delete.
+  // branch free to delete, if the repository deletes merged branches (the merge button and auto-merge alike).
   opts.after(
     onPullClosed(env, db, pr, 'landed').then(() =>
-      opts.deleteBranch
+      opts.repo.deleteMergedBranches
         ? deleteMergedBranch({
             env,
             db,
@@ -361,9 +357,10 @@ async function rebaseForLanding(
 }
 
 /**
- * After auto-merge lands a pull request, deletes its head branch with compare-and-swap on the
- * landed head. Keeps it when someone pushed since, when it's the default branch, or when
- * another open pull request uses it as base, head or land target (a stack builds on it). Never throws.
+ * After a landing (when the repository deletes merged branches), deletes the pull request's head branch with
+ * compare-and-swap on the landed head. Keeps it when someone pushed since, when it's the default branch or a
+ * protected one, or when another open pull request uses it as base, head or land target (a stack builds on it).
+ * Never throws.
  */
 export async function deleteMergedBranch(opts: {
   env: CloudflareBindings;
@@ -378,6 +375,7 @@ export async function deleteMergedBranch(opts: {
   const branch = pr.headRef;
   try {
     if (branch === repo.defaultBranch) return false;
+    if (protectedBy(repo.protectedBranches, branch)) return false;
     const inUse = await db
       .select({ id: pullRequests.id })
       .from(pullRequests)

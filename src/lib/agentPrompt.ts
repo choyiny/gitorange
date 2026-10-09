@@ -31,6 +31,7 @@ ${start}
 From then on:
 - Before committing, summarize what changed and confirm with me. Use short, clear commit messages.
 - Make each change on a new branch, push it, and give me this link to open a pull request: ${web}/compare/${branch}...<branch-name>
+- If you're connected to ${appName}'s tools (its MCP server), open the pull request yourself with \`gitorange_create_pull_request\` instead of giving me a link, and always pass \`request\` (what I originally asked you for, in my own words) and \`session\` (a short label for this working session, such as "s1", the same for every pull request you open in it). That's how the people reviewing see why the change exists.
 - Pull the latest changes before starting new work.
 - Never force-push, never delete branches, and never commit passwords, tokens, or other secrets.`;
 }

@@ -212,6 +212,10 @@ describe('auto-merge deletes the merged branch', () => {
   }
 
   async function mergeByHand(t: TestEnv, admin: string, number = 1) {
+    // These tests run the cleanup themselves (as auto-merge does), so the landing must not do it first.
+    await t.env.DB.prepare(
+      'UPDATE repositories SET delete_merged_branches = 0'
+    ).run();
     const res = await call(t, `/api/repos/octocat/app/pulls/${number}/merge`, {
       cookie: admin,
       json: { approve: true },
@@ -220,7 +224,7 @@ describe('auto-merge deletes the merged branch', () => {
     await settle(t);
   }
 
-  it('keeps the branch after a manual merge', async () => {
+  it('keeps the branch after a manual merge when the repository keeps merged branches', async () => {
     const { t, admin, repo } = await pullWith({ 'src/b.ts': 'b\n' });
     const head = repo.refs.get('refs/heads/feature');
     await mergeByHand(t, admin);

@@ -112,3 +112,19 @@ export async function setModerator(
     });
   return true;
 }
+
+/**
+ * The registered name of an OAuth app, cleaned by `viaName`, or null when the app is unknown. What pull requests it
+ * opens record as `created_via` ("Claude Code"): the same name `via` shows for its decisions.
+ */
+export async function appName(
+  db: DrizzleDB,
+  clientId: string
+): Promise<string | null> {
+  const row = await db
+    .select({ name: oauthClients.name })
+    .from(oauthClients)
+    .where(eq(oauthClients.clientId, clientId))
+    .get();
+  return row ? viaName(row.name) : null;
+}
