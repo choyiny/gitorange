@@ -10,7 +10,7 @@ export interface ActorLook {
   name: string;
   color: string;
   builtin: boolean;
-  /** Where its profile or the crew page is. */
+  /** Where its profile is: `/<handle>` for a reviewer, `/agents/clef` or `/agents/fixer` for a built-in agent. */
   href: string;
 }
 
@@ -57,7 +57,7 @@ export function resolveActor(
       name: BUILTIN_NAME[actor.id],
       color: agentColor(actor.handle),
       builtin: true,
-      href: '/agents',
+      href: `/agents/${actor.handle}`,
     };
   const known = lookup(actor.handle);
   return {

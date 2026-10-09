@@ -1,0 +1,323 @@
+/* Home: the owner's answer first (a decision card, since last week, health per repository, activity) and the
+   aside (repositories, your crew). Ported from docs/design/crew/views.css (.ask, .strip-link, .glance, .proj, .home-repo),
+   renamed with a home- prefix so no other page picks them up. Tokens only. */
+
+/* ---------- The statement ---------- */
+.home-head {
+  display: grid;
+  gap: 6px;
+}
+.home-head .ph-title {
+  font-size: clamp(21px, 2.3vw, 26px);
+  font-weight: 700;
+  line-height: 1.2;
+  letter-spacing: -0.022em;
+}
+.home-head .lede {
+  color: var(--ink-2);
+  font-size: 14.5px;
+  max-width: 78ch;
+}
+:root[data-skin='dev'] .home-head .ph-title {
+  font-weight: 600;
+  letter-spacing: -0.01em;
+}
+
+/* ---------- A decision: the agent's plain question ---------- */
+.home-ask {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  gap: 14px;
+  align-items: center;
+  padding: 14px 16px;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-left: 3px solid var(--warn);
+  border-radius: var(--r);
+}
+.home-ask.done {
+  grid-template-columns: minmax(0, 1fr) auto;
+  border-left-color: var(--good);
+}
+:root[data-skin='dev'] .home-ask {
+  border-radius: 6px;
+}
+.home-ask-body {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+}
+.home-ask-body strong {
+  font-size: 16px;
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
+.home-ask-body p {
+  color: var(--ink-2);
+  overflow-wrap: anywhere;
+}
+.home-ask-from {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--muted);
+  letter-spacing: 0.04em;
+}
+.home-ask-meta {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 10px;
+  font-size: 13px;
+  color: var(--muted);
+}
+.home-ask-meta > span {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+.home-ask-meta svg {
+  width: 14px;
+  height: 14px;
+  flex: none;
+}
+.home-ask-stack {
+  display: grid;
+  gap: 10px;
+}
+
+/* A line that leads to a list: what else waits in Approvals. */
+.home-strip {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 14px;
+  border: 1px solid var(--line);
+  border-radius: var(--r);
+  background: var(--surface);
+  color: var(--ink);
+  text-decoration: none;
+}
+.home-strip > span {
+  flex: 1;
+  min-width: 0;
+}
+.home-strip > svg {
+  flex: none;
+  color: var(--muted);
+}
+.view a.home-strip:hover,
+.view a.home-proj:hover {
+  text-decoration: none;
+  border-color: color-mix(in srgb, var(--ink) 35%, var(--line));
+}
+
+/* ---------- Since last week ---------- */
+.home-glance {
+  display: grid;
+  gap: 8px;
+  padding: 10px 14px;
+  border: 1px solid var(--line);
+  border-radius: var(--r);
+  background: var(--surface);
+  font-size: 13.5px;
+}
+.home-glance-item {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  color: var(--ink-2);
+}
+.home-glance-item > svg {
+  flex: none;
+  width: 14px;
+  height: 14px;
+  margin-top: 3px;
+  color: var(--muted);
+}
+.home-glance-item b {
+  color: var(--ink);
+  font-weight: 600;
+  margin-right: 4px;
+}
+.home-glance-item.good > svg {
+  color: var(--good);
+}
+.home-glance-item.worse > svg {
+  color: var(--serious);
+}
+
+/* ---------- Health of a repository ---------- */
+.home-proj-list {
+  display: grid;
+  gap: 10px;
+}
+.home-proj {
+  display: grid;
+  gap: 10px;
+  padding: 14px 16px;
+  border: 1px solid var(--line);
+  background: var(--surface);
+  border-radius: var(--r);
+  color: inherit;
+  text-decoration: none;
+}
+.home-proj-head {
+  display: flex;
+  justify-content: space-between;
+  gap: 10px;
+  align-items: center;
+  flex-wrap: wrap;
+}
+.home-proj-name {
+  font-weight: 600;
+  font-size: 15px;
+  overflow-wrap: anywhere;
+}
+.home-proj-stats {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 18px;
+  font-size: 13.5px;
+  color: var(--ink-2);
+  font-variant-numeric: tabular-nums;
+}
+.home-proj-stats b {
+  color: var(--ink);
+}
+.home-proj-crew {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 10px;
+  align-items: center;
+}
+.sk.home-sk-chip {
+  width: 96px;
+  height: 22px;
+  border-radius: 99px;
+}
+
+/* ---------- Recently updated ---------- */
+.home-recent {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+.home-recent li {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  gap: 12px;
+  align-items: center;
+  padding: 10px 14px;
+  border-top: 1px solid var(--line);
+}
+.home-recent li:first-child {
+  border-top: 0;
+}
+.home-recent-main {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+}
+.home-recent-name {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 4px 8px;
+  min-width: 0;
+}
+.home-recent-name a {
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
+.home-recent-desc {
+  color: var(--muted);
+  font-size: 13px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* ---------- The aside ---------- */
+.home-find {
+  width: 100%;
+  padding: 6px 10px;
+  border: 1px solid var(--line-2);
+  border-radius: 8px;
+  background: var(--bg);
+  font-size: 13px;
+}
+.home-repo {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 0;
+  color: var(--ink);
+  font-size: 13px;
+  min-width: 0;
+}
+.view a.home-repo {
+  text-decoration: none;
+}
+.view a.home-repo:hover span {
+  text-decoration: underline;
+  color: var(--accent);
+}
+.home-repo > svg {
+  flex: none;
+  width: 15px;
+  height: 15px;
+  color: var(--muted);
+}
+.home-repo > span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.crew-stack {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.crew-stack a {
+  display: inline-flex;
+  border-radius: 30%;
+}
+.invite-panel {
+  display: grid;
+  gap: 8px;
+}
+.invite-panel > .invite-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.invite-panel .invite-head h2 {
+  font-size: 15px;
+  font-weight: 600;
+}
+.invite-panel > .invite-head svg {
+  color: var(--accent);
+}
+
+@media (max-width: 640px) {
+  .home-ask {
+    grid-template-columns: auto minmax(0, 1fr);
+  }
+  .home-ask > .btn {
+    grid-column: 1 / -1;
+    justify-self: start;
+  }
+  .home-ask.done {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .home-ask.done > .btn {
+    justify-self: start;
+  }
+  .home-recent li {
+    grid-template-columns: auto minmax(0, 1fr);
+  }
+  .home-recent li > .when {
+    grid-column: 2;
+  }
+}

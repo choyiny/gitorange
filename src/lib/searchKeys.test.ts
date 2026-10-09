@@ -263,6 +263,18 @@ describe('pageHits', () => {
     ).toEqual(['/settings/emails']);
   });
 
+  it('shows the Agents directory to everyone and New reviewer to admins', () => {
+    expect(
+      pageHits('agents', { admin: false, repo: null }).map((h) => h.to)
+    ).toEqual(['/agents']);
+    expect(
+      pageHits('reviewer', { admin: false, repo: null }).map((h) => h.to)
+    ).toEqual(['/agents']);
+    expect(
+      pageHits('reviewer', { admin: true, repo: null }).map((h) => h.to)
+    ).toEqual(['/agents/new', '/agents']);
+  });
+
   it('matches keywords from the start of a word, not inside one', () => {
     // "password" and "cursor" are keywords of the token and MCP pages; "or" is inside them, not a word start.
     expect(

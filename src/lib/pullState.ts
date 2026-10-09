@@ -88,10 +88,15 @@ export function reasonText(r: PullReason): string {
  * is why it is not landing, whatever else it waits for). A person's or an agent's move keeps its own label.
  */
 export function stateLabel(state: PullState): string {
-  return state.state === 'waiting' &&
+  return isPaused(state) ? 'Paused' : STATE_LABEL[state.state];
+}
+
+/** A waiting pull request merging is paused on: the pause is why it is not landing, whatever else it waits for. */
+export function isPaused(state: PullState | null | undefined): boolean {
+  return (
+    state?.state === 'waiting' &&
     state.reasons.some((r) => r.kind === 'merging_paused')
-    ? 'Paused'
-    : STATE_LABEL[state.state];
+  );
 }
 
 /** The state as the list's label reads it ("Ready, stacked on #3"), and the first reason it shows beside it. */

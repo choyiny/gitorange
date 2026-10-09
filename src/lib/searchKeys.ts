@@ -291,8 +291,13 @@ const PAGES: PageDef[] = [
   { label: 'Repositories', to: '/repos' },
   { label: 'New repository', to: '/new', keywords: 'create' },
   { label: 'Approvals', to: '/approvals', keywords: 'inbox findings' },
-  // Everyone once the Agents directory exists (crew redesign C10); until then it's Site admin → Agents.
-  { label: 'Agents', to: '/agents', keywords: 'reviewers crew', admin: true },
+  { label: 'Agents', to: '/agents', keywords: 'reviewers crew clef fixer' },
+  {
+    label: 'New reviewer',
+    to: '/agents/new',
+    keywords: 'create agent presets recommended crew',
+    admin: true,
+  },
   {
     label: 'Personal access tokens',
     to: '/settings/tokens',

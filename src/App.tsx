@@ -21,7 +21,8 @@ import { PageHeadProvider, useCurrentPageHead } from '@/components/ui/PageHead';
 import Setup from './pages/Setup';
 import Login from './pages/Login';
 import AcceptInvite from './pages/AcceptInvite';
-import Dashboard from './pages/Dashboard';
+import Home from './pages/Home';
+import Repositories from './pages/Repositories';
 import Approvals from './pages/Approvals';
 import Finding from './pages/Finding';
 import NewRepo from './pages/NewRepo';
@@ -47,6 +48,9 @@ import Admin from './pages/Admin';
 import AdminUsage from './pages/AdminUsage';
 import AdminAudit from './pages/AdminAudit';
 import AdminAgents from './pages/AdminAgents';
+import Agents from './pages/Agents';
+import AgentNew from './pages/AgentNew';
+import AgentBuiltin from './pages/AgentBuiltin';
 import { NotFound } from './pages/NotFound';
 
 const queryClient = new QueryClient({
@@ -109,18 +113,12 @@ const App = () => (
             {/* Signed in, but an authorization page of its own: no rail. */}
             <Route path="/oauth/consent" element={<OAuthConsent />} />
             <Route element={<AppShell />}>
-              <Route path="/" element={<Dashboard />} />
-              {/* The Repositories board (crew redesign C1); the dashboard lists them until then. */}
-              <Route path="/repos" element={<Dashboard />} />
-              {/* The Agents directory (crew redesign C10); Site admin → Agents until then. */}
-              <Route
-                path="/agents"
-                element={
-                  <AdminOnly>
-                    <AdminAgents />
-                  </AdminOnly>
-                }
-              />
+              <Route path="/" element={<Home />} />
+              <Route path="/repos" element={<Repositories />} />
+              {/* Every member reads the agents; creating them is for site admins (the page says so). */}
+              <Route path="/agents" element={<Agents />} />
+              <Route path="/agents/new" element={<AgentNew />} />
+              <Route path="/agents/:id" element={<AgentBuiltin />} />
               <Route path="/new" element={<NewRepo />} />
               <Route path="/approvals" element={<Approvals />} />
               <Route path="/approvals/:flagId" element={<Finding />} />
