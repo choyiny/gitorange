@@ -1,53 +1,123 @@
-import { useState } from 'react';
-import { useNavigate, useSearchParams } from 'react-router-dom';
+import { useMemo, useState, type CSSProperties } from 'react';
+import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { LockIcon, RepoIcon } from '@primer/octicons-react';
+import {
+  AlertIcon,
+  CheckIcon,
+  LockIcon,
+  RepoIcon,
+} from '@primer/octicons-react';
 import { api, qk, type Visibility } from '@/lib/uiApi';
 import { useCurrentUser } from '@/lib/auth';
 import { errorMessage } from '@/lib/api';
-import { usePageHead } from '@/components/ui/PageHead';
+import { agentColor } from '@/lib/agentLook';
+import {
+  DESCRIPTION_MAX,
+  REPO_NAME_MAX,
+  inviteFailureMessage,
+  normalizeRepoName,
+  repoNameProblem,
+} from '@/lib/newRepo';
+import { PageHead } from '@/components/ui/PageHead';
+import { PendingButton } from '@/components/ui/PendingButton';
+import { useToast } from '@/components/ui/Toast';
+import { Notice } from '@/components/Notice';
 import { Avatar } from '@/components/Avatar';
 
+const VISIBILITIES = [
+  {
+    value: 'private',
+    Icon: LockIcon,
+    title: 'Private',
+    body: 'Only you, collaborators you add, and site admins can see this repository.',
+  },
+  {
+    value: 'internal',
+    Icon: RepoIcon,
+    title: 'Internal',
+    body: 'Every member of this instance can see this repository. You and collaborators you add can push.',
+  },
+] as const;
+
+/**
+ * New repository: an owner (you, or the team), a name, an optional description, who can see it, which reviewer
+ * agents review it, and whether to start with a README. Creating it opens the new repository, whose empty page has the
+ * steps for pushing code (and importing from GitHub).
+ */
 export default function NewRepo() {
   const user = useCurrentUser()!;
-  usePageHead({
-    icon: 'plus',
-    crumbs: [
-      { label: 'Repositories', to: '/repos' },
-      { label: 'New repository' },
-    ],
-    title: 'New repository',
-  });
   const navigate = useNavigate();
   const qc = useQueryClient();
-  const [name, setName] = useState('');
-  const [description, setDescription] = useState('');
-  const [addReadme, setAddReadme] = useState(false);
+  const toast = useToast();
   const [params] = useSearchParams();
+
   const team =
     useQuery({ queryKey: qk.team, queryFn: api.team }).data?.team ?? null;
+  const agents = useQuery({ queryKey: qk.agents, queryFn: api.agents });
+  const crew = useMemo(
+    () => (agents.data ?? []).filter((a) => !a.deletedAt),
+    [agents.data]
+  );
+
   const [owner, setOwner] = useState<'user' | 'team'>(
     params.get('owner') === 'team' ? 'team' : 'user'
   );
+  const [name, setName] = useState('');
+  const [description, setDescription] = useState('');
   const [visibility, setVisibility] = useState<Visibility>('private');
-  const forTeam = owner === 'team' && !!team;
+  const [reviewers, setReviewers] = useState<Set<string>>(new Set());
+  const [addReadme, setAddReadme] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
-  const normalized = name.trim().replace(/[^A-Za-z0-9._-]+/g, '-');
+
+  const forTeam = owner === 'team' && !!team;
+  const normalized = normalizeRepoName(name);
+  const problem = repoNameProblem(name);
+  const tooLong = description.length > DESCRIPTION_MAX;
+  const ownerLogin = forTeam ? team!.slug : (user.username ?? user.name);
+
+  const toggleReviewer = (handle: string) =>
+    setReviewers((prev) => {
+      const next = new Set(prev);
+      if (next.has(handle)) next.delete(handle);
+      else next.add(handle);
+      return next;
+    });
 
   const submit = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (busy || !name.trim() || problem || tooLong) return;
     setBusy(true);
     setError(null);
     try {
       const repo = await api.createRepo({
         name,
-        description: description || undefined,
+        description: description.trim() || undefined,
         addReadme,
         owner: forTeam ? 'team' : 'user',
         visibility,
       });
+      // The repository exists now; reviewers are added one by one so one refusal doesn't lose the rest.
+      const failed: { name: string; reason: string }[] = [];
+      await Promise.all(
+        crew
+          .filter((a) => reviewers.has(a.username))
+          .map(async (a) => {
+            try {
+              await api.inviteAgent(repo.owner.username, repo.name, a.username);
+            } catch (err) {
+              failed.push({ name: a.name, reason: errorMessage(err) });
+            }
+          })
+      );
       await qc.invalidateQueries({ queryKey: qk.repos });
+      const note = inviteFailureMessage(failed);
+      if (note) toast(note, { icon: <AlertIcon size={16} /> });
+      else if (reviewers.size)
+        toast(
+          `Created ${repo.fullName}. ${reviewers.size === 1 ? 'The reviewer starts' : 'The reviewers start'} on its first pull request.`,
+          { icon: <CheckIcon size={16} /> }
+        );
       navigate(`/${repo.fullName}`);
     } catch (err) {
       setError(errorMessage(err));
@@ -57,170 +127,251 @@ export default function NewRepo() {
 
   return (
     <>
-      <div className="container-md px-3 py-5" style={{ maxWidth: 768 }}>
-        <div className="pb-2 mb-3 border-bottom">
-          <h2 className="f2 text-normal">Create a new repository</h2>
-          <p className="color-fg-muted f5 mt-1">
-            A repository contains all project files, including the revision
-            history. Already have a project repository elsewhere? Push it here
-            after creating an empty repository.
-          </p>
-        </div>
-        <p className="f6 color-fg-muted fst-italic mb-3">
-          Required fields are marked with an asterisk (*).
-        </p>
-        {error && <div className="flash flash-error mb-3">{error}</div>}
-        <form onSubmit={submit}>
-          <div className="d-flex flex-items-end mb-3" style={{ gap: 8 }}>
-            <div>
-              <label htmlFor="owner" className="d-block mb-1 text-bold f6">
-                Owner *
-              </label>
-              <div className="d-flex flex-items-center" style={{ gap: 6 }}>
-                <Avatar
-                  user={
-                    forTeam
-                      ? { username: team!.slug }
-                      : { username: user.username ?? user.name }
-                  }
-                  size={20}
-                  square={forTeam}
+      <PageHead
+        icon="plus"
+        crumbs={[
+          { label: 'Repositories', to: '/repos' },
+          { label: 'New repository' },
+        ]}
+        title="New repository"
+        lede="A repository holds a project's files and their full history. Moving a project from GitHub? Create it empty: the next page has the steps, including a prompt for your AI agent."
+      />
+      <div className="cols">
+        <div className="col">
+          {error && <Notice tone="bad">{error}</Notice>}
+          <form className="panel newrepo" onSubmit={submit} noValidate>
+            <div className="newrepo-row">
+              <div>
+                <label htmlFor="nr-owner">Owner</label>
+                <div className="newrepo-owner">
+                  <Avatar
+                    user={{ username: ownerLogin }}
+                    size={24}
+                    square={forTeam}
+                  />
+                  <select
+                    id="nr-owner"
+                    value={forTeam ? 'team' : 'user'}
+                    onChange={(e) =>
+                      setOwner(e.target.value as 'user' | 'team')
+                    }
+                    disabled={!team}
+                    aria-describedby={team ? undefined : 'nr-owner-hint'}
+                    title={
+                      team
+                        ? undefined
+                        : 'A site admin can create the team in Site admin'
+                    }
+                  >
+                    <option value="user">{user.username}</option>
+                    {team && <option value="team">{team.slug}</option>}
+                  </select>
+                </div>
+                {!team && (
+                  <span id="nr-owner-hint" className="hint">
+                    Team repositories need a team: a site admin creates it in
+                    Site admin.
+                  </span>
+                )}
+              </div>
+              <div>
+                <label htmlFor="nr-name">Repository name</label>
+                <input
+                  id="nr-name"
+                  type="text"
+                  required
+                  autoFocus
+                  autoComplete="off"
+                  spellCheck={false}
+                  placeholder="for example: client-portal"
+                  value={name}
+                  maxLength={REPO_NAME_MAX + 20}
+                  aria-invalid={problem ? true : undefined}
+                  aria-describedby="nr-name-hint"
+                  onChange={(e) => setName(e.target.value)}
                 />
-                <select
-                  id="owner"
-                  className="form-select"
-                  value={forTeam ? 'team' : 'user'}
-                  onChange={(e) => setOwner(e.target.value as 'user' | 'team')}
-                  disabled={!team}
-                  title={
-                    team
-                      ? undefined
-                      : 'A site admin can create the team in Site admin'
-                  }
+                <span
+                  id="nr-name-hint"
+                  className={`hint${problem ? ' bad' : name.trim() && normalized !== name ? ' warn' : ''}`}
+                  role={problem ? 'alert' : undefined}
                 >
-                  <option value="user">{user.username}</option>
-                  {team && <option value="team">{team.slug}</option>}
-                </select>
+                  {problem ? (
+                    problem
+                  ) : name.trim() && normalized !== name ? (
+                    <>
+                      Your new repository will be created as{' '}
+                      <strong>{normalized}</strong>.
+                    </>
+                  ) : (
+                    'Great repository names are short and memorable.'
+                  )}
+                </span>
               </div>
             </div>
-            <span className="f2 color-fg-muted pb-1">/</span>
-            <div className="flex-1">
-              <label
-                htmlFor="repository_name"
-                className="d-block mb-1 text-bold f6"
-              >
-                Repository name *
+
+            <div style={{ display: 'grid', gap: 6 }}>
+              <label htmlFor="nr-desc">
+                Description <span className="muted">(optional)</span>
               </label>
               <input
-                id="repository_name"
-                className="form-control width-full"
-                required
-                autoFocus
-                value={name}
-                onChange={(e) => setName(e.target.value)}
+                id="nr-desc"
+                type="text"
+                autoComplete="off"
+                value={description}
+                aria-invalid={tooLong ? true : undefined}
+                aria-describedby={tooLong ? 'nr-desc-hint' : undefined}
+                onChange={(e) => setDescription(e.target.value)}
               />
+              {tooLong && (
+                <span id="nr-desc-hint" className="hint bad" role="alert">
+                  A description can be at most {DESCRIPTION_MAX} characters.
+                </span>
+              )}
             </div>
-          </div>
-          {name && normalized !== name && (
-            <p className="f6 color-fg-attention mb-3">
-              Your new repository will be created as{' '}
-              <strong>{normalized}</strong>.
-            </p>
-          )}
-          <p className="f6 color-fg-muted mb-3">
-            Great repository names are short and memorable.
-          </p>
-          <div className="mb-3">
-            <label htmlFor="description" className="d-block mb-1 text-bold f6">
-              Description{' '}
-              <span className="text-normal color-fg-muted">(optional)</span>
-            </label>
-            <input
-              id="description"
-              className="form-control width-full"
-              value={description}
-              onChange={(e) => setDescription(e.target.value)}
-            />
-          </div>
-          <div className="border-top py-3">
-            {forTeam ? (
-              <div className="d-flex flex-items-start" style={{ gap: 8 }}>
-                <RepoIcon size={24} className="color-fg-muted" />
-                <div>
-                  <div className="text-bold">Internal</div>
-                  <div className="f6 color-fg-muted">
-                    Team repositories are visible to every member of{' '}
-                    {team!.name}. You and collaborators you add can push.
-                  </div>
-                </div>
-              </div>
-            ) : (
-              (
-                [
-                  [
-                    'private',
-                    LockIcon,
-                    'Private',
-                    'Only you, collaborators you add, and site admins can see this repository.',
-                  ],
-                  [
-                    'internal',
-                    RepoIcon,
-                    'Internal',
-                    'Every member of this instance can see this repository. You and collaborators you add can push.',
-                  ],
-                ] as const
-              ).map(([value, Icon, title, desc]) => (
-                <label
-                  key={value}
-                  className="d-flex flex-items-start mb-2"
-                  style={{ gap: 8, cursor: 'pointer' }}
-                >
-                  <input
-                    type="radio"
-                    name="visibility"
-                    className="mt-1"
-                    checked={visibility === value}
-                    onChange={() => setVisibility(value)}
-                  />
-                  <Icon size={24} className="color-fg-muted" />
+
+            <fieldset className="newrepo-visibility">
+              <legend>Who can see it</legend>
+              {forTeam ? (
+                <div className="fixed">
+                  <RepoIcon size={20} />
                   <span>
-                    <span className="d-block text-bold">{title}</span>
-                    <span className="d-block f6 color-fg-muted">{desc}</span>
+                    <b>Internal</b>
+                    <br />
+                    <span className="muted small">
+                      Team repositories are visible to every member of{' '}
+                      {team!.name}. You and collaborators you add can push.
+                    </span>
                   </span>
-                </label>
-              ))
-            )}
-          </div>
-          <div className="border-top py-3">
-            <h3 className="f5 mb-2">Initialize this repository with:</h3>
-            <p className="f6 color-fg-muted mb-2">
-              Moving a project from GitHub? Leave this empty: the next page has
-              step-by-step import instructions, including a prompt for your AI
-              agent.
-            </p>
-            <label className="d-flex flex-items-start" style={{ gap: 8 }}>
+                </div>
+              ) : (
+                VISIBILITIES.map(({ value, Icon, title, body }) => (
+                  <label key={value}>
+                    <input
+                      type="radio"
+                      name="visibility"
+                      checked={visibility === value}
+                      onChange={() => setVisibility(value)}
+                    />
+                    <Icon size={20} />
+                    <span>
+                      <b>{title}</b>
+                      <br />
+                      <span className="muted small">{body}</span>
+                    </span>
+                  </label>
+                ))
+              )}
+            </fieldset>
+
+            {agents.isPending ? (
+              <fieldset className="newrepo-crew" aria-busy="true">
+                <legend>Reviewer agents</legend>
+                <div className="sk sk-line w50" />
+                <div className="sk sk-line w60" />
+              </fieldset>
+            ) : agents.isError ? (
+              <fieldset className="newrepo-crew">
+                <legend>Reviewer agents</legend>
+                <Notice
+                  tone="warn"
+                  action={
+                    <button
+                      type="button"
+                      className="btn small"
+                      onClick={() => agents.refetch()}
+                    >
+                      Retry
+                    </button>
+                  }
+                >
+                  Could not load the reviewer agents (
+                  {errorMessage(agents.error)}). You can add them in the
+                  repository's settings after creating it.
+                </Notice>
+              </fieldset>
+            ) : crew.length > 0 ? (
+              <fieldset className="newrepo-crew">
+                <legend>Reviewer agents</legend>
+                {crew.map((a) => (
+                  <label key={a.username}>
+                    <input
+                      type="checkbox"
+                      checked={reviewers.has(a.username)}
+                      onChange={() => toggleReviewer(a.username)}
+                    />
+                    <span>
+                      <span
+                        className="adot"
+                        style={
+                          {
+                            '--agent': agentColor(a.username, a.color),
+                          } as CSSProperties
+                        }
+                      >
+                        <i />
+                        {a.name}
+                      </span>
+                      {a.bio && <span className="muted small">{a.bio}</span>}
+                    </span>
+                  </label>
+                ))}
+                <span className="hint">
+                  Reviewers read each pull request they are needed on. With at
+                  least one, GitOrange can merge on its own once they pass. You
+                  can change this later in the repository's settings.
+                </span>
+              </fieldset>
+            ) : null}
+
+            <label className="newrepo-readme">
               <input
                 type="checkbox"
-                className="mt-1"
                 checked={addReadme}
                 onChange={(e) => setAddReadme(e.target.checked)}
               />
               <span>
-                <span className="text-bold">Add a README file</span>
-                <span className="d-block f6 color-fg-muted">
+                <b>Add a README file</b>
+                <span className="muted small">
                   This is where you can write a long description for your
-                  project.
+                  project. Moving a project from GitHub? Leave this empty.
                 </span>
               </span>
             </label>
-          </div>
-          <div className="border-top pt-3 d-flex flex-justify-end">
-            <button className="btn btn-primary" disabled={busy || !name.trim()}>
-              {busy ? 'Creating repository…' : 'Create repository'}
-            </button>
-          </div>
-        </form>
+
+            <div className="actions">
+              <PendingButton
+                type="submit"
+                className="primary"
+                pending={busy}
+                pendingLabel="Creating repository…"
+                disabled={!name.trim() || !!problem || tooLong}
+              >
+                Create repository
+              </PendingButton>
+              <Link className="btn quiet" to="/repos">
+                Cancel
+              </Link>
+            </div>
+          </form>
+        </div>
+        <aside className="col side">
+          <section className="panel pad">
+            <h2>What you get</h2>
+            <ul className="ticks">
+              {[
+                'Rebase-only merges with a safety check on main',
+                'Auto-merge when checks pass and reviewers approve',
+                'Actions that run your existing workflows',
+                'An audit log of every merge and every decision',
+              ].map((t) => (
+                <li key={t}>
+                  <CheckIcon size={16} className="ok" />
+                  {t}
+                </li>
+              ))}
+            </ul>
+          </section>
+        </aside>
       </div>
     </>
   );
