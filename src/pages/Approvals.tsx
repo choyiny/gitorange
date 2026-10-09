@@ -53,6 +53,9 @@ const KEYS: [string[], string][] = [
 ];
 
 type Busy = { key: string; kind: RowAction['kind'] } | null;
+
+/** "Assigned to you" counts over every page: at most this many more pages load by themselves to show them all. */
+const ASSIGNED_AUTO_PAGES = 8;
 type ReceiptBody = Omit<Receipt, 'key' | 'index' | 'row'>;
 
 const reduced = () =>
@@ -406,6 +409,26 @@ export default function Approvals() {
     }
   };
 
+  // The "Assigned to you" count covers every page, the list only the loaded ones: while the filter is on and some
+  // assigned findings are on pages not loaded yet, load them (a bounded number of pages per visit to the filter).
+  const autoPages = useRef(0);
+  useEffect(() => {
+    autoPages.current = 0;
+  }, [assignedOnly]);
+  const assignedMissing =
+    assignedOnly && !!q.hasNextPage && rows.length < assignedToMe;
+  const fetchNext = q.fetchNextPage;
+  useEffect(() => {
+    if (
+      !assignedMissing ||
+      q.isFetchingNextPage ||
+      autoPages.current >= ASSIGNED_AUTO_PAGES
+    )
+      return;
+    autoPages.current += 1;
+    void fetchNext();
+  }, [assignedMissing, q.isFetchingNextPage, fetchNext]);
+
   // Keyboard shortcuts: j k o a r d x A (and Enter), never while typing or inside a menu.
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -483,6 +506,19 @@ export default function Approvals() {
       />
     );
   else if (!q.data) list = <RowsSkeleton rows={5} />;
+  else if (!order.length && assignedOnly && q.isFetchingNextPage)
+    list = <RowsSkeleton rows={3} />;
+  else if (!order.length && assignedOnly && q.hasNextPage)
+    // Never "nothing is assigned" while pages remain: say what was looked at, and Load more sits below.
+    list = (
+      <EmptyState
+        id="ap-empty"
+        tabIndex={-1}
+        picture={<AgentAvatar handle="clef" status="idle" size={56} />}
+        title="Nothing assigned to you in what has loaded so far."
+        body="Load more to look further."
+      />
+    );
   else if (!order.length)
     list = assignedOnly ? (
       <EmptyState

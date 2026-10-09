@@ -627,9 +627,16 @@ function DelegateOne({ f }: { f: FindingData }) {
             : `${AI_NAME} requested changes for you`,
           {
             icon: <ClaudeTile />,
+            // A failed undo (the pull request closed, the network) says why instead of failing silently.
             undo: () =>
               void api
                 .undoFlag(owner, repo, n, f.id)
+                .then(() =>
+                  toast('Answer withdrawn. The finding is open again.', {
+                    icon: <UndoIcon size={16} />,
+                  })
+                )
+                .catch((e) => toast(failure(e)))
                 .finally(() => void refresh(owner, repo)),
           }
         );
@@ -906,7 +913,8 @@ function OwnerAnswer({ f, me }: { f: FindingData; me: string | null }) {
         </PendingButton>
       </div>
       <PanelError error={error} />
-      {f.can.delegate && <DelegateOne f={f} />}
+      {/* Never a guarded agent's finding, whatever the server says. */}
+      {f.can.delegate && !f.guarded && <DelegateOne f={f} />}
     </section>
   );
 }
@@ -1104,7 +1112,8 @@ function DevAnswer({ f, me }: { f: FindingData; me: string | null }) {
         />
       )}
       <PanelError error={error} />
-      {f.can.delegate && <DelegateOne f={f} />}
+      {/* Never a guarded agent's finding, whatever the server says. */}
+      {f.can.delegate && !f.guarded && <DelegateOne f={f} />}
     </section>
   );
 }

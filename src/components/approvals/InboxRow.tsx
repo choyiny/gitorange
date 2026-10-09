@@ -124,6 +124,17 @@ function Meta({ who, row }: { who: ReactNode; row: InboxRow }) {
   );
 }
 
+/** "Opened by Cho" (or "you"), on every row: the old page named each pull request's author. */
+function Author({ row, me }: { row: InboxRow; me: string | null }) {
+  const a = row.pull.author;
+  if (!a) return null;
+  return (
+    <span className="ap-auth">
+      Opened by {a.username === me ? 'you' : a.name || a.username}
+    </span>
+  );
+}
+
 function IconTile({ tone, children }: { tone: string; children: ReactNode }) {
   return (
     <span className={`ap-icon ${tone}`} aria-hidden="true">
@@ -358,14 +369,7 @@ export function InboxRowView({
                 : `Assigned to ${f.assignee.name || `@${f.assignee.login}`}`}
             </span>
           )}
-          {row.pull.author && (
-            <span className="ap-auth">
-              Opened by{' '}
-              {row.pull.author.username === me
-                ? 'you'
-                : row.pull.author.name || row.pull.author.username}
-            </span>
-          )}
+          <Author row={row} me={me} />
           {claudeLeft && !decided && (
             <span className="ap-auto">
               <ClaudeTile />
@@ -431,6 +435,11 @@ export function InboxRowView({
           {name}’s review failed.
         </p>
         <p className="ap-text ap-soft">{row.error ?? 'Unknown error.'}</p>
+        {row.pull.author && (
+          <p className="ap-by">
+            <Author row={row} me={me} />
+          </p>
+        )}
         <div className="ap-actions">
           {btn(
             'retry-reviewer',
@@ -569,6 +578,11 @@ export function InboxRowView({
           {look.text}
         </p>
         {look.soft && <p className="ap-text ap-soft">{look.soft}</p>}
+        {row.pull.author && (
+          <p className="ap-by">
+            <Author row={row} me={me} />
+          </p>
+        )}
         <div className="ap-actions">{look.actions}</div>
       </>
     );

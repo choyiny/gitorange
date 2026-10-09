@@ -212,9 +212,15 @@ export function keyAction(key: string, row: InboxRow | null): KeyAction | null {
   if (!row) return null;
   if (key === 'o' || key === 'Enter') return { kind: 'open' };
   if (row.type !== 'finding') return null;
-  if (isOwnerQuestion(row))
-    return key === 'a' || key === 'r' || key === 'd' ? { kind: 'open' } : null;
   const name = row.agent.name || `@${row.agent.username}`;
+  // A request for changes already stands: Request changes is not offered again (approve or dismiss replace it).
+  if (key === 'r' && row.flag.changesRequestedAt && !row.flag.approvedAt)
+    return null;
+  if (isOwnerQuestion(row)) {
+    if (row.flag.guarded && (key === 'a' || key === 'd'))
+      return { kind: 'open', toast: guardMessage(name) };
+    return key === 'a' || key === 'r' || key === 'd' ? { kind: 'open' } : null;
+  }
   if (row.flag.guarded) {
     if (key === 'a' || key === 'd')
       return { kind: 'open', toast: guardMessage(name) };

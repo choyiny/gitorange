@@ -260,18 +260,34 @@ describe('what can be picked and what keys do', () => {
     expect(keyAction('x', row)).toBeNull();
   });
 
+  it("says a guarded agent's owner question needs a reason when a or d opens it", () => {
+    const row = findingRow(
+      flag('a', { question: 'Were they all CAD?', guarded: true }),
+      user('dataagent', 'Data')
+    );
+    const toast = 'Data findings need a reason. Open it to decide.';
+    expect(keyAction('a', row)).toEqual({ kind: 'open', toast });
+    expect(keyAction('d', row)).toEqual({ kind: 'open', toast });
+    expect(keyAction('r', row)).toEqual({ kind: 'open' });
+    expect(keyAction('x', row)).toBeNull();
+  });
+
   it('opens other rows, and ignores decision keys on them', () => {
     const row = inboxRows([item(1, { needsApproval: true })])[0];
     expect(keyAction('o', row)).toEqual({ kind: 'open' });
     for (const k of ['a', 'r', 'd', 'x']) expect(keyAction(k, row)).toBeNull();
   });
 
-  it('does not select a finding that already has changes requested', () => {
-    const row = findingRow(
-      flag('a', { changesRequestedAt: '2026-10-08T10:00:00.000Z' })
-    );
+  it('does not select or re-request a finding that already has changes requested', () => {
+    const asked = { changesRequestedAt: '2026-10-08T10:00:00.000Z' };
+    const row = findingRow(flag('a', asked));
     expect(keyAction('x', row)).toBeNull();
+    expect(keyAction('r', row)).toBeNull();
     expect(keyAction('a', row)).toEqual({ kind: 'approve' });
+    expect(keyAction('d', row)).toEqual({ kind: 'panel', panel: 'dismiss' });
+    const guarded = findingRow(flag('b', { ...asked, guarded: true }));
+    expect(keyAction('r', guarded)).toBeNull();
+    expect(keyAction('a', guarded)).toMatchObject({ kind: 'open' });
   });
 
   it('says why a guarded agent needs a reason, with its name', () => {
