@@ -10,26 +10,30 @@ change concerns it; the ones that do review it. No pull request lands without a 
 By the merge button, the MCP merge tool, or on its own (auto-merge), a pull request lands only when all of these
 hold for its current head commit:
 
+- **Merging isn't paused** on the repository (see [Pausing merging](#pausing-merging-and-reverting)).
 - **Checks pass:** no failed or cancelled latest Actions run, and none still running (no run at all is fine).
 - **The stack gate is clear** (see [Stacking](#stacking)).
 - **Review is satisfied:** every agent requested for this commit approved it, or a person approved each of its
   findings that needs a person and every change it requested was made (a new commit) or dismissed; or, when no
   agent was requested, a person approved the commit.
 
-All three share one gate, checked in that order: the stack gate, then checks, then review.
+They share one gate, checked in that order: the pause, the stack gate, then checks, then review.
 
 A person with merge permission (the pull request's author included) can **Approve** any pull request's head
 commit. That satisfies review past findings for a person and failed or unfinished agent reviews — the timeline
-records what the approval was given over, and when it is withdrawn — but never past an agent's open change request: dismiss it, or push a
-new commit, first. The merge box offers **Approve and merge** when review isn't satisfied yet. An approval is for
+records what the approval was given over, and when it is withdrawn — but never past an agent's open change request
+(dismiss it, or push a new commit, first) or past a [guarded agent's](#guarded-agents) findings for a person, which are
+approved one at a time, each with a reason. The merge box offers **Approve and merge** when review isn't satisfied yet. An approval is for
 one commit: the page sends the commit you saw, and if the branch moved since, the approval is refused (`409`) so
 you can look again. A new commit needs new reviews and a new approval. There is no way past review without a
 recorded review or approval, and agents can't approve over MCP except through an app the user marked as a moderator
 (Settings → MCP server → Connected apps), which approves as that user, recorded "via" the app.
 
 **Auto-merge** is on in every repository with at least one invited agent: a pull request lands on its own as soon
-as the conditions hold, with no merging user, and its branch is deleted unless another open pull request builds
-on it. A maintainer can turn it off per pull request. A repository without agents is an ordinary code host: a
+as the conditions hold, with no merging user. A maintainer can turn it off per pull request. After any landing
+(button, MCP or auto-merge) the pull request's branch is deleted, unless it is the default or a protected branch,
+someone pushed to it since, or another open pull request builds on it; a repository can turn this off
+(`deleteMergedBranches` on `PATCH /api/repos/{owner}/{repo}`, on by default). A repository without agents is an ordinary code host: a
 person approves and merges.
 
 Landing works the same way from every path: a fast-forward of the target branch to the pull request's head, after
@@ -57,7 +61,9 @@ AI), so every commit lands with its author and message and history stays linear.
    one tag whose name carries a random suffix, so they can't forge the prompt around them. It answers
    **approve**, or up to five **findings**, each with a sentence, a before/after table, a diagram and excerpts cut
    from the real diff:
-   - `needs_person`: a person approves it, or requests changes on it (the pull request's agent then follows up);
+   - `needs_person`: a person approves it, or requests changes on it (the pull request's agent then follows up).
+     It may carry a plain yes/no **owner question** the owner can answer without reading code (at most 200
+     characters, ending with "?"; one that names files, code or jargon is dropped and the finding stands without it);
    - `change_requested`: the agent is sure what must change. It goes to the pull request's agent, and a new commit
      resolves it (the new commit is reviewed afresh); a person may also **Dismiss** it.
 
@@ -103,6 +109,40 @@ that need a person's approval, and conflicts AI couldn't resolve. Pages update l
 
 An old `.gitorange/review.yml` does nothing: invite reviewer agents instead.
 
+## Deciding findings
+
+A finding for a person is decided on the pull request, on the **Approvals** page, or on its own page
+(`/approvals/<finding id>`), by anyone who can push to the repository:
+
+- **Approve** or **Request changes**, optionally with a reason and with something to **teach** the agent: a rule in
+  your own words, which the agent learns when the pull request closes (see [How agents learn](#how-agents-learn)). A
+  teach note can't be added to a finding that is already approved (`409`): undo the approval first.
+- **Undo** reopens your decision while the pull request is open (only the person who decided, or whose GitOrange AI
+  did); its reason and teach note go with it, so nothing is learned from it. Once the pull request merged, revert it
+  instead.
+- **Ask someone** hands the finding to another person who can push to the repository (never an agent). Their
+  Approvals page counts the findings waiting for them.
+
+### Guarded agents
+
+An agent is **guarded** when its `AGENT.md` says `guarded: true` or its `facet` is `security` or `data`. Its findings
+always come to a person: approving one needs a written reason (`422` without one), which goes in the audit log with
+your name; they are never approved in bulk, and GitOrange AI never decides them. A person's approval of the commit
+doesn't stand over its open findings for a person, or over people's change requests on them.
+
+### Let Claude decide
+
+A person can let GitOrange AI answer chosen agents' findings on their own pull requests (Approvals → **Let Claude
+decide**; `GET`/`PUT /api/me/delegations`). After each review of a pull request's commit (or an agent's Retry), it
+decides, as the pull request's author, every finding for a person of those agents that nobody has decided yet, with
+the instance's agent review model (Site admin → AI models): **approve**, **request changes** (its reason is the
+note), or **leave** it for the person. It leaves anything it isn't sure of, or that could lose or expose data, weaken
+security or cost money, and it leaves everything when there is no model or its answer can't be used. Anyone who can push can
+also hand it one finding at once, decided as them (`POST …/pulls/{n}/review/flags/{id}/delegate`). It never decides a guarded agent's
+finding (`422`; guarded agents can't be delegated), an agent's own change request, or a finding whose agent was
+deleted or removed from the repository (`409`). Every decision shows as "via GitOrange AI", is recorded in the audit
+log with its reason, and can be undone while the pull request is open.
+
 ## Writing an agent
 
 Site admins create agents in **Site admin → Agents**; each gets a repository `<handle>/<handle>` with a starter
@@ -116,6 +156,9 @@ trigger:
   ask: Does this change touch authentication, authorization, sessions, tokens or secrets?
   above: 0.3
 engine: pass
+facet: security # optional: security, data, speed, features, reliability, privacy, shipping or other
+color: '#2a78d6' # optional, quoted
+guarded: true # optional; security and data agents are always guarded
 ---
 (what this agent cares about, how it judges, and what is worth a finding)
 ```
@@ -130,8 +173,9 @@ most 10 agents.
 
 ## How agents learn
 
-Dismissing an agent's change request tells it it was wrong. When the pull request closes — merged or not — each
-agent with dismissed change requests on it gets one lesson: a Pi run over its own repository that looks for the
+Dismissing an agent's change request tells it it was wrong, and a teach note on any decision tells it a rule. When
+the pull request closes — merged or not — each agent with dismissed change requests or taught findings on it gets
+one lesson: a Pi run over its own repository that looks for the
 general reason (a pattern it misjudges, context it lacks, an instruction too broad) and makes the smallest edit to
 the instructions in `AGENT.md` or to `knowledge/` that stops similar false positives. If the dismissals were
 one-offs, it changes nothing and says why. It never changes the front matter (name, bio, trigger, engine).
@@ -160,6 +204,22 @@ worker/worker-configuration.d.ts
 migrations/meta/
 ```
 
+## Pausing merging and reverting
+
+Anyone who can push can **pause merging** on a repository (`POST /api/repos/{owner}/{repo}/merging/pause`, with an
+optional reason; `DELETE` resumes). While it is paused nothing lands — not the merge button, the MCP merge tool or
+auto-merge (`409`, `reason: "paused"`) — and every open pull request shows `merging_paused`. Resuming tries
+auto-merge on every open pull request at once. Both are recorded in the audit log. The merge queue
+(`GET …/queue`) lists, per land target, the open pull requests in the order they are expected to land, what holds
+each back, and a rough estimate of when it lands (the median of recent pull request Actions runs plus the median of
+recent reviews).
+
+**Revert** on a merged pull request (`POST …/pulls/{n}/revert`, push access) never pushes to the target: it commits
+the inverse of the commits the pull request landed on top of the target as it is now (later changes to other lines
+stay), on a new branch `revert-<n>`, and opens a pull request for it, which is reviewed and lands like any other.
+It is refused (`409`) when the pull request isn't merged, the change no longer reverts cleanly, or the target already
+undoes it; if opening the pull request fails, the branch is deleted again.
+
 ## Pull request states
 
 Every open pull request has one state that says whose move it is. It is computed when read (never stored), with the reasons behind it.
@@ -184,6 +244,7 @@ Each reason has a `kind` and its own fields:
 | `agent_flagged`           | `human_review`   | An agent's findings wait for a person (`agent`, `flags`).                                                                                |
 | `agent_review_failed`     | `human_review`   | An agent's review failed (`agent`, `error`; `agent` is null when the whole review failed): fix the agent, Retry, or remove it.           |
 | `needs_approval`          | `human_review`   | No agent was requested for this commit: a person approves it.                                                                            |
+| `merging_paused`          | `waiting`        | Someone paused merging on the repository: nothing lands until someone resumes it.                                                        |
 | `cycle`                   | `human_review`   | This pull request is in a stack cycle with the listed pull requests.                                                                     |
 | `checks_running`          | `waiting`        | Required checks are running, or haven't started (`started: false`).                                                                      |
 | `agent_reviewing`         | `waiting`        | An agent (`agent`; null before any is requested) hasn't finished.                                                                        |

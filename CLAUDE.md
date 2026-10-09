@@ -1,11 +1,18 @@
 # CLAUDE.md
 
 GitOrange is a single-tenant GitHub Enterprise Server–style app. One Cloudflare Worker serves a Hono +
-Zod-OpenAPI API and a React + Vite SPA (styled with GitHub's Primer CSS) on one origin, with Drizzle/D1
-and better-auth. Git storage is **Cloudflare Artifacts**: one Artifacts repo per GitOrange repo.
+Zod-OpenAPI API and a React + Vite SPA (its own design system over GitHub's Primer CSS) on one origin, with
+Drizzle/D1 and better-auth. Git storage is **Cloudflare Artifacts**: one Artifacts repo per GitOrange repo.
 
 ## Architecture notes
 
+- SPA shell and design system (`src/`): every signed-in route renders inside `components/shell/AppShell` (rail, top band
+  with `GlobalSearch`, account and create menus); primitives in `components/ui/`. Styles: `styles/tokens.css` (the tokens
+  every component reads), `primer-bridge.css` (Primer stays the base layer and follows the tokens), `shell.css`,
+  `components.css`, `pages/*.css`, `legacy.css` (pages not yet redesigned). Themes (`src/lib/theme.ts`, pure): seven HQ
+  colourways + GitHub × System/Light/Dark, per browser (localStorage `go-theme-id`, `go-mode`). `<html>` carries
+  `data-skin` (`hq` | `dev` = GitHub), `data-theme` (absent = follow the system) and Primer's `data-color-mode`
+  (`rootAttributes`); the boot script in `index.html` mirrors `rootAttributes` before first paint, so change both.
 - **D1** holds users, invitations, tokens, repository metadata, pull requests, and comments. **Artifacts**
   holds every git object and ref; nothing about git content is mirrored into D1.
 - Artifacts repos are named `r_<repository id>` (`repositories.artifacts_name`), so renames never touch storage.
@@ -27,7 +34,10 @@ and better-auth. Git storage is **Cloudflare Artifacts**: one Artifacts repo per
   plus an `agents` row; refused at `session.create.before`, the PAT lookup in `git-http.ts`, and `getMcpSession`.
   Its repository `<handle>/<handle>` holds `AGENT.md` (`config.ts`), `avatar.png`, `knowledge/`; `refreshAgentConfig`
   re-caches `AGENT.md` after pushes/merges to its default branch (one indexed lookup for other repositories).
-  Invitations: `repository_agents`. Reviews: see the Reviews bullet.
+  Invitations: `repository_agents`. Reviews: see the Reviews bullet. `agents.color`/`facet`/`guarded` come from
+  `AGENT.md` (`agents/presets.ts`: `agentColor`; `guarded` always stores `guardedOf`, i.e. `guarded: true` or a
+  security/data facet, so SQL on the column agrees with `isGuarded`). Presets and the recommended crew:
+  `GET /api/agents/presets`, `POST /api/admin/agents/crew`; records `GET /api/agents/{handle}/stats`.
 - Git LFS (`worker/src/lfs-http.ts`, `worker/src/lib/lfs.ts`): Batch API at `/<owner>/<repo>.git/info/lfs/...`,
   sharing the git endpoint's auth. Bytes go client ↔ R2 directly via pre-signed URLs (needs the
   `R2_ACCESS_KEY_ID`/`R2_SECRET_ACCESS_KEY` secrets); D1 `lfs_objects` holds bare R2 keys, never URLs. One copy
@@ -56,7 +66,10 @@ and better-auth. Git storage is **Cloudflare Artifacts**: one Artifacts repo per
   AI conflict resolution in `merge/commit-resolution.ts`; a stop is `rebase_conflict` or "Not rebased: …" (`rebaseBlocked`: default branch, a
   `repositories.protected_branches` glob, a head shared into another base). `review/carry.ts`
   carries approvals/reviews on clean rebases. `landPull` (`merge/land.ts`) is a CAS fast-forward, rebasing inline first
-  when the target moved. Tests: `executeRebase` via `runRebases`/`fakeResolver` (`__tests__/helpers/rebase.ts`).
+  when the target moved, and refuses (409 `reason: 'paused'`) while `repositories.merging_paused_at` is set
+  (`mergingPause`, read from D1 each time); after a landing it deletes the head branch when
+  `repositories.delete_merged_branches` (default on; `deleteMergedBranch` keeps default, protected and in-use
+  branches). Tests: `executeRebase` via `runRebases`/`fakeResolver` (`__tests__/helpers/rebase.ts`).
 - Reviews (`worker/src/review/`): reviewer agents invited per repository (`repository_agents`). Per head commit
   (`pr_classifications`, id `<pr id>-<head sha>`): GLM one-liner per file → one Clef call over every agent's
   `trigger.ask` (`pr_reviewers`, requested iff p ≥ above; unsure = requested) → each requested agent reviews
@@ -69,13 +82,40 @@ and better-auth. Git storage is **Cloudflare Artifacts**: one Artifacts repo per
   (`review.pi_*`, `ai.review_pi_model`), read once per review start. No binding → single pass with
   `PI_FALLBACK_NOTE`. Tests use `fakePi` (`helpers/reviews.ts`). `review/gate.ts` (`reviewVerdict`) is the only
   landing rule for review; a person's `pr_approvals` row satisfies it except over an agent's open `change_requested`
-  finding (dismiss it or push), and is recorded as an `approved` event (withdrawing: `withdrawn`). `landPull`: stack
-  gate → checks → review. Auto-merge is on iff the repository invites ≥ 1 agent. `.orangeignore` and lockfiles stay
+  finding (dismiss it or push) and a **guarded** agent's open `needs_person` findings (approved one at a time, each
+  with a reason: `decideFlag` 422s without one), and is recorded as an `approved` event (withdrawing: `withdrawn`).
+  `landPull`: pause → stack gate → checks → review. Auto-merge is on iff the repository invites ≥ 1 agent. `.orangeignore` and lockfiles stay
   out of model calls. Tests drive `executeHeadReview`/`executeReviewerRetry` with fake `AgentReviewModels`
-  (`helpers/reviews.ts`). `GET /api/approvals` (`review/inbox.ts`) groups findings by agent.
+  (`helpers/reviews.ts`). `GET /api/approvals` (`review/inbox.ts`) groups findings by agent (`assignedToMe` counts);
+  `GET /api/approvals/flags/{id}` is one finding (`review/finding.ts`).
+- Deciding findings (`review/flags.ts`, routes under `/pulls/{n}/review/flags/{id}/…`): a `needs_person` finding may
+  carry the agent's owner question (`pr_review_flags.question`, plain yes/no, `plainQuestion` in `review/contract.ts`).
+  `decideFlag` stores `decision_reason` and an optional teach note (`teach_note`/`teach_by_id`; 409 on an
+  already-approved finding), which `learn/lessons.ts` queues as a lesson like a dismissal; `undoFlag` (`…/undo`, only
+  the decider) clears both. Ask someone: `assignFlag` (`…/assign`, `assignee_id`/`assigned_by_id`/`assigned_at`; a
+  person with push access, never an agent). Let Claude decide (`review/delegate.ts`): `ai_delegations` (user, agent;
+  `GET`/`PUT /api/me/delegations`, guarded agents refused) → `decideDelegated` runs as a `delegate` step after a
+  review or an agent's retry when the author delegates (`delegatesAny`), and `…/delegate` (`decideFinding`) decides one now; both only
+  undecided `needs_person` findings of live, invited, unguarded agents, as the person, `approved_via` "GitOrange AI",
+  audited as `finding.delegated` (actor kind `ai`); no model or a bad answer leaves it. Tests pass a fake
+  `DelegateModel`.
+- Audit log (`worker/src/lib/audit.ts`, D1 `audit_events`): `recordAudit` writes a row next to each mutation (actions
+  in `auditActions`, `app.schema.ts`; never secrets, prompts or diffs) and never throws; `listAudit` pages it merged
+  with `pr_events`. `GET /api/repos/{o}/{r}/audit`, `GET /api/admin/audit` (site admins). Add new mutations to it.
+- Crew pages' backends (`worker/src/routers/`, libs in `worker/src/lib/`): `queue-router.ts` (`GET …/queue` merge
+  queue + ETA, `lib/queue.ts`; `POST`/`DELETE …/merging/pause` → `setMergingPaused`, audited, resume tries auto-merge;
+  paused PRs get the `merging_paused` reason; `GET …/live`, `lib/live-feed.ts`), `branches-router.ts` (`GET …/branches`,
+  `POST …/branches/clean`, `GET …/branches/map`; `lib/branches.ts`), `health-router.ts` (`lib/health.ts`),
+  `sessions-router.ts` (`lib/sessions.ts`: a coding session is derived from `pull_requests.created_via`/
+  `session_label`, self-reported with `request` by `gitorange_create_pull_request`, never stored), `search-router.ts`
+  (`GET /api/search?q=&repo=`, `lib/search.ts`; matches with `instr` via `lib/text-match.ts`, never LIKE: D1 caps
+  patterns at 50 bytes), `me-router.ts`, and `POST …/pulls/{n}/revert` (`lib/revert.ts`: inverse commit on branch
+  `revert-<n>` opened as a PR, never pushed to the target; the branch is deleted if opening fails).
+- Demo data: `yarn seed:demo` (`scripts/seed-demo.mjs`, local hosts only) fills a running `yarn dev` instance through
+  the API plus `wrangler d1 execute --local --env dev`; see `docs/development.md`.
 - Agent learning (`worker/src/learn/`): when a PR closes (`landPull`, the close route) `queueLessons` writes one
-  `agent_lessons` row per agent whose `change_requested` findings a person dismissed (`approved_at` set), unique per
-  (agent, PR). A `learn` payload on `MERGE_RESOLUTION` (`learn/run.ts`) claims it (one `learning` lesson per agent;
+  `agent_lessons` row per agent whose `change_requested` findings a person dismissed (`approved_at` set) or whose
+  findings a person decided with a teach note (`lessonFindingsByAgent`), unique per (agent, PR). A `learn` payload on `MERGE_RESOLUTION` (`learn/run.ts`) claims it (one `learning` lesson per agent;
   writes fenced on `run_id`), runs `AgentReviewer` in learn mode (`learn:<lesson id>:<attempt>`; agent repo at
   `/agent`, write/edit only `AGENT.md`'s body and `knowledge/**`), validates (`learn/validate.ts`) and commits as the
   agent (`GitService.commitFiles`, CAS + one retry), then starts the agent's next lesson. Limits `review.learn_*`;

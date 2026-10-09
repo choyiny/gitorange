@@ -41,13 +41,33 @@ Existing workerd HTTP-body warnings and Vite large-chunk warnings remain. The `0
 delta passed an independent review with no new blocking findings. Full-browser acceptance and the review of
 the whole original redesign remain pending.
 
+## Fixed on `crew-fixes` (9 October)
+
+Commits on top of `crew-redesign` (`git log origin/crew-redesign..crew-fixes`):
+
+- **D1's 50-byte LIKE limit:** search no longer uses LIKE; `lib/text-match.ts` matches with
+  `instr(lower(…), lower(…))`, used by `lib/search.ts` and `lib/pull-search.ts` (`c9571eb`).
+- **Flaky `live-feed.test.ts`:** a timestamp tie with `repository.created`; the test now inserts events clearly
+  newer (`cd4c7a5`).
+- **Teach note on an already-approved finding** is refused with 409 instead of being dropped (`f5df0e1`).
+- **`POST …/delegate`** refuses (409) a finding whose agent was deleted or is no longer invited (`9543ee2`).
+- **Revert** deletes its `revert-<n>` branch when opening the pull request fails (`9258932`).
+- **Links to the unbuilt Branches page removed** (Repositories board, paused-merging banner, Code page toolbar and
+  side cards, Health's merging row), and **Health's branch map placeholder section removed** (`ee56cc8`).
+- **HQ light `--run`** moved from teal to sky blue so Checking reads apart from Queued; **Mermaid** measures labels
+  in the resolved theme font once the self-hosted fonts load, so they aren't clipped (`4fbe3b9`).
+- **Docs:** CLAUDE.md architecture notes, `docs/architecture.md`, `docs/auto-merge.md`.
+
 ## Known gaps in this pull request
 
-- **Links to pages not built yet** show the inline "not found": `/:owner/:repo/branches`, `/live`, `/audit`,
-  `/settings/rules` (from Home, the Code page, the Pulls board and Approvals). Health and Session routes have
-  landed; the full internal-link sweep is still pending.
-- **Repository settings are the old pages** inside the new shell (C11 below).
-- **Health's compact branch map is a link placeholder** until C6 supplies `<BranchMap compact />`.
+- **No links to unbuilt pages remain:** the links to `/:owner/:repo/branches` were removed rather than left on
+  "not found", and the tree has no links to `/live`, `/audit` or `/settings/rules` (the list here before named them,
+  but none existed on `crew-redesign`). C6/C7/C11 add those pages and their links. The full internal-link sweep
+  against `src/App.tsx` is still pending.
+- **No way to pause merging in the UI:** the API (`POST …/merging/pause`) works and the merge box's paused banner
+  resumes, but the Pause control lived on the unbuilt Branches/Live pages.
+- **Repository settings are the old pages** inside the new shell (C11 below); `deleteMergedBranches` is API-only.
+- **Health has no branch map** until C6 supplies `<BranchMap compact />`.
 - **Health's approval decision card only searches loaded inbox pages.** A matching finding beyond the loaded
   pages can show the generic waiting card, whose Approvals link remains actionable (minor C3 review finding).
 - **C3/C5 full browser acceptance remains pending.** Focused local-demo smoke checks covered the PR, Health
@@ -55,7 +75,6 @@ the whole original redesign remain pending.
   approval disabled without a selected reason. PR/head action-state resets, long lists, every route/theme and
   the full interaction matrix remain unverified. Captures: `docs/screenshots/crew-health.jpg`,
   `crew-health-mobile.jpg`, and `crew-pull-mobile.jpg`.
-- **Docs are not updated yet** (CLAUDE.md architecture notes, `docs/architecture.md`, `docs/auto-merge.md`).
 
 ## Unfinished work (local branches on Mahmoud's machine)
 
@@ -75,28 +94,20 @@ into `crew-redesign`.
 
 1. **Finish and merge the three pages above** (C6, C7, C11).
 2. **Integration**
-   - Health: replace the branch map placeholder with `<BranchMap compact />` from C6.
+   - Health: add `<BranchMap compact />` from C6 (the placeholder section was removed), and put back the Branches
+     links removed on `crew-fixes` once that page exists.
    - Sweep every internal link against `src/App.tsx` routes; no link may end on "not found".
-   - Queued vs Checking state colours are too close in HQ light: adjust the tokens.
-   - Mermaid diagram labels are clipped with the new fonts: set Mermaid's font family/size to the theme's.
-3. **Backend must-fixes**
-   - D1 caps LIKE/GLOB patterns at 50 bytes: `worker/src/lib/pull-search.ts` (words up to 50 + wildcards and
-     escapes) and `worker/src/lib/search.ts` (terms up to 100 characters) can exceed it and fail in production.
-     Cap every pattern at ≤ 50 UTF-8 bytes including `%` and escapes; add tests.
-   - Flaky tests: `live-feed.test.ts` failed once and passed on rerun; another unidentified flake was seen once.
-     Find and fix the ordering/timing assumption.
-   - Teach note on an already-approved finding is silently dropped: return 409 (`worker/src/review/flags.ts`).
-   - `POST …/delegate` must check the agent is live and invited (`worker/src/review/delegate.ts`).
-   - Revert: delete the `revert-<n>` branch if opening the pull request fails after the push.
+   - ~~Queued vs Checking colours in HQ light~~ and ~~Mermaid label clipping~~: done on `crew-fixes`.
+3. **Backend must-fixes**: done on `crew-fixes` (see above). The second, unidentified flake seen once is still
+   unexplained.
 4. **Final integrated validation and visual QA**: run the full suite, typecheck and build on the assembled branch,
    recording fresh totals separately from the 1,794-test baseline. With demo data (`yarn db:migrate:local`,
    `yarn dev`, `yarn seed:demo`), inspect every route at 1440×900
    and 375×812 in HQ light, HQ dark (claret) and GitHub dark — no console errors, no sideways scroll, avatars never
    stretched, the panel is the only scroller.
-5. **Docs**: CLAUDE.md (shell, themes, new tables and endpoints, the guarded rule: a commit approval no longer
-   stands over a guarded agent's findings), `docs/architecture.md`, `docs/auto-merge.md` (owner questions, Ask
-   someone, delegation, guarded), screenshots in `docs/screenshots/`. Fix the mockup's rail peek
-   (`docs/design/crew/shell.js` `applyRail`: keep `shut` while peeking).
+5. **Docs**: ~~CLAUDE.md, `docs/architecture.md`, `docs/auto-merge.md`~~ done on `crew-fixes`. Still to do:
+   screenshots in `docs/screenshots/`, and fix the mockup's rail peek (`docs/design/crew/shell.js` `applyRail`: keep
+   `shut` while peeking).
 6. **Final whole-branch review** (most capable model) over `origin/main…crew-redesign`, one fix wave, re-review.
 7. **Rollout** (only when a person says so): `yarn db:migrate:prod` (migration 0027), deploy `main` from a clean
    worktree, Agents → New reviewer → "Add the recommended crew", invite the agents per repository.
