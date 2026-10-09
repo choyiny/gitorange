@@ -32,7 +32,9 @@ import {
 import {
   commitSchema,
   fileDiffSchema,
+  flagDecisionFields,
   ownerRepoParams,
+  personRefSchema,
   prEventSchema,
   publicUserSchema,
   pullReasonSchema,
@@ -45,7 +47,15 @@ import { addComment, openPull, pullShas } from '../lib/pulls';
 import { reviewConfigured } from '../review/head';
 import { maybeAutoMerge } from '../review/auto-merge';
 import { listReview, reviewInputs, reviewVerdict } from '../review/gate';
-import { CHANGES_NOTE_MAX, decideFlag } from '../review/flags';
+import {
+  assignFlag,
+  CHANGES_NOTE_MAX,
+  DECISION_REASON_MAX,
+  decideFlag,
+  TEACH_NOTE_MAX,
+  undoFlag,
+} from '../review/flags';
+import { decideFinding } from '../review/delegate';
 import { reviewersView } from '../review/reviewers-view';
 import { publishChange } from '../live/publish';
 import { settleStates } from '../pulls/settle';
@@ -513,6 +523,7 @@ const reviewFlagSchema = z
     changesRequestedBy: publicUserSchema.nullable(),
     changesRequestedAt: z.string().nullable(),
     changesRequestedNote: z.string().nullable(),
+    ...flagDecisionFields,
   })
   .openapi('ReviewFlag');
 
@@ -1110,17 +1121,53 @@ pullsRouter.openapi(withdrawRoute, async (c) => {
 
 const flagParams = numberParams.extend({ flagId: z.string() });
 
+/** A rule refused it: a guarded agent's finding without a reason, GitOrange AI and a guarded agent, an assignee. */
+const json422Response = {
+  422: {
+    content: { 'application/json': { schema: errorSchema } },
+    description: 'Refused by a rule',
+  },
+};
+
+const teachField = z
+  .string()
+  .max(TEACH_NOTE_MAX)
+  .nullable()
+  .optional()
+  .openapi({
+    description:
+      'A rule for the agent in your words; it learns it when the pull request closes. Undoing the decision drops it.',
+  });
+
 const approveFlagRoute = createRoute({
   method: 'post',
   path: '/{owner}/{repo}/pulls/{number}/review/flags/{flagId}/approve',
   tags: ['Pull requests'],
-  request: { params: flagParams },
+  summary: "Approve a finding (or dismiss an agent's change request)",
+  description:
+    "Needs push rights. A guarded agent's finding (Security, Data, or `guarded: true`) needs a `reason` (422 " +
+    'without one); it is recorded in the audit log with your name.',
+  request: {
+    params: flagParams,
+    body: {
+      required: false,
+      content: {
+        'application/json': {
+          schema: z.object({
+            reason: z.string().max(DECISION_REASON_MAX).nullable().optional(),
+            teach: teachField,
+          }),
+        },
+      },
+    },
+  },
   responses: {
     ...json200Response(z.object({ ok: z.literal(true) }), 'Approved'),
     ...json400Response,
     ...json403Response,
     ...json404Response,
     ...json409Response,
+    ...json422Response,
   },
 });
 pullsRouter.openapi(approveFlagRoute, async (c) => {
@@ -1130,13 +1177,18 @@ pullsRouter.openapi(approveFlagRoute, async (c) => {
   const { number, flagId } = c.req.valid('param');
   const pr = await getPull(c, number);
   if (!pr) return c.json({ error: 'Not Found' }, 404);
+  // The body is optional: no JSON body approves with no reason or teach note.
+  const body = (c.req.valid('json') ?? {}) as {
+    reason?: string | null;
+    teach?: string | null;
+  };
   const result = await decideFlag(
     c.env,
     c.get('db'),
     pr,
     flagId,
     c.get('user')!.id,
-    { kind: 'approve' },
+    { kind: 'approve', reason: body.reason, teach: body.teach },
     (work) => c.executionCtx.waitUntil(work)
   );
   if (!result.ok) return c.json({ error: result.error }, result.status);
@@ -1154,6 +1206,7 @@ const requestChangesFlagRoute = createRoute({
         'application/json': {
           schema: z.object({
             note: z.string().max(CHANGES_NOTE_MAX).nullable().optional(),
+            teach: teachField,
           }),
         },
       },
@@ -1165,6 +1218,7 @@ const requestChangesFlagRoute = createRoute({
     ...json403Response,
     ...json404Response,
     ...json409Response,
+    ...json422Response,
   },
 });
 pullsRouter.openapi(requestChangesFlagRoute, async (c) => {
@@ -1177,17 +1231,153 @@ pullsRouter.openapi(requestChangesFlagRoute, async (c) => {
   const { number, flagId } = c.req.valid('param');
   const pr = await getPull(c, number);
   if (!pr) return c.json({ error: 'Not Found' }, 404);
+  const body = c.req.valid('json');
   const result = await decideFlag(
     c.env,
     c.get('db'),
     pr,
     flagId,
     c.get('user')!.id,
-    { kind: 'request_changes', note: c.req.valid('json').note },
+    { kind: 'request_changes', note: body.note, teach: body.teach },
     (work) => c.executionCtx.waitUntil(work)
   );
   if (!result.ok) return c.json({ error: result.error }, result.status);
   return c.json({ ok: true as const }, 200);
+});
+
+const assignFlagRoute = createRoute({
+  method: 'post',
+  path: '/{owner}/{repo}/pulls/{number}/review/flags/{flagId}/assign',
+  tags: ['Pull requests'],
+  summary: 'Ask someone to decide a finding',
+  description:
+    'Needs push rights, and so does the person asked (422 otherwise, or for a reviewer agent). `login: null` clears it.',
+  request: {
+    params: flagParams,
+    body: {
+      content: {
+        'application/json': {
+          schema: z.object({ login: z.string().min(1).max(100).nullable() }),
+        },
+      },
+    },
+  },
+  responses: {
+    ...json200Response(
+      z.object({ ok: z.literal(true), assignee: personRefSchema.nullable() }),
+      'Assigned (or cleared)'
+    ),
+    ...json400Response,
+    ...json403Response,
+    ...json404Response,
+    ...json422Response,
+  },
+});
+pullsRouter.openapi(assignFlagRoute, async (c) => {
+  if (!c.get('perms').write)
+    return c.json({ error: 'You do not have permission to do that' }, 403);
+  const { number, flagId } = c.req.valid('param');
+  const pr = await getPull(c, number);
+  if (!pr) return c.json({ error: 'Not Found' }, 404);
+  const result = await assignFlag(
+    c.get('db'),
+    { repo: c.get('repo'), fullName: fullName(c) },
+    pr,
+    flagId,
+    c.get('user')!.id,
+    c.req.valid('json').login
+  );
+  if (!result.ok) return c.json({ error: result.error }, result.status);
+  return c.json({ ok: true as const, assignee: result.assignee }, 200);
+});
+
+const undoFlagRoute = createRoute({
+  method: 'post',
+  path: '/{owner}/{repo}/pulls/{number}/review/flags/{flagId}/undo',
+  tags: ['Pull requests'],
+  summary: 'Undo your decision on a finding',
+  description:
+    'Reopens an approval, dismissal or request for changes you made (or GitOrange AI made for you), with its ' +
+    "reason and teach note, while the pull request is open (409 after it merged or closed). 403 for anyone else's.",
+  request: { params: flagParams },
+  responses: {
+    ...json200Response(z.object({ ok: z.literal(true) }), 'Reopened'),
+    ...json403Response,
+    ...json404Response,
+    ...json409Response,
+  },
+});
+pullsRouter.openapi(undoFlagRoute, async (c) => {
+  if (!c.get('perms').write)
+    return c.json({ error: 'You do not have permission to do that' }, 403);
+  const { number, flagId } = c.req.valid('param');
+  const pr = await getPull(c, number);
+  if (!pr) return c.json({ error: 'Not Found' }, 404);
+  const result = await undoFlag(
+    c.env,
+    c.get('db'),
+    pr,
+    flagId,
+    c.get('user')!.id,
+    (work) => c.executionCtx.waitUntil(work)
+  );
+  if (!result.ok) return c.json({ error: result.error }, result.status);
+  return c.json({ ok: true as const }, 200);
+});
+
+const delegateFlagRoute = createRoute({
+  method: 'post',
+  path: '/{owner}/{repo}/pulls/{number}/review/flags/{flagId}/delegate',
+  tags: ['Pull requests'],
+  summary: 'Let GitOrange AI decide a finding now',
+  description:
+    "GitOrange AI decides one finding for a person as you, with the instance's reasoning model: approve, request " +
+    'changes (its reason is the note), or leave it for you with a reason (always, where no model is set up). ' +
+    'Recorded via "GitOrange AI" and undoable while the pull request is open. Never a guarded agent\'s finding ' +
+    "(422) or an agent's own change request (400). Needs push rights.",
+  request: { params: flagParams },
+  responses: {
+    ...json200Response(
+      z.object({
+        decision: z.enum(['approve', 'request_changes', 'leave']),
+        reason: z.string(),
+        /** False when it left the finding for you. */
+        applied: z.boolean(),
+      }),
+      'What GitOrange AI decided'
+    ),
+    ...json400Response,
+    ...json403Response,
+    ...json404Response,
+    ...json409Response,
+    ...json422Response,
+  },
+});
+pullsRouter.openapi(delegateFlagRoute, async (c) => {
+  if (!c.get('perms').write)
+    return c.json({ error: 'You do not have permission to do that' }, 403);
+  const { number, flagId } = c.req.valid('param');
+  const pr = await getPull(c, number);
+  if (!pr) return c.json({ error: 'Not Found' }, 404);
+  const result = await decideFinding(
+    c.env,
+    c.get('db'),
+    flagId,
+    c.get('user')!.id,
+    {
+      after: (work) => c.executionCtx.waitUntil(work),
+      pullRequestId: pr.id,
+    }
+  );
+  if (!result.ok) return c.json({ error: result.error }, result.status);
+  return c.json(
+    {
+      decision: result.decision,
+      reason: result.reason,
+      applied: result.applied,
+    },
+    200
+  );
 });
 
 const retryReviewRoute = createRoute({

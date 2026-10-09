@@ -11,6 +11,7 @@ import {
   executeHeadReview,
   executeReviewerRetry,
 } from '../../review/head';
+import type { DelegateModel } from '../../review/delegate';
 import type { AgentReviewModels } from '../../review/models';
 import type {
   PiLimits,
@@ -290,11 +291,17 @@ export function fakePi<R extends FakePiRequest = PiStartRequest>(
   return { api, objects, starts, stopped };
 }
 
-/** Runs every review Workflow started so far (once each), inline, until none are left. */
+/**
+ * Runs every review Workflow started so far (once each), inline, until none are left. `delegate`: the model GitOrange
+ * AI decides delegated findings with (undefined: the env's, which tests don't bind).
+ */
 export async function runReviews(
   t: TestEnv,
   models: AgentReviewModels,
-  opts: { pi?: (name: string) => PiReviewerApi } = {}
+  opts: {
+    pi?: (name: string) => PiReviewerApi;
+    delegate?: DelegateModel | null;
+  } = {}
 ) {
   const db = drizzle(t.env.DB, { schema });
   const done = ran.get(t) ?? new Set<string>();
@@ -315,6 +322,7 @@ export async function runReviews(
       models,
       pi: opts.pi,
       instanceId: next.id,
+      delegate: opts.delegate,
     };
     if (p.headReview) await executeHeadReview(deps, p.headReview.id);
     else if (p.reviewer) await executeReviewerRetry(deps, p.reviewer.id);

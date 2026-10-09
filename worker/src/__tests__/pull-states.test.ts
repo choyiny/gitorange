@@ -1022,7 +1022,7 @@ describe('Approvals', () => {
     const bob = await addMember(s.t, s.admin, 'bob');
     expect(
       await (await call(s.t, '/api/approvals', { cookie: bob })).json()
-    ).toEqual({ items: [], count: 0, nextCursor: null });
+    ).toEqual({ items: [], count: 0, assignedToMe: 0, nextCursor: null });
   });
 
   it("doesn't list conflicts AI can't resolve (the agent's job), only failed AI resolutions", async () => {

@@ -2,6 +2,7 @@ import { and, desc, eq, inArray, isNull, lt, or, sql } from 'drizzle-orm';
 import { alias } from 'drizzle-orm/sqlite-core';
 import type { DrizzleDB } from '../db/middleware';
 import {
+  agents,
   mergeResolutions,
   prClassifications,
   prEdges,
@@ -16,6 +17,7 @@ import { NO_MODEL, SUPERSEDED } from '../merge/resolution';
 import { latestStates } from '../pulls/events';
 import type { PullState } from '../pulls/state';
 import { findReposByIds, gitFor, permissionsForMany } from '../lib/repos';
+import { personRefs } from '../lib/person-ref';
 import { usersById, type PublicUser } from '../lib/users';
 import { chunks } from '../stack/view';
 import type { SessionUser } from '../variables';
@@ -113,7 +115,8 @@ export async function approvalsFor(
     .where(eq(pullRequests.state, 'open'))
     .orderBy(desc(pullRequests.updatedAt))
     .all();
-  if (!open.length) return { items: [], count: 0, nextCursor: null };
+  if (!open.length)
+    return { items: [], count: 0, assignedToMe: 0, nextCursor: null };
   // Only repositories the user can merge in (approving and retrying need it) are read any further.
   const repos = new Map<
     string,
@@ -138,7 +141,8 @@ export async function approvalsFor(
   }
   const openIds = new Set(open.map((p) => p.id));
   const mergeable = open.filter((p) => repos.get(p.repositoryId)?.canMerge);
-  if (!mergeable.length) return { items: [], count: 0, nextCursor: null };
+  if (!mergeable.length)
+    return { items: [], count: 0, assignedToMe: 0, nextCursor: null };
   const ids = mergeable.map((p) => p.id);
   const reviewRows: (typeof prClassifications.$inferSelect)[] = [];
   const resolutionRows: (typeof mergeResolutions.$inferSelect)[] = [];
@@ -412,6 +416,20 @@ export async function approvalsFor(
       n + own + (own === 0 && i.pullState?.state === 'human_review' ? 1 : 0)
     );
   }, 0);
+  // Findings someone asked this person to decide, over every page.
+  const assignedToMe = visible.reduce(
+    (n, i) =>
+      n +
+      i.groups.reduce(
+        (k, g) =>
+          k +
+          (g.status === 'failed'
+            ? 0
+            : g.flags.filter((f) => f.assigneeId === user.id).length),
+        0
+      ),
+    0
+  );
   const cursor = opts.cursor;
   const after = cursor
     ? visible.filter((i) => before(cursor, key(i)))
@@ -440,6 +458,22 @@ export async function approvalsFor(
     CHUNK
   ))
     for (const [id, u] of await usersById(db, part)) people.set(id, u);
+  const pageFlags = page.flatMap((i) => i.groups.flatMap((g) => g.flags));
+  const refs = await personRefs(
+    db,
+    pageFlags.map((f) => f.assigneeId)
+  );
+  const guarded = new Set<string>();
+  for (const part of chunks(
+    [...new Set(page.flatMap((i) => i.groups.map((g) => g.agentId)))],
+    CHUNK
+  ))
+    for (const a of await db
+      .select({ id: agents.userId })
+      .from(agents)
+      .where(and(inArray(agents.userId, part), eq(agents.guarded, true)))
+      .all())
+      guarded.add(a.id);
   const out = [];
   for (const i of page) {
     const r = repos.get(i.pr.repositoryId)!;
@@ -469,10 +503,12 @@ export async function approvalsFor(
           },
           status: g.status as 'flagged' | 'changes_requested' | 'failed',
           error: g.error,
-          flags: g.flags.map((f) => flagJson(f, people)),
+          flags: g.flags.map((f) =>
+            flagJson(f, people, { guarded: guarded.has(g.agentId), refs })
+          ),
         }))
         .sort((a, b) => a.agent.username.localeCompare(b.agent.username)),
     });
   }
-  return { items: out, count, nextCursor };
+  return { items: out, count, assignedToMe, nextCursor };
 }

@@ -493,6 +493,10 @@ const getPullRequest: ToolModule = {
               changes_requested_note: f.changesRequestedNote,
               // The moderator app it was approved or dismissed through; null in the web UI or while open.
               via: f.approvedVia,
+              // needs_person: the agent's plain yes/no question for the owner.
+              question: f.question,
+              // Approving it (or dismissing it) needs a reason; it is never approved in bulk or by AI.
+              guarded: f.guarded,
             })),
           })),
           approved_by: approvedBy,

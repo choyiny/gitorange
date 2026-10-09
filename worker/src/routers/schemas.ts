@@ -150,6 +150,34 @@ export const agentPresetSchema = z
   })
   .openapi('AgentPreset');
 
+/** Who someone is on the crew pages: a person, or a reviewer agent with its colour (worker/src/lib/person-ref.ts). */
+export const personRefSchema = z
+  .object({
+    /** The username, or the agent's handle. */
+    login: z.string(),
+    name: z.string().nullable(),
+    isAgent: z.boolean(),
+    /** An agent's `#rrggbb`; null for a person. */
+    color: z.string().nullable(),
+  })
+  .openapi('PersonRef');
+
+/** What every finding (review flag) shows about who decides it and how it was decided (review/reviewers-view.ts). */
+export const flagDecisionFields = {
+  /** needs_person: the agent's plain yes/no question for the owner; null when it asked none. */
+  question: z.string().nullable(),
+  /** Its agent is guarded: never approved in bulk, by one key or by AI; approving it needs a reason. */
+  guarded: z.boolean(),
+  /** Who was asked to decide it. */
+  assignee: personRefSchema.nullable(),
+  /** How the current decision was made: a moderator app's name, or "GitOrange AI"; null from the web, or open. */
+  decidedVia: z.string().nullable(),
+  /** The decider's reason (a person's for an approval, GitOrange AI's for either decision). */
+  reason: z.string().nullable(),
+  /** What the decider taught the agent with the decision. */
+  teach: z.string().nullable(),
+};
+
 /** One entry of an audit log: an audit_events row, or a pull request timeline event (`pull.<kind>`). */
 export const auditEventSchema = z
   .object({

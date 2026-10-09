@@ -10,7 +10,11 @@ import type { DrizzleDB } from '../db/middleware';
 import { d1Of } from '../pulls/events';
 import { gitFor } from '../lib/repos';
 import { readAgentConfig, type AgentEngine } from '../agents/config';
-import type { AgentReview, AgentReviewInput } from './contract';
+import {
+  plainQuestion,
+  type AgentReview,
+  type AgentReviewInput,
+} from './contract';
 import { composeDetail, diffsFor } from './detail';
 import type { HeadContext } from './head';
 import { ignoreMatcher } from './ignore';
@@ -211,8 +215,9 @@ export async function recordReview(
       d1
         .prepare(
           `INSERT OR IGNORE INTO pr_review_flags
-             (id, classification_id, key, value, paths, detail, detail_model, agent_id, kind, agent_sha, created_at)
-           SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
+             (id, classification_id, key, value, paths, detail, detail_model, agent_id, kind, agent_sha, question,
+              created_at)
+           SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
             WHERE EXISTS (SELECT 1 FROM pr_reviewers WHERE id = ? AND status = 'reviewing' AND created_at = ?)`
         )
         .bind(
@@ -226,6 +231,10 @@ export async function recordReview(
           row.agentId,
           f.finding.kind,
           row.agentSha,
+          // The owner's yes/no question: findings for a person only, and only a plain one.
+          f.finding.kind === 'needs_person'
+            ? plainQuestion(f.finding.question)
+            : null,
           at,
           row.id,
           generation

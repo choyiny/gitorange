@@ -176,6 +176,8 @@ jobs:
           worker/src/__tests__/agent-learning-recovery.test.ts
           worker/src/__tests__/pull-approvals.test.ts
           worker/src/__tests__/approvals.test.ts
+          worker/src/__tests__/owner-questions.test.ts
+          worker/src/__tests__/delegate.test.ts
           worker/src/__tests__/pull-states.test.ts
           worker/src/__tests__/rebase-runs.test.ts
           worker/src/__tests__/rebase-resolution.test.ts

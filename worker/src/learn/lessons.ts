@@ -7,6 +7,7 @@ import {
   isNull,
   ne,
   notExists,
+  or,
   sql,
 } from 'drizzle-orm';
 import { alias } from 'drizzle-orm/sqlite-core';
@@ -29,15 +30,16 @@ import { findRepoById, readableByMembers } from '../lib/repos';
 import type { MergeResolutionParams } from '../merge/workflow';
 import { flagTitleOf } from '../review/gate';
 import { chunks } from '../stack/view';
-import type { LessonInput } from './contract';
+import type { LessonFinding, LessonInput } from './contract';
 
 /**
- * A pull request's agent change requests that a person (or a moderator app acting for one) dismissed, on any of its
- * commits, per live agent (not deleted, still with its repository), oldest first. Dismissing is approving a
- * `change_requested` finding (`decideFlag`): `approved_at` is set; agents never approve, and approving a needs-person
- * finding is not a dismissal.
+ * What a pull request taught its agents, on any of its commits, per live agent (not deleted, still with its
+ * repository), oldest first: the agent change requests a person (or a moderator app acting for one) dismissed, and the
+ * findings a person decided with a teach note (approved, dismissed, or with changes requested). Dismissing is
+ * approving a `change_requested` finding (`decideFlag`): `approved_at` is set; agents never approve, and approving a
+ * needs-person finding is not a dismissal. Undoing a decision clears its teach note, so it teaches nothing.
  */
-export async function dismissedByAgent(
+export async function lessonFindingsByAgent(
   db: DrizzleDB,
   pullRequestId: string
 ): Promise<Map<string, string[]>> {
@@ -52,8 +54,13 @@ export async function dismissedByAgent(
     .where(
       and(
         eq(prClassifications.pullRequestId, pullRequestId),
-        eq(prReviewFlags.kind, 'change_requested'),
-        isNotNull(prReviewFlags.approvedAt),
+        or(
+          and(
+            eq(prReviewFlags.kind, 'change_requested'),
+            isNotNull(prReviewFlags.approvedAt)
+          ),
+          isNotNull(prReviewFlags.teachNote)
+        ),
         isNull(agents.deletedAt),
         isNotNull(agents.repositoryId)
       )
@@ -72,9 +79,9 @@ export async function dismissedByAgent(
 
 /**
  * When a pull request closes (landed by landPull, or closed unmerged): one lesson per agent whose change requests on
- * it were dismissed. Unique per (agent, pull request) and written before anything runs, so a second close (after a
- * reopen) or a repeated call never queues twice. Returns the ids queued now. Never throws: closing never fails over
- * learning.
+ * it were dismissed, or whose findings a person decided with a teach note. Unique per (agent, pull request) and
+ * written before anything runs, so a second close (after a reopen) or a repeated call never queues twice. Returns the
+ * ids queued now. Never throws: closing never fails over learning.
  */
 export async function queueLessons(
   env: CloudflareBindings,
@@ -84,7 +91,10 @@ export async function queueLessons(
   try {
     const queued: string[] = [];
     const now = new Date();
-    for (const [agentId, findingIds] of await dismissedByAgent(db, pr.id)) {
+    for (const [agentId, findingIds] of await lessonFindingsByAgent(
+      db,
+      pr.id
+    )) {
       const [row] = await db
         .insert(agentLessons)
         .values({
@@ -274,32 +284,48 @@ export async function loadLesson(
   };
 }
 
-/** What the learner is given: the pull request, and each dismissed finding as recorded (in the lesson's order). */
+/**
+ * What the learner is given: the pull request, and each finding as recorded (in the lesson's order) with how a person
+ * decided it and, when they taught one, their rule in their own words.
+ */
 export async function lessonInput(
   db: DrizzleDB,
   l: LoadedLesson
 ): Promise<LessonInput> {
   const ids = l.lesson.findingIds;
+  const teacher = alias(users, 'teacher');
   const rows = [];
   for (const part of chunks(ids, 90))
     rows.push(
       ...(await db
         .select({
           id: prReviewFlags.id,
+          kind: prReviewFlags.kind,
           value: prReviewFlags.value,
           detail: prReviewFlags.detail,
           paths: prReviewFlags.paths,
           headSha: prClassifications.headSha,
           approvedAt: prReviewFlags.approvedAt,
+          changesRequestedAt: prReviewFlags.changesRequestedAt,
           via: prReviewFlags.approvedVia,
           by: users.username,
+          rule: prReviewFlags.teachNote,
+          taughtBy: teacher.username,
         })
         .from(prReviewFlags)
         .innerJoin(
           prClassifications,
           eq(prClassifications.id, prReviewFlags.classificationId)
         )
-        .leftJoin(users, eq(users.id, prReviewFlags.approvedById))
+        // Whoever made the decision: the approval (or dismissal), else the request for changes.
+        .leftJoin(
+          users,
+          eq(
+            users.id,
+            sql`coalesce(${prReviewFlags.approvedById}, ${prReviewFlags.changesRequestedById})`
+          )
+        )
+        .leftJoin(teacher, eq(teacher.id, prReviewFlags.teachById))
         .where(inArray(prReviewFlags.id, part))
         .all())
     );
@@ -319,20 +345,31 @@ export async function lessonInput(
     },
     findings: ids.flatMap((id) => {
       const r = byId.get(id);
-      return r
-        ? [
-            {
-              id,
-              title: flagTitleOf({ value: r.value }),
-              detail: r.detail,
-              paths: r.paths,
-              headSha: r.headSha,
-              dismissedBy: r.by ?? null,
-              via: r.via,
-              dismissedAt: (r.approvedAt ?? new Date(0)).toISOString(),
-            },
-          ]
-        : [];
+      if (!r) return [];
+      const decision: LessonFinding['decision'] = r.approvedAt
+        ? r.kind === 'change_requested'
+          ? 'dismissed'
+          : 'approved'
+        : 'changes_requested';
+      return [
+        {
+          id,
+          title: flagTitleOf({ value: r.value }),
+          detail: r.detail,
+          paths: r.paths,
+          headSha: r.headSha,
+          decision,
+          dismissedBy: r.by ?? null,
+          via: r.via,
+          dismissedAt: (
+            r.approvedAt ??
+            r.changesRequestedAt ??
+            new Date(0)
+          ).toISOString(),
+          rule: r.rule,
+          taughtBy: r.rule ? (r.taughtBy ?? null) : null,
+        },
+      ];
     }),
   };
 }
