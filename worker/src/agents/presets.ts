@@ -280,6 +280,20 @@ export function isGuarded(agent: {
   return agent.guarded || agent.facet === 'security' || agent.facet === 'data';
 }
 
+/**
+ * What `agents.guarded` stores for a parsed AGENT.md: the effective guard (isGuarded), never only the `guarded` key,
+ * so a SQL filter on the column (`guarded = 0`) and isGuarded always agree. Every writer of the column uses it.
+ */
+export function guardedOf(config: {
+  guarded?: boolean;
+  facet?: Facet | null;
+}): boolean {
+  return isGuarded({
+    guarded: config.guarded ?? false,
+    facet: config.facet ?? null,
+  });
+}
+
 /** The agent's colour: AGENT.md's, else a stable one from the palette for its handle. */
 export function agentColor(
   agent: { color: string | null | undefined },

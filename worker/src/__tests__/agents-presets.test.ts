@@ -3,6 +3,7 @@ import { AGENT_PATH, parseAgentConfig } from '../agents/config';
 import {
   AGENT_PALETTE,
   agentColor,
+  guardedOf,
   isGuarded,
   PRESET_FACETS,
   PRESETS,
@@ -126,6 +127,16 @@ describe('isGuarded', () => {
     expect(isGuarded({ guarded: false, facet: 'data' })).toBe(true);
     expect(isGuarded({ guarded: false, facet: 'privacy' })).toBe(false);
     expect(isGuarded({ guarded: false, facet: null })).toBe(false);
+  });
+});
+
+describe('guardedOf', () => {
+  it('is the guard agents.guarded stores for an AGENT.md: the same answer as isGuarded', () => {
+    expect(guardedOf({ facet: 'security' })).toBe(true);
+    expect(guardedOf({ facet: 'data', guarded: false })).toBe(true);
+    expect(guardedOf({ facet: 'speed', guarded: true })).toBe(true);
+    expect(guardedOf({ facet: 'speed' })).toBe(false);
+    expect(guardedOf({})).toBe(false);
   });
 });
 
@@ -277,6 +288,16 @@ describe('POST /api/admin/agents/crew', () => {
     expect(again.skipped.map((s) => s.handle)).toEqual(HANDLES);
     expect(t.fake.repos.size).toBe(7);
     expect((await presets(t, admin)).every((p) => p.exists)).toBe(true);
+    // The stored guard is the effective one: SQL filters on agents.guarded agree with isGuarded.
+    const { results } = await t.env.DB.prepare(
+      'SELECT a.facet, a.guarded FROM agents a ORDER BY a.facet'
+    ).all<{ facet: string; guarded: number }>();
+    expect(
+      results.map((r) => [r.facet, r.guarded]).filter(([, g]) => g === 1)
+    ).toEqual([
+      ['data', 1],
+      ['security', 1],
+    ]);
   });
 
   it('skips a handle someone else holds', async () => {

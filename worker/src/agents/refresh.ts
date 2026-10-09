@@ -5,6 +5,7 @@ import type { DrizzleDB } from '../db/middleware';
 import { gitFor } from '../lib/repos';
 import { avatarUrl } from './identity';
 import { AVATAR_PATH, readAgentConfig } from './config';
+import { guardedOf } from './presets';
 
 /**
  * After a push or merge: if `repositoryId` is an agent's repository and its default branch moved, re-reads
@@ -91,7 +92,7 @@ async function refreshOnce(
           engine: c.engine,
           color: c.color ?? null,
           facet: c.facet ?? null,
-          guarded: c.guarded ?? false,
+          guarded: guardedOf(c),
           configSha: head,
           configError: null,
         })

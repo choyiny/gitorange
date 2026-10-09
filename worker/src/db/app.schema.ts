@@ -124,7 +124,8 @@ export const agents = sqliteTable(
     // AGENT.md's `color` (#rrggbb, lowercase); null ⇒ a stable colour from the palette (agentColor).
     color: text('color'),
     facet: text('facet', { enum: agentFacets }),
-    // AGENT.md's `guarded`. Read through isGuarded, which also guards every Security and Data agent.
+    // The effective guard (guardedOf in worker/src/agents/presets.ts): AGENT.md's `guarded`, or a security or data
+    // facet. Every writer stores it that way, so filtering on this column agrees with isGuarded.
     guarded: integer('guarded', { mode: 'boolean' }).notNull().default(false),
     configSha: text('config_sha'),
     configError: text('config_error'),

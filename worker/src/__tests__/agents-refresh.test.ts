@@ -91,6 +91,35 @@ describe('refreshing an agent from AGENT.md', () => {
     });
   });
 
+  it('stores the effective guard: every Security or Data agent is guarded, whatever AGENT.md says', async () => {
+    const s = await setup();
+    const withFront = (front: string) =>
+      AGENT('Auth Agent').replace('engine: pi\n', `engine: pi\n${front}`);
+    const guarded = async () => (await agentRow(s.t))!.guarded;
+    // A facet that guards, with no guarded key.
+    await pushTo(s, 'main', { 'AGENT.md': withFront('facet: security\n') });
+    expect(await guarded()).toBe(1);
+    await pushTo(s, 'main', { 'AGENT.md': withFront('facet: data\n') });
+    expect(await guarded()).toBe(1);
+    // guarded: false can't unguard them.
+    await pushTo(s, 'main', {
+      'AGENT.md': withFront('facet: data\nguarded: false\n'),
+    });
+    expect(await guarded()).toBe(1);
+    // Moving to another facet updates the column.
+    await pushTo(s, 'main', { 'AGENT.md': withFront('facet: speed\n') });
+    expect(await guarded()).toBe(0);
+    await pushTo(s, 'main', {
+      'AGENT.md': withFront('facet: speed\nguarded: true\n'),
+    });
+    expect(await guarded()).toBe(1);
+    // The column and the API always agree.
+    const agents = (await (
+      await call(s.t, '/api/agents', { cookie: s.admin })
+    ).json()) as { guarded: boolean }[];
+    expect(agents[0].guarded).toBe(true);
+  });
+
   it('points the avatar at the pushed commit when avatar.png is there', async () => {
     const s = await setup();
     const sha = await pushTo(s, 'main', {

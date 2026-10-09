@@ -21,6 +21,7 @@ import { AGENT_PATH, parseAgentConfig } from './config';
 import { agentEmail, avatarUrl } from './identity';
 import {
   agentColor,
+  guardedOf,
   isGuarded,
   PRESETS,
   presetAgentMd,
@@ -193,7 +194,7 @@ export async function createAgent(
         engine: config.engine,
         color: config.color ?? null,
         facet: config.facet ?? null,
-        guarded: config.guarded ?? false,
+        guarded: guardedOf(config),
         configSha: null,
         configError: null,
         createdById: creator.id,
