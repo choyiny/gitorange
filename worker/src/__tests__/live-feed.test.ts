@@ -84,12 +84,15 @@ describe('GET /api/repos/{o}/{r}/live', () => {
 
   it('keeps only the 50 newest events', async () => {
     const s = await crewRepo();
+    // A minute ahead, so b0 is newer than the repository.created event, which can share a millisecond with now
+    // (equal times are ordered by random id).
+    const newest = Date.now() + 60_000;
     for (let i = 0; i < 60; i++)
       await s.t.env.DB.prepare(
         `INSERT INTO audit_events (id, repository_id, actor_id, actor_kind, action, target, data, created_at)
          VALUES (?, ?, NULL, 'system', 'branch.deleted', ?, '{}', ?)`
       )
-        .bind(crypto.randomUUID(), s.repoId, `b${i}`, Date.now() - i * 1000)
+        .bind(crypto.randomUUID(), s.repoId, `b${i}`, newest - i * 1000)
         .run();
     const { events } = await live(s);
     expect(events).toHaveLength(50);
