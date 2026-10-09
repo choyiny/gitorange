@@ -15,6 +15,7 @@ import { useCurrentUser } from '@/lib/auth';
 import type { RecentRepo } from '@/lib/recentRepos';
 import {
   CLEARED,
+  blurCloses,
   flattenSections,
   hitsFromResults,
   jumpHits,
@@ -127,6 +128,7 @@ export function GlobalSearch({
   const [state, setState] = useState<SearchState>(CLEARED);
   const inputRef = useRef<HTMLInputElement>(null);
   const boxRef = useRef<HTMLDivElement>(null);
+  const pressedInside = useRef(false);
 
   const repos = useQuery({
     queryKey: qk.repos,
@@ -212,9 +214,27 @@ export function GlobalSearch({
       className={`gsearch${open ? ' open' : ''}`}
       role="search"
       data-menu-root="search"
+      onPointerDown={() => {
+        // A press inside (the results' scrollbar, the padding) may blur the input; that isn't leaving.
+        pressedInside.current = true;
+        const release = () => {
+          setTimeout(() => (pressedInside.current = false));
+          window.removeEventListener('pointerup', release, true);
+        };
+        window.addEventListener('pointerup', release, true);
+      }}
       onBlur={(e) => {
         // Tabbing out closes it; a press elsewhere is handled by the shell.
-        if (open && !boxRef.current?.contains(e.relatedTarget as Node | null))
+        if (
+          open &&
+          blurCloses({
+            windowFocused: document.hasFocus(),
+            pressedInside: pressedInside.current,
+            focusInside: !!boxRef.current?.contains(
+              e.relatedTarget as Node | null
+            ),
+          })
+        )
           close();
       }}
     >

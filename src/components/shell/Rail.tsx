@@ -14,6 +14,7 @@ import { AgentAvatar } from '@/components/AgentAvatar';
 import { useAppName } from '@/lib/appName';
 import { useApprovalCount } from '@/lib/approvals';
 import { useCurrentUser } from '@/lib/auth';
+import { railClasses } from '@/lib/rail';
 import type { RecentRepo } from '@/lib/recentRepos';
 import type { ShellMenu, ShellRepo } from './AppShell';
 import { CrewIcon } from './icons';
@@ -165,15 +166,8 @@ export function Rail({
     if (navRef.current) navRef.current.inert = narrow && !navOpen;
   }, [narrow, navOpen]);
 
-  const wide = pinned || peek || narrow;
-  const className = [
-    'snav',
-    !wide && 'shut',
-    pinned && !narrow && 'pinned',
-    peek && !pinned && !narrow && 'peeking',
-  ]
-    .filter(Boolean)
-    .join(' ');
+  // A peek is an overlay: the rail keeps its 64px in the layout and its panel opens over the page.
+  const className = railClasses({ pinned, peek, narrow });
 
   return (
     <nav
