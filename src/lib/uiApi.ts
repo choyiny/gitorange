@@ -1104,6 +1104,11 @@ export type HealthArea = {
   detail: string;
   /** Problems open now. */
   open: number;
+  /**
+   * Tests on main only: for each of `weeks`, true when no run finished that week, so its 0 is "no data", not "no
+   * failures". Absent on the other rows.
+   */
+  noRuns?: boolean[];
 };
 /** GET /api/repos/{o}/{r}/health */
 export type HealthReport = {
@@ -1119,6 +1124,8 @@ export type HealthReport = {
       label: string;
       login: string;
       client: string | null;
+      /** The id `GET /sessions` gives this group of pull requests; a person working by hand has their "by hand" session. */
+      sessionId: string;
     };
     merged: number;
     findings: number;

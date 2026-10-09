@@ -38,7 +38,8 @@ function Report({ data, repo }: { data: HealthReport; repo: RepoDetail }) {
         )}
         <p className="hl-measure muted small">
           Measured from your reviewers’ findings, tests on main and merges. For
-          tests, the chart shows the share of runs that failed.
+          tests, the chart shows the share of runs that failed. A week with no
+          test runs shows as a gap.
         </p>
       </Section>
 

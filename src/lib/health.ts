@@ -23,7 +23,6 @@ import type {
   HealthArea,
   HealthReport,
   HealthTrend,
-  SessionSummary,
 } from './uiApi';
 
 export type Contributor = HealthReport['contributors'][number];
@@ -60,7 +59,8 @@ export function weekLabels(count: number): string[] {
 
 /**
  * How to chart a row's weeks: the unit each point's tooltip ends with and the name for assistive tech. The tests
- * row says "failed" in both, because its numbers are the share of runs that failed, not a pass rate.
+ * row says "failed" in both, because its numbers are the share of runs that failed, not a pass rate. A week of the
+ * tests row in which no run finished is `missing`: its 0 is not a measurement, so it is drawn as a gap.
  */
 export function areaSpark(area: HealthArea): {
   values: number[];
@@ -68,6 +68,8 @@ export function areaSpark(area: HealthArea): {
   label: string;
   labels: string[];
   trend: HealthTrend;
+  missing?: boolean[];
+  missingText: string;
 } {
   const kind = areaKind(area);
   const unit =
@@ -82,12 +84,20 @@ export function areaSpark(area: HealthArea): {
       : kind === 'merging'
         ? 'reverts'
         : 'findings raised';
+  const gaps =
+    kind === 'tests' &&
+    area.noRuns?.length === area.weeks.length &&
+    area.noRuns.some(Boolean)
+      ? area.noRuns
+      : undefined;
   return {
     values: area.weeks,
     unit,
-    label: `${area.label}, ${what}, last ${area.weeks.length} weeks`,
+    label: `${area.label}, ${what}, last ${area.weeks.length} weeks${gaps ? '; weeks with no test runs are gaps' : ''}`,
     labels: weekLabels(area.weeks.length),
     trend: area.trend,
+    missing: gaps,
+    missingText: 'no test runs',
   };
 }
 
@@ -185,27 +195,9 @@ export function clientMark(client: string | null | undefined): {
 }
 
 /**
- * The id of the coding session a contributor is, so the row can link to its page. The report names a session by
- * its person, app and label (its app's name when it has none); `SessionSummary.id` is a hash of those, so the match
- * is made against the repository's sessions. Null for a person working by hand, or when there is no match.
- */
-export function sessionIdFor(
-  who: Contributor['who'],
-  sessions: readonly SessionSummary[] | undefined
-): string | null {
-  if (who.kind !== 'session' || !sessions) return null;
-  const found = sessions.find(
-    (s) =>
-      s.author.login === who.login &&
-      s.client === who.client &&
-      (s.label || s.client) === who.label
-  );
-  return found?.id ?? null;
-}
-
-/**
- * One line about a reviewer: what it raised this week here, and its record overall (the share of its findings a
- * person kept, the rules it learned). Null when neither is known.
+ * One line about a reviewer: what it raised this week here, then its record overall (the share of its findings a
+ * person kept, the rules it learned), which says "overall" because it covers every repository it reviews. Null when
+ * neither is known.
  */
 export function reviewerRecord(
   area: Pick<HealthArea, 'thisWeek'> | undefined,
@@ -219,8 +211,9 @@ export function reviewerRecord(
         : `${area.thisWeek} raised this week`
     );
   if (stats) {
-    if (stats.keptPct !== null) parts.push(`${stats.keptPct}% kept`);
-    if (stats.rules > 0) parts.push(`${plural(stats.rules, 'rule')} learned`);
+    if (stats.keptPct !== null) parts.push(`${stats.keptPct}% kept overall`);
+    if (stats.rules > 0)
+      parts.push(`${plural(stats.rules, 'rule')} learned overall`);
   }
   return parts.length ? parts.join(' · ') : null;
 }
@@ -244,4 +237,22 @@ export function notReviewing(
 ): Agent[] {
   const on = new Set(invited.map((a) => a.username.toLowerCase()));
   return all.filter((a) => !a.deletedAt && !on.has(a.username.toLowerCase()));
+}
+
+/**
+ * What the reviewers list says when no reviewer is on the project. Only an admin of the repository is told to add
+ * one; anyone else is told who can.
+ */
+export function noReviewersBody(o: {
+  /** The viewer is an admin of this repository (the Add buttons are theirs). */
+  admin: boolean;
+  /** Reviewers that exist but are not on this repository. */
+  available: number;
+}): string {
+  const what = 'Reviewers look at each change before it merges.';
+  if (o.available === 0)
+    return `${what} A site admin can create them from Agents.`;
+  return o.admin
+    ? `${what} Add one below.`
+    : `${what} An admin of this repository can add one.`;
 }

@@ -1,14 +1,13 @@
 import type { ReactNode } from 'react';
 import { Link } from 'react-router-dom';
-import { useQuery } from '@tanstack/react-query';
 import {
   AlertIcon,
   ArrowUpIcon,
   DotFillIcon,
   PersonIcon,
 } from '@primer/octicons-react';
-import { api, qk, type HealthReport, type HealthTrend } from '@/lib/uiApi';
-import { clientMark, contributorLine, sessionIdFor } from '@/lib/health';
+import type { HealthReport, HealthTrend } from '@/lib/uiApi';
+import { clientMark, contributorLine } from '@/lib/health';
 import { Identicon } from '@/components/Identicon';
 import { EmptyState } from '@/components/ui/EmptyState';
 import { Section } from '@/components/ui/Section';
@@ -28,7 +27,7 @@ function Coder({
 }: {
   who: Contributor['who'];
   /** Where the tile and name lead: the session's page, or the person's profile. */
-  to: string | null;
+  to: string;
 }) {
   const session = who.kind === 'session';
   const { mark, codex } = clientMark(who.client);
@@ -54,18 +53,17 @@ function Coder({
       </span>
     </span>
   );
-  return to ? (
+  return (
     <Link className="hl-coder-link" to={to}>
       {inner}
     </Link>
-  ) : (
-    inner
   );
 }
 
 /**
  * "Who made things better or worse": the people and coding sessions that merged this week, most merged first, with
- * what the reviewers found on their changes against last week. Sessions link to their page when it can be found.
+ * what the reviewers found on their changes against last week. A coding session links to its page by the id the report
+ * gives it; a person links to their profile.
  */
 export function Contributors({
   contributors,
@@ -76,13 +74,6 @@ export function Contributors({
   owner: string;
   name: string;
 }) {
-  const hasSession = contributors.some((c) => c.who.kind === 'session');
-  // Only to find each session's page; the list reads fine without it.
-  const sessions = useQuery({
-    queryKey: qk.sessions(owner, name),
-    queryFn: () => api.sessions(owner, name),
-    enabled: hasSession,
-  });
   return (
     <Section
       title="Who made things better or worse"
@@ -100,13 +91,10 @@ export function Contributors({
         <ul className="list hl-movers">
           {contributors.map((c) => {
             const line = contributorLine(c);
-            const sessionId = sessionIdFor(c.who, sessions.data);
             const to =
               c.who.kind === 'person'
                 ? `/${c.who.login}`
-                : sessionId
-                  ? `/${owner}/${name}/session/${sessionId}`
-                  : null;
+                : `/${owner}/${name}/session/${c.who.sessionId}`;
             return (
               <li
                 key={`${c.who.kind}:${c.who.login}:${c.who.client ?? ''}:${c.who.label}`}

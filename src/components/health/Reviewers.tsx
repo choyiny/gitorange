@@ -15,7 +15,12 @@ import {
   type RepoAgent,
   type RepoDetail,
 } from '@/lib/uiApi';
-import { notReviewing, reviewerRecord, reviewerState } from '@/lib/health';
+import {
+  noReviewersBody,
+  notReviewing,
+  reviewerRecord,
+  reviewerState,
+} from '@/lib/health';
 import { AgentAvatar } from '@/components/AgentAvatar';
 import { QueryError, RowsSkeleton } from '@/components/actions/states';
 import { CrewIcon } from '@/components/shell/icons';
@@ -148,11 +153,7 @@ export function Reviewers({
             <EmptyState
               picture={<CrewIcon size={24} />}
               title="No reviewers on this project yet"
-              body={
-                off.length
-                  ? 'Reviewers look at each change before it merges. Add one below.'
-                  : 'Reviewers look at each change before it merges. A site admin can create them from Agents.'
-              }
+              body={noReviewersBody({ admin, available: off.length })}
             />
           )}
           {on.map((a, i) => {

@@ -70,6 +70,11 @@ export function TrendTable({
   return (
     <div className="table-wrap">
       <table className="table hl-table">
+        <caption className="sr">
+          Did anything get worse? A row for each area: where it stands now, the
+          last eight weeks, and whether it is better, the same or worse than
+          last week. Every row counts problems, so lower is better.
+        </caption>
         <thead>
           <tr>
             <th scope="col">Area</th>
@@ -100,6 +105,8 @@ export function TrendTable({
                     label={spark.label}
                     labels={spark.labels}
                     trend={spark.trend}
+                    missing={spark.missing}
+                    missingText={spark.missingText}
                   />
                 </td>
                 <td className="hl-cell-change">

@@ -6,11 +6,11 @@ import {
   contributorLine,
   decisionCopy,
   healthLede,
+  noReviewersBody,
   notReviewing,
   pickDecision,
   reviewerRecord,
   reviewerState,
-  sessionIdFor,
   TREND_LOOK,
   weekLabels,
 } from './health';
@@ -21,7 +21,6 @@ import type {
   HealthArea,
   HealthReport,
   ReviewFlag,
-  SessionSummary,
 } from './uiApi';
 
 const area = (over: Partial<HealthArea> = {}): HealthArea => ({
@@ -117,6 +116,53 @@ describe('areaSpark', () => {
     expect(s.unit).toBe(' reverted');
     expect(s.label).toBe('Merging, reverts, last 2 weeks');
     expect(s.labels).toEqual(['Last week', 'This week']);
+  });
+});
+
+describe('areaSpark gaps', () => {
+  const tests = (over: Partial<HealthArea> = {}) =>
+    area({
+      id: 'tests',
+      agent: null,
+      label: 'Tests on main',
+      weeks: [0, 0, 0, 0, 25, 0, 0, 50],
+      noRuns: [true, true, true, true, false, true, true, false],
+      trend: 'worse',
+      ...over,
+    });
+
+  it('draws the weeks with no test runs as gaps, with a tooltip that says so', () => {
+    const s = areaSpark(tests());
+    expect(s.missing).toEqual([
+      true,
+      true,
+      true,
+      true,
+      false,
+      true,
+      true,
+      false,
+    ]);
+    expect(s.missingText).toBe('no test runs');
+    // The numbers are unchanged: a gap week keeps its 0 in `values`, it is the flag that says it is not a measurement.
+    expect(s.values).toEqual([0, 0, 0, 0, 25, 0, 0, 50]);
+    expect(s.label).toContain('weeks with no test runs are gaps');
+  });
+
+  it('draws no gaps when every week had runs, when the API sent none, or off the tests row', () => {
+    expect(
+      areaSpark(tests({ noRuns: Array(8).fill(false) })).missing
+    ).toBeUndefined();
+    expect(areaSpark(tests({ noRuns: undefined })).missing).toBeUndefined();
+    expect(areaSpark(tests({ noRuns: undefined })).label).not.toContain('gaps');
+    // Only the tests row has gaps, whatever another row carries.
+    expect(
+      areaSpark(area({ noRuns: Array(8).fill(true) })).missing
+    ).toBeUndefined();
+  });
+
+  it('ignores a noRuns list that does not line up with the weeks', () => {
+    expect(areaSpark(tests({ noRuns: [true, false] })).missing).toBeUndefined();
   });
 });
 
@@ -274,6 +320,7 @@ describe('contributorLine', () => {
       label: 'Cho',
       login: 'cho',
       client: null,
+      sessionId: 's-0123456789',
     },
     merged: 4,
     findings: 0,
@@ -331,50 +378,6 @@ describe('clientMark', () => {
   });
 });
 
-describe('sessionIdFor', () => {
-  const session = (over: Partial<SessionSummary> = {}): SessionSummary => ({
-    id: 's-abc',
-    client: 'Claude Code',
-    label: 's4',
-    author: { login: 'cho', name: 'Cho', isAgent: false, color: null },
-    pulls: [],
-    requests: [],
-    lastActivity: 0,
-    ...over,
-  });
-  const who = (over = {}) => ({
-    kind: 'session' as const,
-    label: 's4',
-    login: 'cho',
-    client: 'Claude Code',
-    ...over,
-  });
-
-  it('finds the session by its person, app and label', () => {
-    expect(
-      sessionIdFor(who(), [session({ id: 'other', label: 's5' }), session()])
-    ).toBe('s-abc');
-  });
-
-  it('matches a session without a label by its app name', () => {
-    expect(
-      sessionIdFor(who({ label: 'Claude Code' }), [session({ label: null })])
-    ).toBe('s-abc');
-  });
-
-  it('does not mix up two people running the same app', () => {
-    expect(sessionIdFor(who({ login: 'mahmoud' }), [session()])).toBeNull();
-  });
-
-  it('finds nothing for a person working by hand or when no sessions loaded', () => {
-    expect(
-      sessionIdFor(who({ kind: 'person', client: null }), [session()])
-    ).toBeNull();
-    expect(sessionIdFor(who(), [])).toBeNull();
-    expect(sessionIdFor(who(), undefined)).toBeNull();
-  });
-});
-
 describe('reviewer record and state', () => {
   const stats = (over: Partial<AgentStats> = {}): AgentStats => ({
     handle: 'dataagent',
@@ -395,14 +398,14 @@ describe('reviewer record and state', () => {
 
   it('writes the record from this week and the overall numbers', () => {
     expect(reviewerRecord(area(), stats())).toBe(
-      '3 raised this week · 80% kept · 3 rules learned'
+      '3 raised this week · 80% kept overall · 3 rules learned overall'
     );
   });
 
   it('uses singular forms and leaves out what is not known', () => {
     expect(
       reviewerRecord(area({ thisWeek: 1 }), stats({ keptPct: null, rules: 1 }))
-    ).toBe('1 raised this week · 1 rule learned');
+    ).toBe('1 raised this week · 1 rule learned overall');
   });
 
   it('still says something when only one source loaded', () => {
@@ -410,7 +413,7 @@ describe('reviewer record and state', () => {
       'Nothing raised this week'
     );
     expect(reviewerRecord(undefined, stats())).toBe(
-      '80% kept · 3 rules learned'
+      '80% kept overall · 3 rules learned overall'
     );
     expect(reviewerRecord(undefined, undefined)).toBeNull();
   });
@@ -442,5 +445,25 @@ describe('notReviewing', () => {
     expect(
       notReviewing(all, [{ username: 'DataAgent' }]).map((a) => a.username)
     ).toEqual(['securityagent']);
+  });
+});
+
+describe('noReviewersBody', () => {
+  it('tells an admin to add one and anyone else who can', () => {
+    expect(noReviewersBody({ admin: true, available: 3 })).toBe(
+      'Reviewers look at each change before it merges. Add one below.'
+    );
+    const other = noReviewersBody({ admin: false, available: 3 });
+    expect(other).toBe(
+      'Reviewers look at each change before it merges. An admin of this repository can add one.'
+    );
+    expect(other).not.toMatch(/below/i);
+  });
+
+  it('points at Agents when there is nothing to add, for everyone', () => {
+    for (const admin of [true, false])
+      expect(noReviewersBody({ admin, available: 0 })).toBe(
+        'Reviewers look at each change before it merges. A site admin can create them from Agents.'
+      );
   });
 });
