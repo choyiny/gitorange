@@ -316,6 +316,26 @@ describe('GET /api/search', () => {
     expect(trees.mock.calls.length).toBe(first);
   });
 
+  it('searches long, accented and wildcard-heavy queries (D1 refuses LIKE patterns over 50 bytes)', async () => {
+    const s = await crewRepo();
+    const long = 'x'.repeat(80);
+    const accented = 'é'.repeat(40);
+    await pullRow(s, s.repoId, 1, `Fix ${long}`);
+    await pullRow(s, s.repoId, 2, `Fix ${accented}`);
+    expect((await search(s, long)).pulls.map((p) => p.number)).toEqual([1]);
+    expect((await search(s, accented)).pulls.map((p) => p.number)).toEqual([2]);
+    // The whole query has to match, not just its first fifty characters.
+    expect((await search(s, `${'x'.repeat(79)}y`)).pulls).toEqual([]);
+    expect(await search(s, '%_\\'.repeat(40))).toEqual({
+      repos: [],
+      pulls: [],
+      agents: [],
+      people: [],
+      branches: [],
+      files: [],
+    });
+  });
+
   it('returns nothing for a blank query, and needs a session', async () => {
     const s = await crewRepo();
     expect(await search(s, '   ')).toEqual({

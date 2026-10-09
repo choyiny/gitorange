@@ -16,6 +16,7 @@ import type { DrizzleDB } from '../db/middleware';
 import { agentColor } from '../agents/presets';
 import type { GitService } from '../git/service';
 import type { SessionUser } from '../variables';
+import { contains, startsWith } from './text-match';
 import {
   findRepo,
   findReposByIds,
@@ -56,19 +57,13 @@ const empty = (): SearchResults => ({
   files: [],
 });
 
-/** `%term%` for LIKE, its own `%`, `_` and `\` escaped (ESCAPE '\'). SQLite's LIKE ignores ASCII case. */
-const pattern = (term: string, prefix = false) =>
-  `${prefix ? '' : '%'}${term.replace(/[\\%_]/g, (c) => `\\${c}`)}%`;
-const likes = (column: AnySQLiteColumn | SQL, p: string) =>
-  sql`${column} LIKE ${p} ESCAPE '\\'`;
-
 /**
  * ORDER BY for a handle column, in the database so the best matches are never cut off by a pool read first: the exact
  * handle (any case), then those starting with the term, then the rest; ties shortest then alphabetical. Mirrors
  * `ranked` below, which does the same for lists read whole.
  */
 const byHandle = (column: AnySQLiteColumn, term: string) => [
-  sql`CASE WHEN lower(${column}) = lower(${term}) THEN 0 WHEN ${likes(column, pattern(term, true))} THEN 1 ELSE 2 END`,
+  sql`CASE WHEN lower(${column}) = lower(${term}) THEN 0 WHEN ${startsWith(column, term)} THEN 1 ELSE 2 END`,
   sql`length(${column})`,
   asc(column),
 ];
@@ -165,7 +160,6 @@ export async function search(
 ): Promise<SearchResults> {
   const term = q.trim().slice(0, 100);
   if (!term) return empty();
-  const p = pattern(term);
   const number = /^#?(\d{1,9})$/.exec(term)?.[1];
 
   const scoped = repo
@@ -188,11 +182,11 @@ export async function search(
       .where(
         and(
           visibleTo(user),
-          or(likes(repositories.name, p), likes(fullName, p))
+          or(contains(repositories.name, term), contains(fullName, term))
         )
       )
       .orderBy(
-        sql`CASE WHEN lower(${repositories.name}) = lower(${term}) THEN 0 WHEN ${likes(repositories.name, pattern(term, true))} THEN 1 ELSE 2 END`,
+        sql`CASE WHEN lower(${repositories.name}) = lower(${term}) THEN 0 WHEN ${startsWith(repositories.name, term)} THEN 1 ELSE 2 END`,
         desc(repositories.updatedAt)
       )
       .limit(SEARCH_LIMIT)
@@ -210,7 +204,7 @@ export async function search(
         and(
           visibleTo(user),
           or(
-            likes(pullRequests.title, p),
+            contains(pullRequests.title, term),
             number ? eq(pullRequests.number, Number(number)) : undefined
           )
         )
@@ -237,7 +231,7 @@ export async function search(
         and(
           isNull(agents.deletedAt),
           isNotNull(users.username),
-          or(likes(users.username, p), likes(agents.name, p))
+          or(contains(users.username, term), contains(agents.name, term))
         )
       )
       .orderBy(...byHandle(users.username, term))
@@ -253,7 +247,7 @@ export async function search(
           isNull(agents.userId),
           isNotNull(users.username),
           or(isNull(users.banned), eq(users.banned, false)),
-          or(likes(users.username, p), likes(users.name, p))
+          or(contains(users.username, term), contains(users.name, term))
         )
       )
       .orderBy(...byHandle(users.username, term))

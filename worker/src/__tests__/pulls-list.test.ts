@@ -207,6 +207,23 @@ describe('pull request list: search', () => {
     expect(open.body.total).toBe(1);
   });
 
+  it('searches long, accented and wildcard-heavy words (D1 refuses LIKE patterns over 50 bytes)', async () => {
+    const s = await sessions();
+    const long = 'x'.repeat(60);
+    const accented = 'é'.repeat(30);
+    await s.t.env.DB.prepare(
+      'UPDATE pull_requests SET title = ? WHERE number = 3'
+    )
+      .bind(`Fix ${long} and ${accented}`)
+      .run();
+    expect(numbers((await find(s, long)).body)).toEqual([3]);
+    expect(numbers((await find(s, accented)).body)).toEqual([3]);
+    // The whole word has to match, not just its first fifty characters.
+    expect(numbers((await find(s, `${'x'.repeat(59)}y`)).body)).toEqual([]);
+    expect(numbers((await find(s, '%_!'.repeat(30))).body)).toEqual([]);
+    expect(numbers((await find(s, '1'.repeat(60))).body)).toEqual([]);
+  });
+
   it('ignores a blank search, and refuses a long one', async () => {
     const s = await sessions();
     expect(
