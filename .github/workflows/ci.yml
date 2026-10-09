@@ -93,9 +93,9 @@ jobs:
             migrations/**
           modules: |
             stacking: Stacked pull requests: stack discovery and pair edges, the stack tree, reconcile and retargeting, stack gates on landing, and land targets (worker/src/stack/, pull_requests.land_target)
-            review: Reviewing and merging pull requests: reviews by reviewer agents (worker/src/review/: per-file one-liners, the Clef trigger, agent reviews and their findings (single pass, and engine: pi reviews in the AgentReviewer Durable Object with its read-only checkout), the review gate and person approvals, .orangeignore, auto-merge), the Approvals inbox, pull request states (worker/src/pulls/: state reasons, signals, settle, pr_events), merging and landing (worker/src/merge/, landPull), three-way tree merges and diff3 conflicts (worker/src/git/service.ts), AI conflict resolution (MergeResolver, MERGE_RESOLUTION attempts and sweeps), generated-file matching, and agent runs (worker/src/agent-runs/: how the review, conflict resolution, sweep, and stack discovery Workflows record their steps, decisions, and AI usage, and agent run retention), agents learning from dismissed change requests (worker/src/learn/: lessons, the learn mode of AgentReviewer, validating and committing the learned edit)
+            review: Reviewing and merging pull requests: reviews by reviewer agents (worker/src/review/: per-file one-liners, the Clef trigger, agent reviews and their findings (single pass, and engine: pi reviews in the AgentReviewer Durable Object with its read-only checkout), the review gate and person approvals, .orangeignore, auto-merge), the Approvals inbox, pull request states (worker/src/pulls/: state reasons, signals, settle, pr_events), merging and landing (worker/src/merge/, landPull), the merge queue and pausing merging (worker/src/lib/queue.ts), reverting a merged pull request (worker/src/lib/revert.ts), three-way tree merges and diff3 conflicts (worker/src/git/service.ts), AI conflict resolution (MergeResolver, MERGE_RESOLUTION attempts and sweeps), generated-file matching, and agent runs (worker/src/agent-runs/: how the review, conflict resolution, sweep, and stack discovery Workflows record their steps, decisions, and AI usage, and agent run retention), agents learning from dismissed change requests (worker/src/learn/: lessons, the learn mode of AgentReviewer, validating and committing the learned edit)
             actions: GitOrange Actions (worker/src/actions/: workflow syntax and expressions, triggers, job planning and runner sizes, the executor and JobRunner containers, the job queue, the cache, log retention, the gitorange/relevance action), the Cron Triggers (worker/src/cron.ts), and git transport and storage: the git smart-HTTP endpoint (worker/src/git-http.ts), git objects, packfiles and pkt-lines (worker/src/git/), Git LFS (worker/src/lfs-http.ts, worker/src/lib/lfs.ts), and raw file serving
-            core: The API outside the modules above (worker/src/routers/, worker/src/lib/, worker/src/auth/, worker/src/index.ts): repositories and pull requests, access and visibility (worker/src/lib/repos.ts), setup and invitations, teams, Site admin and instance settings, the audit log (worker/src/lib/audit.ts), branches and the branch map (worker/src/lib/branches.ts), coding sessions (worker/src/lib/sessions.ts), reviewer agent presets (worker/src/agents/presets.ts), commit emails and attribution, live updates (worker/src/live/), usage and cost (worker/src/usage/), insights, the AI Gateway, API smoke tests; the MCP server (worker/src/mcp/: JSON-RPC tools) and its OAuth sign-in (better-auth OAuth provider, JWT access tokens, consent); and the web app's client-side libraries in src/lib (agent prompts, syntax highlighting, repository URLs, the stack tree and pull request state display)
+            core: The API outside the modules above (worker/src/routers/, worker/src/lib/, worker/src/auth/, worker/src/index.ts): repositories and pull requests, access and visibility (worker/src/lib/repos.ts), setup and invitations, teams, Site admin and instance settings, the audit log (worker/src/lib/audit.ts), branches and the branch map (worker/src/lib/branches.ts), coding sessions (worker/src/lib/sessions.ts), repository health (worker/src/lib/health.ts), the Live page payload (worker/src/lib/live-feed.ts), global search (worker/src/lib/search.ts), reviewer agent presets (worker/src/agents/presets.ts), commit emails and attribution, live updates (worker/src/live/), usage and cost (worker/src/usage/), insights, the AI Gateway, API smoke tests; the MCP server (worker/src/mcp/: JSON-RPC tools) and its OAuth sign-in (better-auth OAuth provider, JWT access tokens, consent); and the web app's client-side libraries in src/lib (agent prompts, syntax highlighting, repository URLs, the stack tree and pull request state display)
 
   test-stacking:
     name: Test (stacking)
@@ -186,6 +186,8 @@ jobs:
           worker/src/__tests__/merge-generated.test.ts
           worker/src/__tests__/rebase-landing.test.ts
           worker/src/__tests__/agent-runs.test.ts
+          worker/src/__tests__/queue.test.ts
+          worker/src/__tests__/revert.test.ts
 
   test-actions:
     name: Test (actions and git)
@@ -280,4 +282,7 @@ jobs:
           worker/src/__tests__/repo-stats.test.ts
           worker/src/__tests__/agent-stats.test.ts
           worker/src/__tests__/agent-learning-surfaces.test.ts
+          worker/src/__tests__/health.test.ts
+          worker/src/__tests__/search.test.ts
+          worker/src/__tests__/live-feed.test.ts
           src/lib/

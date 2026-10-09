@@ -41,7 +41,7 @@ type Refusal = {
   status: 400 | 409;
   error: string;
   /** Which gate refused it (absent for other failures). */
-  reason?: 'stack' | 'checks' | 'review' | 'rebase';
+  reason?: 'stack' | 'checks' | 'review' | 'rebase' | 'paused';
   /** Landing rebased the branch and pushed it to this head, then stopped (its checks or review, or the target moved). */
   rebased?: string;
   /** The head that rebase replaced (with `rebased`): what an agent's local commits sit on. */
@@ -64,6 +64,29 @@ type LandOpts = {
   after: (work: Promise<unknown>) => void;
 };
 
+/** Why landing refuses while merging is paused on the repository (the merge button, MCP and auto-merge alike). */
+export const MERGING_PAUSED =
+  'Merging is paused on this repository. Anyone with push access can resume it.';
+
+/**
+ * When merging was paused on the repository and by whom; null while it isn't. Read from D1 each time, never from a
+ * repository row loaded earlier, so a pause stops landings that are already on their way.
+ */
+export async function mergingPause(
+  db: DrizzleDB,
+  repositoryId: string
+): Promise<{ at: Date; byId: string | null } | null> {
+  const row = await db
+    .select({
+      at: repositories.mergingPausedAt,
+      byId: repositories.mergingPausedById,
+    })
+    .from(repositories)
+    .where(eq(repositories.id, repositoryId))
+    .get();
+  return row?.at ? { at: row.at, byId: row.byId } : null;
+}
+
 /**
  * Lands a pull request by moving its land target to its head with compare-and-swap (a fast-forward): the target keeps
  * every commit with its author, message and SHA, and no commit is made. When the target moved since the branch was
@@ -75,6 +98,8 @@ export async function landPull(opts: LandOpts): Promise<LandResult> {
   const { env, db, git, pr } = opts;
   if (pr.state !== 'open')
     return { ok: false, status: 400, error: 'Pull request is not open' };
+  if (await mergingPause(db, pr.repositoryId))
+    return { ok: false, status: 409, reason: 'paused', error: MERGING_PAUSED };
   const target = landTargetOf(pr);
   const headSha = await git.resolve(pr.headRef);
   if (!headSha)

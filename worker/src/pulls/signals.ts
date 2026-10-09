@@ -2,6 +2,7 @@ import { and, eq, inArray, sql } from 'drizzle-orm';
 import type { DrizzleDB } from '../db/middleware';
 import {
   mergeResolutions,
+  repositories,
   workflowRuns,
   type PullRequest,
 } from '../db/app.schema';
@@ -31,6 +32,8 @@ export type PullStateOptions = {
   reviewConfigured?: boolean;
   /** The review gate's inputs at the PRs' heads, when the caller already read them (`reviewInputs`). */
   reviews?: Map<string, GateInput>;
+  /** Whether merging is paused on the repository, when the caller already knows; read from D1 otherwise. */
+  mergingPaused?: boolean;
 };
 
 /**
@@ -69,6 +72,15 @@ export async function pullStates(
       reviews.set(id, gate);
   const ids = tips.map((t) => t.pr.id);
   const heads = [...new Set(tips.map((t) => t.head))];
+  const paused =
+    opts.mergingPaused ??
+    !!(
+      await db
+        .select({ at: repositories.mergingPausedAt })
+        .from(repositories)
+        .where(eq(repositories.id, repositoryId))
+        .get()
+    )?.at;
 
   // Actions runs at the heads.
   const runs: (CheckRun & { headSha: string })[] = [];
@@ -230,6 +242,8 @@ export async function pullStates(
           needsRebase: needsRebase.get(node.number) ?? false,
         }).filter((x) => aiReview || x.kind !== 'stack_checking')
       );
+    // Nothing lands while merging is paused (landPull refuses), whatever else holds it.
+    if (paused) reasons.push({ kind: 'merging_paused' });
 
     out.set(pr.id, decideState(reasons));
   }
