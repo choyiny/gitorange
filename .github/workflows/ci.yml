@@ -183,6 +183,7 @@ jobs:
           worker/src/__tests__/rebase-resolution.test.ts
           worker/src/__tests__/rebase-retry.test.ts
           worker/src/__tests__/pulls-ai-resolution.test.ts
+          worker/src/__tests__/pulls-list.test.ts
           worker/src/__tests__/git-merge.test.ts
           worker/src/__tests__/git-rebase.test.ts
           worker/src/__tests__/merge-generated.test.ts

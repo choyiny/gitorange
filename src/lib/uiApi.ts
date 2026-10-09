@@ -168,6 +168,8 @@ export type Pull = {
   } | null;
   /** Pull request lists only (open): whose move it is. */
   pullState?: PullState | null;
+  /** Pull request lists only: the reviewer agents asked to review the head commit, each in its review's state. */
+  reviewers?: PullReviewer[];
   mergeCommitSha: string | null;
   mergedBy: User | null;
   /** GitOrange merged it on its own (auto-merge); mergedBy is then null. */
@@ -185,6 +187,25 @@ export type Pull = {
   createdAt: string;
   updatedAt: string;
   commentCount: number;
+};
+/** A reviewer agent on a listed pull request (GET …/pulls): who it is and how its review of the head commit stands. */
+export type PullReviewer = {
+  handle: string;
+  name: string;
+  /** `#rrggbb`. */
+  color: string;
+  status: ReviewerStatus;
+};
+/** What a pull request list can ask for: `closed` is closed and merged together; `merged` is the merged ones, newest merge first. */
+export type PullListState = 'open' | 'closed' | 'merged' | PullStateName;
+/** One page of a pull request list (GET …/pulls). */
+export type PullList = {
+  pulls: Pull[];
+  /** Every open pull request, and every closed or merged one, whatever the page. */
+  openCount: number;
+  closedCount: number;
+  /** How many pull requests `state` matches, before paging. */
+  total: number;
 };
 export type PullStateName =
   'agent_followup' | 'human_review' | 'waiting' | 'ready';
@@ -1396,9 +1417,25 @@ export const api = {
   compare: (o: string, n: string, base: string, head: string) =>
     apiFetch<Compare>(`${r(o, n)}/compare?${q({ base, head })}`),
 
-  pulls: (o: string, n: string, state: 'open' | 'closed' | PullStateName) =>
-    apiFetch<{ pulls: Pull[]; openCount: number; closedCount: number }>(
-      `${r(o, n)}/pulls?${q({ state })}`
+  /**
+   * `limit` (1 to 100) asks for one `page` of that many; without it the whole list. `q` keeps the pull requests every
+   * word of it matches (a number, or part of the title, branch, author, app or session).
+   */
+  pulls: (
+    o: string,
+    n: string,
+    state: PullListState,
+    opts: { limit?: number; page?: number; q?: string } = {}
+  ) =>
+    apiFetch<PullList>(
+      `${r(o, n)}/pulls?${q({
+        state,
+        ...(opts.limit ? { limit: opts.limit } : {}),
+        ...(opts.limit && opts.page && opts.page > 1
+          ? { page: opts.page }
+          : {}),
+        ...(opts.q?.trim() ? { q: opts.q.trim() } : {}),
+      })}`
     ),
   createPull: (
     o: string,
@@ -1655,8 +1692,15 @@ export const qk = {
   collaborators: (o: string, n: string) =>
     ['repo', o, n, 'collaborators'] as const,
   repoAgents: (o: string, n: string) => ['repo', o, n, 'agents'] as const,
-  pulls: (o: string, n: string, state: string) =>
-    ['repo', o, n, 'pulls', state] as const,
+  /** Under `['repo', o, n, 'pulls']`, so anything that refreshes the pull request lists refreshes every page. */
+  pulls: (
+    o: string,
+    n: string,
+    state: string,
+    limit = 0,
+    page = 1,
+    search = ''
+  ) => ['repo', o, n, 'pulls', state, limit, page, search] as const,
   pullTree: (o: string, n: string) => ['repo', o, n, 'pull-tree'] as const,
   pull: (o: string, n: string, num: number) =>
     ['repo', o, n, 'pull', num] as const,

@@ -1,232 +1,96 @@
-import { Link, useOutletContext, useSearchParams } from 'react-router-dom';
-import { useState } from 'react';
-import { useQuery } from '@tanstack/react-query';
 import {
-  CheckIcon,
-  CommentIcon,
-  GitPullRequestIcon,
-  GitMergeIcon,
-  ListUnorderedIcon,
-} from '@primer/octicons-react';
-import { api, qk, type RepoDetail } from '@/lib/uiApi';
-import { timeAgo } from '@/lib/format';
-import { Spinner } from '@/components/Spinner';
-import { ChecksBadge, useCommitStatuses } from '@/components/Checks';
-import { AiResolutionBadge, ReviewLabel } from '@/components/PullBadges';
-import { PullStateLabel } from '@/components/PullStateLabel';
-import { STATE_LABEL } from '@/lib/pullState';
+  Link,
+  useNavigate,
+  useOutletContext,
+  useSearchParams,
+} from 'react-router-dom';
+import type { RepoDetail } from '@/lib/uiApi';
+import { parsePullsView, pullsHref, type PullsView } from '@/lib/pullsView';
+import { PageHead } from '@/components/ui/PageHead';
+import { Seg } from '@/components/ui/Seg';
+import { PullBoard } from '@/components/PullBoard';
 import { PullGraph } from '@/components/PullGraph';
-import { PrStateIcon } from './PrIcons';
+import { PullList } from '@/components/PullList';
 
-function storedView(): 'list' | 'graph' {
+const VIEW_KEY = 'gitorange.pulls.view';
+
+/** The view a person last chose, so the page opens on it again. A convenience: never fails without storage. */
+function storedView(): string | null {
   try {
-    const v = localStorage.getItem('gitorange.pulls.view');
-    return v === 'graph' ? 'graph' : 'list';
+    return localStorage.getItem(VIEW_KEY);
   } catch {
-    return 'list';
+    return null;
   }
 }
 
+function rememberView(view: PullsView) {
+  try {
+    localStorage.setItem(VIEW_KEY, view);
+  } catch {
+    // Remembering the view is a convenience only.
+  }
+}
+
+const VIEWS = [
+  { value: 'board', label: 'Board' },
+  { value: 'list', label: 'List' },
+  { value: 'graph', label: 'Graph' },
+] as const satisfies readonly { value: PullsView; label: string }[];
+
+const count = (n: number) => `${n} open`;
+
+/**
+ * Pull requests: a board by whose move it is (`?view=board`, the default), a list with filters and search
+ * (`?view=list`, `?state=`, `?q=`, `?page=`) and the graph of how they are slated to land (`?view=graph`).
+ */
 export default function Pulls() {
   const repo = useOutletContext<RepoDetail>();
-  const [params, setParams] = useSearchParams();
-  const raw = params.get('state');
-  const filters = [
-    'agent_followup',
-    'human_review',
-    'waiting',
-    'ready',
-  ] as const;
-  const pullFilter = filters.find((f) => f === raw) ?? null;
-  const state = raw === 'closed' ? 'closed' : (pullFilter ?? 'open');
-  const openish = state !== 'closed';
-  const q = useQuery({
-    queryKey: qk.pulls(repo.owner.username, repo.name, state),
-    queryFn: () => api.pulls(repo.owner.username, repo.name, state),
-  });
-  // Checks for every listed pull request's head commit, in one request.
-  const statuses = useCommitStatuses(
-    repo,
-    (q.data?.pulls ?? []).map((p) => p.headSha)
-  );
-  const [view, setView] = useState(storedView);
-  const chooseView = (v: 'list' | 'graph') => {
-    setView(v);
-    try {
-      localStorage.setItem('gitorange.pulls.view', v);
-    } catch {
-      // Remembering the view is a convenience only.
-    }
-  };
+  const [search] = useSearchParams();
+  const navigate = useNavigate();
   const base = `/${repo.fullName}`;
+  const params = parsePullsView(search, storedView());
+  const { view } = params;
+  const open = repo.openPullCount;
+
+  const lede =
+    view === 'board'
+      ? open
+        ? `${count(open)}, sorted by who has to act next.`
+        : 'Nothing is open. Merged pull requests are below.'
+      : view === 'list'
+        ? 'Every pull request, open or closed. Filter them or search by number, title, person, branch or session.'
+        : 'How the open pull requests are slated to land, branch by branch.';
+
   return (
-    <div className="container-xl px-3 px-md-4 px-lg-5 pb-6">
-      <div className="d-flex flex-items-center mb-3" style={{ gap: 8 }}>
-        <input
-          className="form-control flex-1"
-          readOnly
-          value={`is:pr is:${state}`}
-          aria-label="Search all pull requests"
+    <>
+      <PageHead
+        icon="pull"
+        crumbs={[{ label: 'Pull requests' }]}
+        title="Pull requests"
+        tab="pulls"
+        lede={lede}
+        actions={
+          repo.permissions.write ? (
+            <Link to={`${base}/compare`} className="btn primary">
+              New pull request
+            </Link>
+          ) : undefined
+        }
+      />
+      <div className="pulls-bar">
+        <Seg
+          label="View"
+          options={VIEWS}
+          value={view}
+          onChange={(next) => {
+            rememberView(next);
+            navigate(pullsHref(base, { view: next }));
+          }}
         />
-        {repo.permissions.write && (
-          <Link to={`${base}/compare`} className="btn btn-primary">
-            New pull request
-          </Link>
-        )}
       </div>
-      <div className="Box">
-        <div
-          className="Box-header d-flex flex-wrap flex-items-center"
-          style={{ gap: 16 }}
-        >
-          <button
-            className={`btn-link d-inline-flex flex-items-center f5 ${openish ? 'text-bold color-fg-default' : 'color-fg-muted'}`}
-            style={{ gap: 4, textDecoration: 'none' }}
-            onClick={() => setParams({})}
-          >
-            <GitPullRequestIcon /> {q.data?.openCount ?? ''} Open
-          </button>
-          <button
-            className={`btn-link d-inline-flex flex-items-center f5 ${state === 'closed' ? 'text-bold color-fg-default' : 'color-fg-muted'}`}
-            style={{ gap: 4, textDecoration: 'none' }}
-            onClick={() => setParams({ state: 'closed' })}
-          >
-            <CheckIcon /> {q.data?.closedCount ?? ''} Closed
-          </button>
-          {openish && (
-            <select
-              className="form-select select-sm ml-auto"
-              aria-label="Filter by state"
-              value={pullFilter ?? ''}
-              onChange={(e) =>
-                setParams(e.target.value ? { state: e.target.value } : {})
-              }
-            >
-              <option value="">All open</option>
-              {filters.map((f) => (
-                <option key={f} value={f}>
-                  {STATE_LABEL[f]}
-                </option>
-              ))}
-            </select>
-          )}
-          {state === 'open' && (
-            <div className="BtnGroup">
-              <button
-                className={`btn btn-sm BtnGroup-item ${view === 'list' ? 'selected' : ''}`}
-                aria-pressed={view === 'list'}
-                onClick={() => chooseView('list')}
-              >
-                <ListUnorderedIcon /> List
-              </button>
-              <button
-                className={`btn btn-sm BtnGroup-item ${view === 'graph' ? 'selected' : ''}`}
-                aria-pressed={view === 'graph'}
-                onClick={() => chooseView('graph')}
-              >
-                <GitMergeIcon /> Graph
-              </button>
-            </div>
-          )}
-        </div>
-        {state === 'open' && view === 'graph' ? (
-          <PullGraph repo={repo} />
-        ) : !q.data ? (
-          <Spinner />
-        ) : q.data.pulls.length === 0 ? (
-          <div className="blankslate">
-            <GitPullRequestIcon size={24} className="color-fg-muted mb-2" />
-            <h3 className="blankslate-heading">
-              There aren't any{' '}
-              {pullFilter ? STATE_LABEL[pullFilter].toLowerCase() : state} pull
-              requests.
-            </h3>
-            {openish && repo.permissions.write && (
-              <p>
-                Pull requests help you collaborate on code with other people.{' '}
-                <Link to={`${base}/compare`}>Create a pull request</Link>.
-              </p>
-            )}
-          </div>
-        ) : (
-          q.data.pulls.map((p) => (
-            <div
-              key={p.id}
-              className="Box-row Box-row--hover-gray d-flex flex-items-start"
-              style={{ gap: 8 }}
-            >
-              <span className="pt-1">
-                <PrStateIcon state={p.state} />
-              </span>
-              <div className="flex-1" style={{ minWidth: 0 }}>
-                <Link
-                  to={`${base}/pull/${p.number}`}
-                  className="Link--primary text-bold f4 color-fg-default"
-                >
-                  {p.title}
-                </Link>{' '}
-                <ChecksBadge
-                  repo={repo}
-                  checks={p.headSha ? statuses.data?.[p.headSha] : undefined}
-                />{' '}
-                <AiResolutionBadge state={p.aiResolution} />{' '}
-                <PullStateLabel state={p.pullState} showReason />
-                <div className="f6 color-fg-muted mt-1">
-                  #{p.number}{' '}
-                  {p.state === 'open' && (
-                    <>
-                      opened {timeAgo(p.createdAt)} by{' '}
-                      <Link
-                        to={`/${p.author.username}`}
-                        className="color-fg-muted"
-                      >
-                        {p.author.username}
-                      </Link>
-                      <ReviewLabel
-                        review={p.review}
-                        to={`${base}/pull/${p.number}`}
-                      />
-                    </>
-                  )}
-                  {p.state === 'merged' && (
-                    <>
-                      by{' '}
-                      <Link
-                        to={`/${p.author.username}`}
-                        className="color-fg-muted"
-                      >
-                        {p.author.username}
-                      </Link>{' '}
-                      was merged {timeAgo(p.mergedAt!)}
-                    </>
-                  )}
-                  {p.state === 'closed' && (
-                    <>
-                      by{' '}
-                      <Link
-                        to={`/${p.author.username}`}
-                        className="color-fg-muted"
-                      >
-                        {p.author.username}
-                      </Link>{' '}
-                      was closed {timeAgo(p.closedAt!)}
-                    </>
-                  )}
-                </div>
-              </div>
-              {p.commentCount > 0 && (
-                <Link
-                  to={`${base}/pull/${p.number}`}
-                  className="color-fg-muted f6 d-inline-flex flex-items-center"
-                  style={{ gap: 4 }}
-                >
-                  <CommentIcon /> {p.commentCount}
-                </Link>
-              )}
-            </div>
-          ))
-        )}
-      </div>
-    </div>
+      {view === 'board' && <PullBoard repo={repo} />}
+      {view === 'list' && <PullList repo={repo} params={params} />}
+      {view === 'graph' && <PullGraph repo={repo} />}
+    </>
   );
 }
