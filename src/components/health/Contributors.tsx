@@ -96,9 +96,7 @@ export function Contributors({
                 ? `/${c.who.login}`
                 : `/${owner}/${name}/session/${c.who.sessionId}`;
             return (
-              <li
-                key={`${c.who.kind}:${c.who.login}:${c.who.client ?? ''}:${c.who.label}`}
-              >
+              <li key={c.who.sessionId}>
                 <Coder who={c.who} to={to} />
                 <span className="muted small hl-merged">
                   {c.merged === 1

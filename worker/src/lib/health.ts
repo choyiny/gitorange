@@ -21,7 +21,7 @@ import { reviewConfigured } from '../review/head';
 import { chunks } from '../stack/view';
 import { mainStatus } from './branches';
 import { GHOST, personRefs } from './person-ref';
-import { sessionId } from './sessions';
+import { pullSessionId } from './sessions';
 
 // A repository's health (Decision 1), measured only from what GitOrange itself knows, week over week (ISO weeks,
 // Monday 00:00 UTC): one row per invited reviewer agent (its findings: those that needed a person or asked for
@@ -497,9 +497,7 @@ async function contributors(
   if (!merged.length) return [];
   type Row = (typeof merged)[number];
   const keyOf = (p: Row) =>
-    p.createdVia
-      ? `${p.authorId}\0${p.createdVia}\0${p.sessionLabel ?? ''}`
-      : p.authorId;
+    `${p.authorId}\0${p.createdVia || ''}\0${p.sessionLabel || ''}`;
   // The pull requests findings were raised on, to find their group.
   const rows = new Map(merged.map((p) => [p.id, p]));
   const unknown = [...new Set(flags.map((f) => f.pullRequestId))].filter(
@@ -555,16 +553,8 @@ async function contributors(
     db,
     list.map((g) => g.first.authorId)
   );
-  // The same ids `GET /sessions` gives: a person working by hand has no app, so no label either.
-  const ids = await Promise.all(
-    list.map((g) =>
-      sessionId(
-        g.first.authorId,
-        g.first.createdVia || null,
-        g.first.createdVia ? g.first.sessionLabel || null : null
-      )
-    )
-  );
+  // Use the same group and id as `GET /sessions`, including a legacy by-hand row carrying a session label.
+  const ids = await Promise.all(list.map((g) => pullSessionId(g.first)));
   return list
     .map((g, i): HealthContributor => {
       const person = people.get(g.first.authorId) ?? GHOST;

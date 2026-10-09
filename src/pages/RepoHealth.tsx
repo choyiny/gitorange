@@ -51,6 +51,7 @@ function Report({ data, repo }: { data: HealthReport; repo: RepoDetail }) {
           </Link>
         }
       >
+        {/* Integration: replace this placeholder with C6's <BranchMap compact /> once that task lands. */}
         <BranchMapCard base={base} />
       </Section>
 

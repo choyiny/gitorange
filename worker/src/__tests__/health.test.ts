@@ -454,7 +454,7 @@ describe('GET /api/repos/{o}/{r}/health', () => {
     const s = await crewRepo();
     await addMember(s.t, s.admin, 'ada');
     await pr(s, 1, { mergedAt: inWeek(0), via: 'Claude Code', session: 's4' });
-    // Another app with no label, and a by-hand pull request with a label and no app: neither is the s4 session.
+    // Another app with no label, and a legacy by-hand pull request with a label and no app: each is its own session.
     await pr(s, 2, { mergedAt: inWeek(0), via: 'Codex' });
     await pr(s, 3, { mergedAt: inWeek(0), author: 'ada' });
     await pr(s, 4, { mergedAt: inWeek(0), author: 'ada', session: 'stray' });
@@ -466,25 +466,26 @@ describe('GET /api/repos/{o}/{r}/health', () => {
       client: string | null;
       label: string | null;
       author: { login: string };
+      pulls: { number: number; state: string }[];
     }[];
-    expect(contributors).toHaveLength(3);
+    expect(contributors).toHaveLength(4);
     for (const c of contributors) {
-      // Every contributor is a session `GET /sessions` lists, found by its person, app and label.
-      const listed = sessions.find(
-        (x) =>
-          x.author.login === c.who.login &&
-          x.client === c.who.client &&
-          (c.who.kind === 'person'
-            ? x.label === null
-            : (x.label ?? x.client) === c.who.label)
-      );
+      // Both the linked id and its merge count must refer to the same group, not an aggregation of different ids.
+      const listed = sessions.find((x) => x.id === c.who.sessionId);
       expect(listed, c.who.label).toBeDefined();
-      expect(c.who.sessionId).toBe(listed!.id);
+      expect(listed!.author.login).toBe(c.who.login);
+      expect(listed!.client).toBe(c.who.client);
+      expect(c.merged).toBe(
+        listed!.pulls.filter((p) => p.state === 'merged').length
+      );
     }
-    const ada = contributors.find((c) => c.who.login === 'ada')!;
+    const adaId = await sessionId(await idOf(s, 'ada'), null, null);
+    const ada = contributors.find((c) => c.who.sessionId === adaId)!;
     expect(ada.who.kind).toBe('person');
-    expect(ada.who.sessionId).toBe(
-      await sessionId(await idOf(s, 'ada'), null, null)
+    expect(ada.merged).toBe(1);
+    const legacyId = await sessionId(await idOf(s, 'ada'), null, 'stray');
+    expect(contributors.find((c) => c.who.sessionId === legacyId)?.merged).toBe(
+      1
     );
     const claude = contributors.find((c) => c.who.client === 'Claude Code')!;
     expect(claude.who.sessionId).toBe(
