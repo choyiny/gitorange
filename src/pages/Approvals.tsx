@@ -1,357 +1,684 @@
-import { useState } from 'react';
-import { Link } from 'react-router-dom';
-import { useQueryClient } from '@tanstack/react-query';
+import { useEffect, useMemo, useRef, useState } from 'react';
+import { useNavigate, useSearchParams } from 'react-router-dom';
+import { useQuery } from '@tanstack/react-query';
 import {
-  AlertIcon,
-  CheckCircleIcon,
-  GitPullRequestIcon,
+  CheckIcon,
+  InboxIcon,
+  ShieldIcon,
+  UndoIcon,
 } from '@primer/octicons-react';
-import { api, qk, type ApprovalItem } from '@/lib/uiApi';
-import { ApiError, errorMessage } from '@/lib/api';
-import { timeAgo } from '@/lib/format';
-import { usePageHead } from '@/components/ui/PageHead';
-import { PullStateLabel, PullStateReasons } from '@/components/PullStateLabel';
-import { Spinner } from '@/components/Spinner';
-import { Avatar } from '@/components/Avatar';
-import { Flag, serverChangesRequester } from '@/components/AutoMergeReview';
+import { api, qk } from '@/lib/uiApi';
 import { useApprovalPages } from '@/lib/approvals';
+import { useCurrentUser } from '@/lib/auth';
+import {
+  dedupeItems,
+  displayOrder,
+  inboxRows,
+  keyAction,
+  moveCurrent,
+  onlyAssignedTo,
+  selectable,
+  type FindingRow,
+  type InboxRow,
+} from '@/lib/approvalsInbox';
+import { possessive } from '@/lib/claudeLog';
+import { AgentAvatar } from '@/components/AgentAvatar';
+import { EmptyState } from '@/components/ui/EmptyState';
+import { Kbd } from '@/components/ui/Kbd';
+import { PageHead } from '@/components/ui/PageHead';
+import { PendingButton } from '@/components/ui/PendingButton';
+import { Seg } from '@/components/ui/Seg';
+import { useToast } from '@/components/ui/Toast';
+import { QueryError, RowsSkeleton } from '@/components/actions/states';
+import { failure, useRefresh } from '@/components/approvals/actions';
+import { ClaudePanel } from '@/components/approvals/ClaudePanel';
+import {
+  agentName,
+  InboxRowView,
+  ReceiptView,
+  rowHref,
+  type Receipt,
+  type RowAction,
+  type RowPanel,
+} from '@/components/approvals/InboxRow';
 
-function Item({ item }: { item: ApprovalItem }) {
-  const qc = useQueryClient();
-  const [owner, name] = item.repo.fullName.split('/');
-  const n = item.pull.number;
-  const prUrl = `/${item.repo.fullName}/pull/${n}`;
-  // Approved here, waiting for the list to reload.
-  const [approved, setApproved] = useState<Set<string>>(new Set());
-  // Changes requested here (flag id → note), waiting for the list to reload.
-  const [requested, setRequested] = useState<Map<string, string>>(new Map());
-  const [busy, setBusy] = useState<string | null>(null);
-  const [error, setError] = useState<string | null>(null);
-  const act = async (
-    key: string,
-    fn: () => Promise<unknown>,
-    opts?: { sendingNote?: boolean }
-  ) => {
-    setBusy(key);
-    setError(null);
+const KEYS: [string[], string][] = [
+  [['j', 'k'], 'move'],
+  [['o'], 'open'],
+  [['a'], 'approve'],
+  [['r'], 'request changes'],
+  [['d'], 'dismiss'],
+  [['x'], 'select'],
+  [['A'], 'approve selected'],
+];
+
+type Busy = { key: string; kind: RowAction['kind'] } | null;
+type ReceiptBody = Omit<Receipt, 'key' | 'index' | 'row'>;
+
+const reduced = () =>
+  window.matchMedia?.('(prefers-reduced-motion: reduce)').matches ?? false;
+
+/** A finding approved from the list (one key, a button or "Approve selected"). */
+function approvedReceipt(row: FindingRow): ReceiptBody {
+  const { owner, name } = row;
+  const n = row.pull.number;
+  return {
+    status: 'approved',
+    icon: 'check',
+    tone: 'good',
+    text: `You approved ${possessive(agentName(row.agent))} finding. #${n} can merge when nothing else holds it up.`,
+    toast: `Approved ${agentName(row.agent)} on #${n}`,
+    undo: () => api.undoFlag(owner, name, n, row.flag.id),
+  };
+}
+
+/** Calls the API for one row's action; the receipt it leaves, or null when the row simply reloads. */
+async function perform(
+  row: InboxRow,
+  a: RowAction
+): Promise<ReceiptBody | null> {
+  const { owner, name } = row;
+  const n = row.pull.number;
+  if (row.type === 'finding') {
+    const agent = agentName(row.agent);
+    const id = row.flag.id;
+    const undo = () => api.undoFlag(owner, name, n, id);
+    switch (a.kind) {
+      case 'approve':
+        await api.approveFlag(owner, name, n, id);
+        return approvedReceipt(row);
+      case 'dismiss':
+        await api.approveFlag(owner, name, n, id, {
+          reason: a.reason,
+          teach: a.teach,
+        });
+        return a.teach
+          ? {
+              status: 'learned',
+              icon: 'book',
+              tone: 'good',
+              text: `Dismissed. ${agent} learns your rule when #${n} closes.`,
+              toast: `Dismissed. ${agent} learns your rule`,
+              undo,
+            }
+          : {
+              status: 'approved',
+              icon: 'x',
+              tone: 'muted',
+              text: `Dismissed for #${n} only. ${agent} will ask again next time.`,
+              toast: 'Dismissed once',
+              undo,
+            };
+      case 'changes':
+        await api.requestFlagChanges(owner, name, n, id, a.note, a.teach);
+        return {
+          status: 'changes_requested',
+          icon: 'sync',
+          tone: 'change',
+          text: `Changes requested on #${n}. Its author gets ${possessive(agent)} finding${a.note.trim() ? ' and your note' : ''}.`,
+          toast: `Changes requested on #${n}`,
+          undo,
+        };
+      case 'undo':
+        await undo();
+        return null;
+      default:
+        return null;
+    }
+  }
+  switch (a.kind) {
+    case 'retry-review':
+      await api.retryReview(owner, name, n);
+      return {
+        status: 'reviewing',
+        icon: 'play',
+        tone: 'good',
+        text: `The review of #${n} started again.`,
+        toast: `Review restarted on #${n}`,
+      };
+    case 'retry-reviewer':
+      if (row.type !== 'reviewer-failed') return null;
+      await api.retryReviewer(owner, name, n, row.reviewerId);
+      return {
+        status: 'reviewing',
+        icon: 'play',
+        tone: 'good',
+        text: `${agentName(row.agent)} is reviewing #${n} again.`,
+        toast: `${agentName(row.agent)} is reviewing #${n} again`,
+      };
+    case 'retry-stack':
+      await api.retryStack(owner, name, n);
+      return {
+        status: 'reviewing',
+        icon: 'play',
+        tone: 'good',
+        text: `Checking #${n} against the others again.`,
+        toast: `Checking #${n} again`,
+      };
+    case 'approve-pull':
+      if (!row.pull.headSha) return null;
+      await api.approvePull(owner, name, n, row.pull.headSha);
+      return {
+        status: 'approved',
+        icon: 'check',
+        tone: 'good',
+        text: `You approved #${n}. It can merge when nothing else holds it up.`,
+        toast: `Approved #${n}`,
+        undo: () => api.withdrawApproval(owner, name, n),
+      };
+    default:
+      return null;
+  }
+}
+
+/**
+ * Everything waiting on you across every repository you can merge in: reviewer findings (owner questions open their
+ * own page), failed reviews, conflicts AI couldn't resolve, pull requests no agent reviewed, and stack items.
+ * Keyboard first (`j k o a r d x A`); guarded agents' findings are never bulk- or one-key-approved. Each decision
+ * leaves a one-line receipt with Undo until you leave the page. The aside lets Claude decide for you.
+ */
+export default function Approvals() {
+  const me = useCurrentUser();
+  const myLogin = me?.username ?? null;
+  const myName = me?.name || me?.username || 'you';
+  const navigate = useNavigate();
+  const toast = useToast();
+  const refresh = useRefresh();
+  const [params, setParams] = useSearchParams();
+  const assignedOnly = params.get('filter') === 'assigned';
+
+  const q = useApprovalPages();
+  const delegations = useQuery({
+    queryKey: qk.delegations,
+    queryFn: api.delegations,
+  });
+  const firstPage = q.data?.pages[0];
+  const count = firstPage?.count ?? 0;
+  const assignedToMe = firstPage?.assignedToMe ?? 0;
+
+  const allRows = useMemo(
+    () => inboxRows(dedupeItems(q.data?.pages ?? [])),
+    [q.data]
+  );
+  const rows = useMemo(
+    () =>
+      assignedOnly && myLogin ? onlyAssignedTo(allRows, myLogin) : allRows,
+    [allRows, assignedOnly, myLogin]
+  );
+  const byKey = useMemo(() => new Map(rows.map((r) => [r.key, r])), [rows]);
+
+  const [receipts, setReceipts] = useState<Map<string, Receipt>>(new Map());
+  const [current, setCurrent] = useState<string | null>(null);
+  const [panels, setPanels] = useState<Map<string, RowPanel>>(new Map());
+  const [selected, setSelected] = useState<Set<string>>(new Set());
+  const [busy, setBusyState] = useState<Busy>(null);
+  const [bulkBusy, setBulkState] = useState(false);
+  // Toasts call back into older renders (Undo): these refs say what is running now.
+  const busyRef = useRef<Busy>(null);
+  const bulkRef = useRef(false);
+  const setBusy = (b: Busy) => {
+    busyRef.current = b;
+    setBusyState(b);
+  };
+  const setBulkBusy = (b: boolean) => {
+    bulkRef.current = b;
+    setBulkState(b);
+  };
+  const running = () => !!busyRef.current || bulkRef.current;
+  const [errors, setErrors] = useState<Map<string, string>>(new Map());
+  const refs = useRef(new Map<string, HTMLLIElement>());
+  const receiptsRef = useRef(receipts);
+  receiptsRef.current = receipts;
+
+  const shownReceipts = [...receipts.values()].filter(
+    (r) => !assignedOnly || (myLogin && onlyAssignedTo([r.row], myLogin).length)
+  );
+  const shownReceiptKeys = new Set(shownReceipts.map((r) => r.key));
+  const order = displayOrder(
+    rows.map((r) => r.key),
+    shownReceipts
+  );
+  const openKeys = order.filter(
+    (k) => byKey.has(k) && !shownReceiptKeys.has(k)
+  );
+  const cur =
+    current && openKeys.includes(current) ? current : (openKeys[0] ?? null);
+  const picked = [...selected].filter((k) => {
+    const r = byKey.get(k);
+    return r && selectable(r) && !receipts.has(k);
+  });
+  const colors = new Map(
+    delegations.data?.agents.map((a) => [a.handle, a.color])
+  );
+  const claudeLeft = new Map<string, string>();
+  for (const e of delegations.data?.today ?? [])
+    if (e.data.decision === 'leave' && !claudeLeft.has(e.data.finding))
+      claudeLeft.set(e.data.finding, e.data.reason);
+
+  const setError = (key: string, message: string | null) =>
+    setErrors((m) => {
+      const next = new Map(m);
+      if (message) next.set(key, message);
+      else next.delete(key);
+      return next;
+    });
+  const focusRow = (key: string | null) => {
+    if (!key) return;
+    requestAnimationFrame(() => {
+      const el = refs.current.get(key);
+      if (!el) return;
+      el.focus({ preventScroll: true });
+      el.scrollIntoView({
+        block: 'nearest',
+        behavior: reduced() ? 'auto' : 'smooth',
+      });
+    });
+  };
+  const nextOpen = (key: string) => {
+    const i = openKeys.indexOf(key);
+    return openKeys[i + 1] ?? openKeys[i - 1] ?? null;
+  };
+  const closePanel = (key: string) =>
+    setPanels((m) => {
+      const next = new Map(m);
+      next.delete(key);
+      return next;
+    });
+  const togglePick = (key: string, on?: boolean) =>
+    setSelected((s) => {
+      const next = new Set(s);
+      if (on ?? !next.has(key)) next.add(key);
+      else next.delete(key);
+      return next;
+    });
+
+  const run = async (row: InboxRow, a: RowAction) => {
+    if (running()) return;
+    const index = order.indexOf(row.key);
+    const next = nextOpen(row.key);
+    const hadFocus = !!refs.current
+      .get(row.key)
+      ?.contains(document.activeElement);
+    setBusy({ key: row.key, kind: a.kind });
+    setError(row.key, null);
     try {
-      await fn();
-      return true;
+      const body = await perform(row, a);
+      closePanel(row.key);
+      togglePick(row.key, false);
+      if (body) {
+        setReceipts((m) =>
+          new Map(m).set(row.key, { ...body, key: row.key, index, row })
+        );
+        toast(
+          body.toast,
+          body.undo ? { undo: () => void undoReceipt(row.key) } : undefined
+        );
+        if (cur === row.key) setCurrent(next);
+        if (hadFocus) focusRow(next);
+      } else if (a.kind === 'undo')
+        toast('Reopened. It’s back in your list.', {
+          icon: <UndoIcon size={16} />,
+        });
     } catch (e) {
-      setError(
-        errorMessage(e) +
-          (e instanceof ApiError && e.status === 409 && opts?.sendingNote
-            ? ' Your note was not sent.'
-            : '')
-      );
-      return false;
+      setError(row.key, failure(e, { sendingNote: a.kind === 'changes' }));
     } finally {
-      // Also after a refusal (409: the branch moved): the list and the pull request show the new state.
-      void qc.invalidateQueries({ queryKey: ['repo', owner, name] });
-      await qc.invalidateQueries({ queryKey: qk.approvals });
+      // Also after a refusal (409: the branch moved): the list shows the new state.
+      await refresh(row.owner, row.name);
       setBusy(null);
     }
   };
 
-  const changeRequested =
-    !!item.pullState?.reasons.some(
-      (r) => r.kind === 'agent_changes_requested'
-    ) ||
-    item.agents.some(
-      (g) =>
-        g.status === 'changes_requested' ||
-        g.flags.some((f) => f.kind === 'change_requested' && !f.approvedAt)
-    );
-  return (
-    <div className="Box mb-3">
-      <div
-        className="Box-header d-flex flex-items-center flex-wrap"
-        style={{ gap: 8 }}
-      >
-        <GitPullRequestIcon className="color-fg-open" />
-        <div className="flex-1" style={{ minWidth: 200 }}>
-          <div className="f6 color-fg-muted">{item.repo.fullName}</div>
-          <Link to={prUrl} className="text-bold color-fg-default f4">
-            {item.pull.title}
-          </Link>{' '}
-          <span className="color-fg-muted">#{n}</span>
-        </div>
-        <span className="f6 color-fg-muted flex-shrink-0">
-          {item.pull.author ? `by ${item.pull.author.username} · ` : ''}
-          updated {timeAgo(item.pull.updatedAt)}
-        </span>
-      </div>
-      <div className="Box-body">
-        {error && <div className="flash flash-error mb-2">{error}</div>}
-        {item.pullState?.state === 'human_review' &&
-          !item.agents.length &&
-          !item.needsApproval &&
-          !item.reviewFailed &&
-          !item.resolutionFailed &&
-          !item.stackStale.length &&
-          !item.stackUnchecked.length && (
-            <div className="flash flash-warn mb-2">
-              <PullStateLabel state={item.pullState} />
-              <PullStateReasons state={item.pullState} />
-              <Link to={prUrl} className="btn btn-sm mt-2">
-                Decide on the pull request
-              </Link>
-            </div>
-          )}
-        {item.reviewFailed && (
-          <div
-            className="flash flash-error mb-2 d-flex flex-items-center"
-            style={{ gap: 8 }}
-          >
-            <AlertIcon />
-            <span className="flex-1">
-              The review failed: {item.reviewFailed}
-            </span>
-            <button
-              className="btn btn-sm"
-              disabled={busy !== null}
-              onClick={() =>
-                act('retry', () => api.retryReview(owner, name, n))
-              }
-            >
-              {busy === 'retry' ? 'Starting…' : 'Try the review again'}
-            </button>
-          </div>
-        )}
-        {item.resolutionFailed && (
-          <div
-            className="flash flash-warn mb-2 d-flex flex-items-center"
-            style={{ gap: 8 }}
-          >
-            <AlertIcon />
-            <span className="flex-1">{item.resolutionFailed}</span>
-            <Link to={prUrl} className="btn btn-sm">
-              Decide on the pull request
-            </Link>
-          </div>
-        )}
-        {item.stackStale.map((s) => (
-          <div
-            key={`stale${s.pr}`}
-            className="flash flash-warn mb-2 d-flex flex-items-center flex-wrap"
-            style={{ gap: 8 }}
-          >
-            <AlertIcon />
-            <span className="flex-1" style={{ minWidth: 200 }}>
-              Still must account for #{s.pr} (nothing new since{' '}
-              {timeAgo(s.since)})
-            </span>
-            <Link
-              to={`/${item.repo.fullName}/pull/${s.pr}`}
-              className="btn btn-sm"
-            >
-              View #{s.pr}
-            </Link>
-          </div>
-        ))}
-        {item.stackUnchecked.length > 0 && (
-          <div
-            className="flash flash-warn mb-2 d-flex flex-items-center flex-wrap"
-            style={{ gap: 8 }}
-          >
-            <AlertIcon />
-            <span className="flex-1" style={{ minWidth: 200 }}>
-              Couldn&apos;t check against{' '}
-              {item.stackUnchecked.map((u) => `#${u}`).join(', ')}
-            </span>
-            <button
-              className="btn btn-sm"
-              disabled={busy !== null}
-              onClick={() => act('stack', () => api.retryStack(owner, name, n))}
-            >
-              {busy === 'stack' ? 'Starting…' : 'Check again'}
-            </button>
-          </div>
-        )}
-        {item.needsApproval && (
-          <div
-            className="flash flash-warn mb-2 d-flex flex-items-center flex-wrap"
-            style={{ gap: 8 }}
-          >
-            <AlertIcon />
-            <span className="flex-1" style={{ minWidth: 200 }}>
-              No agent reviewed this commit: a person approves it.
-              {changeRequested && (
-                <span className="color-fg-attention">
-                  {' '}
-                  Approving does not override an agent&apos;s change request:
-                  dismiss it, or wait for a fix.
-                </span>
-              )}
-            </span>
-            <Link to={prUrl} className="btn btn-sm">
-              Review the changes
-            </Link>
-            <button
-              className="btn btn-sm btn-primary"
-              disabled={busy !== null || !item.pull.headSha}
-              aria-label="Approve this commit"
-              onClick={() =>
-                act('approve', () =>
-                  api.approvePull(owner, name, n, item.pull.headSha!)
-                )
-              }
-            >
-              {busy === 'approve' ? 'Approving…' : 'Approve'}
-            </button>
-          </div>
-        )}
-        {item.agents.map((g) => (
-          <div key={g.reviewerId} className="mb-2">
-            <div
-              className="d-flex flex-items-center flex-wrap mb-1"
-              style={{ gap: 6 }}
-            >
-              <Avatar user={g.agent} size={16} />
-              <Link to={`/${g.agent.username}`} className="text-bold f6">
-                @{g.agent.username}
-              </Link>
-              {g.status === 'failed' && (
-                <>
-                  <span className="f6 color-fg-danger flex-1">
-                    Review failed: {g.error ?? 'unknown error'}
-                  </span>
-                  <button
-                    className="btn btn-sm"
-                    disabled={busy !== null}
-                    aria-label={`Retry @${g.agent.username}'s review`}
-                    onClick={() =>
-                      act(`retry:${g.reviewerId}`, () =>
-                        api.retryReviewer(owner, name, n, g.reviewerId)
-                      )
-                    }
-                  >
-                    {busy === `retry:${g.reviewerId}` ? 'Starting…' : 'Retry'}
-                  </button>
-                </>
-              )}
-            </div>
-            {g.flags.map((f) => {
-              const localNote = requested.get(f.id);
-              return (
-                <Flag
-                  key={f.id}
-                  f={f}
-                  approver={
-                    approved.has(f.id) ? { label: 'you', user: null } : null
-                  }
-                  changesRequester={
-                    localNote !== undefined
-                      ? { label: 'you', user: null, note: localNote || null }
-                      : serverChangesRequester(f)
-                  }
-                  canApprove
-                  approving={busy === f.id}
-                  requestingChanges={busy === `changes:${f.id}`}
-                  investigating={false}
-                  onApprove={() =>
-                    act(f.id, async () => {
-                      await api.approveFlag(owner, name, n, f.id);
-                      setApproved((s) => new Set(s).add(f.id));
-                    })
-                  }
-                  onRequestChanges={(note) =>
-                    act(
-                      `changes:${f.id}`,
-                      async () => {
-                        await api.requestFlagChanges(
-                          owner,
-                          name,
-                          n,
-                          f.id,
-                          note
-                        );
-                        setRequested((m) => new Map(m).set(f.id, note.trim()));
-                      },
-                      { sendingNote: true }
-                    )
-                  }
-                />
-              );
-            })}
-          </div>
-        ))}
-      </div>
-    </div>
-  );
-}
+  const undoReceipt = async (key: string) => {
+    const r = receiptsRef.current.get(key);
+    if (!r?.undo || running()) return;
+    setBusy({ key, kind: 'undo' });
+    setError(key, null);
+    try {
+      await r.undo();
+      await refresh(r.row.owner, r.row.name);
+      setReceipts((m) => {
+        const next = new Map(m);
+        next.delete(key);
+        return next;
+      });
+      setCurrent(key);
+      focusRow(key);
+      toast('Reopened. It’s back in your list.', {
+        icon: <UndoIcon size={16} />,
+      });
+    } catch (e) {
+      setError(key, failure(e));
+      await refresh(r.row.owner, r.row.name);
+    } finally {
+      setBusy(null);
+    }
+  };
 
-/** Open pull requests waiting on the user: agents' findings, failed reviews, approvals, failed conflict resolutions. */
-export default function Approvals() {
-  usePageHead({
-    icon: 'inbox',
-    crumbs: [{ label: 'Home', to: '/' }, { label: 'Approvals' }],
-    title: 'Approvals',
+  const undoMany = async (keys: string[]) => {
+    for (const key of keys) await undoReceipt(key);
+  };
+
+  const approveSelected = async () => {
+    const rowsToApprove = picked
+      .map((k) => byKey.get(k))
+      .filter((r): r is FindingRow => !!r && r.type === 'finding');
+    if (!rowsToApprove.length || running()) return;
+    setBulkBusy(true);
+    const done: string[] = [];
+    for (const row of rowsToApprove) {
+      const index = order.indexOf(row.key);
+      try {
+        await api.approveFlag(
+          row.owner,
+          row.name,
+          row.pull.number,
+          row.flag.id
+        );
+        done.push(row.key);
+        setError(row.key, null);
+        setReceipts((m) =>
+          new Map(m).set(row.key, {
+            ...approvedReceipt(row),
+            key: row.key,
+            index,
+            row,
+          })
+        );
+      } catch (e) {
+        setError(row.key, failure(e));
+      }
+    }
+    setSelected(new Set());
+    await Promise.all(
+      [...new Set(rowsToApprove.map((r) => r.repo))].map((repo) => {
+        const [o, n] = repo.split('/');
+        return refresh(o, n);
+      })
+    );
+    setBulkBusy(false);
+    if (done.length) {
+      const left = openKeys.find((k) => !done.includes(k)) ?? null;
+      setCurrent(left);
+      toast(
+        `Approved ${done.length} ${done.length === 1 ? 'finding' : 'findings'}`,
+        { undo: () => void undoMany(done) }
+      );
+    }
+  };
+
+  // Keyboard shortcuts: j k o a r d x A (and Enter), never while typing or inside a menu.
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.defaultPrevented || e.metaKey || e.ctrlKey || e.altKey) return;
+      const t = e.target instanceof Element ? e.target : document.body;
+      if (
+        t.closest(
+          'textarea, select, [contenteditable="true"], input:not([type=checkbox]):not([type=radio]), [data-menu-root]'
+        )
+      )
+        return;
+      if (e.key === 'Enter' && t.closest('button, a, input, label, summary'))
+        return;
+      const row = cur ? (byKey.get(cur) ?? null) : null;
+      // Shift+a is "A" whatever the keyboard reports.
+      const key =
+        e.shiftKey && e.key.length === 1 ? e.key.toUpperCase() : e.key;
+      const act = keyAction(key, row);
+      if (!act) return;
+      e.preventDefault();
+      switch (act.kind) {
+        case 'move': {
+          const k = moveCurrent(openKeys, cur, act.dir);
+          setCurrent(k);
+          focusRow(k);
+          break;
+        }
+        case 'bulk':
+          void approveSelected();
+          break;
+        case 'open':
+          if (!row) break;
+          if (act.toast) toast(act.toast, { icon: <ShieldIcon size={16} /> });
+          navigate(rowHref(row));
+          break;
+        case 'approve':
+          if (row) void run(row, { kind: 'approve' });
+          break;
+        case 'panel':
+          if (!row) break;
+          setPanels((m) => new Map(m).set(row.key, act.panel));
+          setCurrent(row.key);
+          break;
+        case 'select':
+          if (row) togglePick(row.key);
+          break;
+        case 'toast':
+          toast(act.message, { icon: <ShieldIcon size={16} /> });
+          break;
+      }
+    };
+    document.addEventListener('keydown', onKey);
+    return () => document.removeEventListener('keydown', onKey);
   });
-  const q = useApprovalPages();
-  const count = q.data?.pages[0]?.count ?? 0;
-  // A pull request updated between pages can come back on a later one: show it once.
-  const items = [
-    ...new Map(
-      (q.data?.pages.flatMap((p) => p.items) ?? []).map((i) => [
-        `${i.repo.fullName}#${i.pull.number}`,
-        i,
-      ])
-    ).values(),
-  ];
-  return (
-    <>
-      <div className="container-lg px-3 py-4">
-        <h2 className="f2 text-normal mb-1">Approvals</h2>
-        <p className="color-fg-muted mb-4">
-          Pull requests waiting on you before they can merge on their own,
-          across every repository you can merge in.
-          {count > 0 && (
-            <>
-              {' '}
-              <strong className="color-fg-default">
-                {count} {count === 1 ? 'item' : 'items'}
-              </strong>{' '}
-              to go.
-            </>
-          )}
-        </p>
-        {q.isPending ? (
-          <Spinner />
-        ) : q.error ? (
-          <div className="flash flash-error">{errorMessage(q.error)}</div>
-        ) : !items.length ? (
-          <div className="blankslate border rounded-2">
-            <CheckCircleIcon size={24} className="color-fg-success mb-2" />
-            <h3 className="blankslate-heading">Nothing is waiting on you</h3>
-            <p>
-              Findings agents raised for a person, failed agent reviews, pull
-              requests no agent reviewed, conflicts AI couldn&apos;t resolve,
-              and pull requests that need a person&apos;s decision show up here.
-            </p>
-          </div>
-        ) : (
-          <>
-            {items.map((item) => (
-              <Item
-                key={`${item.repo.fullName}#${item.pull.number}`}
-                item={item}
+
+  const lede = !q.data
+    ? undefined
+    : count
+      ? `${count} ${count === 1 ? 'item needs' : 'items need'} you. Your reviewers raised these for a person, across every repository you can merge in.`
+      : 'Nothing needs you. Your crew will ask when something does.';
+
+  const setFilter = (v: 'all' | 'assigned') =>
+    setParams(v === 'assigned' ? { filter: 'assigned' } : {}, {
+      replace: true,
+    });
+
+  let list;
+  if (q.isError && !q.data)
+    list = (
+      <QueryError
+        error={q.error}
+        onRetry={() => void q.refetch()}
+        title="Approvals did not load"
+        picture={<InboxIcon size={24} />}
+      />
+    );
+  else if (!q.data) list = <RowsSkeleton rows={5} />;
+  else if (!order.length)
+    list = assignedOnly ? (
+      <EmptyState
+        id="ap-empty"
+        tabIndex={-1}
+        picture={<AgentAvatar handle="clef" status="idle" size={56} />}
+        title="Nothing is assigned to you."
+        body="When someone asks you to decide a finding, it shows here."
+        action={
+          <button
+            type="button"
+            className="btn small"
+            onClick={() => setFilter('all')}
+          >
+            Show everything
+          </button>
+        }
+      />
+    ) : (
+      <EmptyState
+        id="ap-empty"
+        tabIndex={-1}
+        picture={<AgentAvatar handle="clef" status="idle" size={56} />}
+        title="Nothing needs you."
+        body="Your crew will ask when something does: findings agents raise for a person, failed reviews, pull requests no agent reviewed, conflicts AI couldn’t resolve, and pull requests that need a decision."
+      />
+    );
+  else
+    list = (
+      <ol className="ap-list">
+        {order.map((key) => {
+          const receipt = shownReceiptKeys.has(key) ? receipts.get(key) : null;
+          const setRef = (el: HTMLLIElement | null) => {
+            if (el) refs.current.set(key, el);
+            else refs.current.delete(key);
+          };
+          if (receipt)
+            return (
+              <ReceiptView
+                key={key}
+                receipt={receipt}
+                undoing={busy?.key === key}
+                locked={!!busy || bulkBusy}
+                error={errors.get(key) ?? null}
+                color={
+                  receipt.row.type === 'finding' ||
+                  receipt.row.type === 'reviewer-failed'
+                    ? colors.get(receipt.row.agent.username)
+                    : undefined
+                }
+                setRef={setRef}
+                onUndo={() => void undoReceipt(key)}
               />
-            ))}
+            );
+          const row = byKey.get(key);
+          if (!row) return null;
+          return (
+            <InboxRowView
+              key={key}
+              row={row}
+              current={cur === key}
+              picked={selected.has(key)}
+              panel={panels.get(key) ?? null}
+              busy={
+                busy?.key === key
+                  ? busy.kind
+                  : bulkBusy && selected.has(key)
+                    ? 'approve'
+                    : null
+              }
+              locked={!!busy || bulkBusy}
+              error={errors.get(key) ?? null}
+              me={myLogin}
+              color={
+                row.type === 'finding' || row.type === 'reviewer-failed'
+                  ? colors.get(row.agent.username)
+                  : undefined
+              }
+              claudeLeft={
+                row.type === 'finding' ? claudeLeft.get(row.flag.id) : undefined
+              }
+              setRef={setRef}
+              onFocus={() => cur !== key && setCurrent(key)}
+              onPick={(on) => togglePick(key, on)}
+              onPanel={(p) => {
+                setCurrent(key);
+                setPanels((m) => {
+                  const next = new Map(m);
+                  if (p) next.set(key, p);
+                  else next.delete(key);
+                  return next;
+                });
+                if (!p) focusRow(key);
+              }}
+              onAct={(a) => void run(row, a)}
+            />
+          );
+        })}
+      </ol>
+    );
+
+  return (
+    <div className="ap">
+      <PageHead
+        icon="inbox"
+        crumbs={[{ label: 'Home', to: '/' }, { label: 'Approvals' }]}
+        title="Approvals"
+        lede={lede}
+      />
+      <div className="ap-bar">
+        <Seg
+          label="Show"
+          value={assignedOnly ? 'assigned' : 'all'}
+          onChange={setFilter}
+          options={[
+            {
+              value: 'all',
+              label: firstPage ? `Everything · ${count}` : 'Everything',
+            },
+            {
+              value: 'assigned',
+              label: firstPage
+                ? `Assigned to you · ${assignedToMe}`
+                : 'Assigned to you',
+            },
+          ]}
+        />
+        <ul className="ap-keys" aria-label="Keyboard shortcuts">
+          {KEYS.map(([keys, what]) => (
+            <li key={what}>
+              {keys.map((k) => (
+                <Kbd key={k}>{k}</Kbd>
+              ))}
+              <span>{what}</span>
+            </li>
+          ))}
+        </ul>
+      </div>
+      <div className="ap-grid">
+        <div className="ap-stack">
+          <section className="ap-box" aria-labelledby="ap-list-h">
+            <div className="ap-box-head">
+              <h2 id="ap-list-h">
+                {assignedOnly ? 'Assigned to you' : 'Waiting on you'}{' '}
+                {firstPage && (
+                  <span className="ap-n">
+                    {assignedOnly ? assignedToMe : count}
+                  </span>
+                )}
+                {shownReceipts.length > 0 && (
+                  <span className="ap-n-done">
+                    {shownReceipts.length} answered
+                  </span>
+                )}
+              </h2>
+              {picked.length > 0 && (
+                <div className="ap-bulk">
+                  <span>{picked.length} selected</span>
+                  <button
+                    type="button"
+                    className="btn quiet small"
+                    disabled={bulkBusy}
+                    onClick={() => setSelected(new Set())}
+                  >
+                    Clear
+                  </button>
+                  <PendingButton
+                    className="primary small"
+                    pending={bulkBusy}
+                    pendingLabel="Approving…"
+                    disabled={!!busy}
+                    onClick={() => void approveSelected()}
+                  >
+                    <CheckIcon size={14} />
+                    Approve selected
+                  </PendingButton>
+                </div>
+              )}
+            </div>
+            {list}
             {q.hasNextPage && (
-              <div className="text-center">
-                <button
-                  className="btn"
-                  disabled={q.isFetchingNextPage}
+              <div className="ap-more-row">
+                <PendingButton
+                  className="small"
+                  pending={q.isFetchingNextPage}
+                  pendingLabel="Loading…"
                   onClick={() => void q.fetchNextPage()}
                 >
-                  {q.isFetchingNextPage ? 'Loading…' : 'Load more'}
-                </button>
+                  Load more
+                </PendingButton>
               </div>
             )}
-          </>
-        )}
+          </section>
+        </div>
+        <ClaudePanel myName={myName} />
       </div>
-    </>
+    </div>
   );
 }
