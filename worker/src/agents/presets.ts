@@ -294,13 +294,18 @@ export function guardedOf(config: {
   });
 }
 
-/** The agent's colour: AGENT.md's, else a stable one from the palette for its handle. */
+/**
+ * The agent's colour, the one place it is resolved: AGENT.md's, else its preset's when the handle is a preset's, else a
+ * stable one from the palette for the handle. Everything that shows an agent's colour calls this.
+ */
 export function agentColor(
   agent: { color: string | null | undefined },
   handle: string
 ): string {
+  const key = handle.toLowerCase();
   return (
     agent.color ??
-    AGENT_PALETTE[fnv1a(handle.toLowerCase()) % AGENT_PALETTE.length]
+    PRESET_FACETS.map((f) => PRESETS[f]).find((p) => p.handle === key)?.color ??
+    AGENT_PALETTE[fnv1a(key) % AGENT_PALETTE.length]
   );
 }

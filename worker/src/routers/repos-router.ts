@@ -29,6 +29,7 @@ import {
 import { deleteRepositoryLogs } from '../actions/trigger';
 import { recordAudit } from '../lib/audit';
 import { createRepository, nameTaken } from '../lib/repo-create';
+import { repoStats } from '../lib/repo-stats';
 import {
   invalidProtectedPatterns,
   normalizeProtectedPatterns,
@@ -61,6 +62,7 @@ import {
   permsSchema,
   publicUserSchema,
   repoSchema,
+  repoWithStatsSchema,
 } from './schemas';
 
 const MAX_FILE_VIEW = 1024 * 1024;
@@ -113,7 +115,17 @@ const listRoute = createRoute({
   method: 'get',
   path: '/',
   tags: ['Repositories'],
-  responses: { ...json200Response(z.array(repoSchema), 'All repositories') },
+  request: {
+    query: z.object({
+      stats: z.enum(['1', 'true', '0', 'false']).optional().openapi({
+        description:
+          'With 1, each repository also carries `stats`: its open pull requests by whose move it is, what merged this week, its agents, branches and language.',
+      }),
+    }),
+  },
+  responses: {
+    ...json200Response(z.array(repoWithStatsSchema), 'All repositories'),
+  },
 });
 reposRouter.openapi(listRoute, async (c) => {
   const db = c.get('db');
@@ -125,13 +137,22 @@ reposRouter.openapi(listRoute, async (c) => {
     .where(visibleTo(c.get('user')!))
     .orderBy(desc(repositories.updatedAt))
     .all();
+  const withStats = ['1', 'true'].includes(c.req.valid('query').stats ?? '');
+  const stats = withStats
+    ? await repoStats(
+        c.env,
+        db,
+        rows.map((r) => r.repo)
+      )
+    : null;
   return c.json(
-    rows.map((r) =>
-      serializeRepo(
+    rows.map((r) => ({
+      ...serializeRepo(
         r.repo,
         r.team ? teamNamespace(r.team) : userNamespace(r.owner)
-      )
-    ),
+      ),
+      ...(stats ? { stats: stats.get(r.repo.id) } : {}),
+    })),
     200
   );
 });

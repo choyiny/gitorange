@@ -15,6 +15,7 @@ import {
 import { AVATAR_PATH } from '../agents/config';
 import { inviteAgent, removeAgent } from '../agents/membership';
 import { PRESET_FACETS, PRESETS } from '../agents/presets';
+import { agentStats, builtinAgents } from '../lib/agent-stats';
 import { recordAudit } from '../lib/audit';
 import { settleStates } from '../pulls/settle';
 import { autoMergeRepository } from '../review/auto-merge';
@@ -37,7 +38,13 @@ import {
   okSchema,
   validationHook,
 } from './openapi-helpers';
-import { agentPresetSchema, agentSchema, ownerRepoParams } from './schemas';
+import {
+  agentPresetSchema,
+  agentSchema,
+  agentStatsSchema,
+  builtinAgentSchema,
+  ownerRepoParams,
+} from './schemas';
 
 const handleParams = z.object({ handle: z.string() });
 
@@ -110,6 +117,54 @@ agentsRouter.openapi(presetsRoute, async (c) => {
         exists: taken.has(p.handle),
       };
     }),
+    200
+  );
+});
+
+const builtinRoute = createRoute({
+  method: 'get',
+  path: '/builtin',
+  tags: ['Agents'],
+  summary: 'Clef and Fixer',
+  description:
+    'The two agents GitOrange has built in, with their last seven days: what Clef routed and how long a decision took, ' +
+    'and what Fixer attempted, combined itself and saw merged anyway. Only repositories the caller can see count.',
+  responses: {
+    ...json200Response(z.array(builtinAgentSchema), 'Clef, then Fixer'),
+  },
+});
+agentsRouter.openapi(builtinRoute, async (c) => {
+  return c.json(await builtinAgents(c.get('db'), c.get('user')!), 200);
+});
+
+const statsRoute = createRoute({
+  method: 'get',
+  path: '/{handle}/stats',
+  tags: ['Agents'],
+  summary: "An agent's record",
+  description:
+    'How its findings fared (raised, kept, dismissed), the rules it learned, its reviews per day over the last 182 ' +
+    'days, its best catch, and what it is doing in each repository it is invited to. Only repositories the caller ' +
+    'can see count. A deleted agent keeps its history.',
+  request: { params: handleParams },
+  responses: {
+    ...json200Response(agentStatsSchema, 'The agent’s stats'),
+    ...json404Response,
+  },
+});
+agentsRouter.openapi(statsRoute, async (c) => {
+  const db = c.get('db');
+  const view = await agentByHandle(db, c.req.valid('param').handle);
+  if (!view) return c.json({ error: 'Agent not found' }, 404);
+  return c.json(
+    await agentStats(
+      db,
+      {
+        userId: view.agent.userId,
+        handle: view.user.username ?? view.user.id,
+      },
+      c.get('user')!
+    ),
     200
   );
 });

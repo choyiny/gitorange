@@ -1,5 +1,10 @@
 import { z } from '@hono/zod-openapi';
-import { agentFacets, auditActorKinds, lessonStatuses } from '../db/app.schema';
+import {
+  agentFacets,
+  auditActorKinds,
+  lessonStatuses,
+  reviewerStatuses,
+} from '../db/app.schema';
 import { PULL_STATES, REASON_KINDS } from '../pulls/state';
 
 export const publicUserSchema = z
@@ -56,6 +61,88 @@ export const repoSchema = z
     updatedAt: z.string(),
   })
   .openapi('Repository');
+
+/** What an agent is doing on a repository's open pull requests: a reviewer status, or `idle` when it is on none. */
+const agentActivitySchema = z.enum([...reviewerStatuses, 'idle']);
+
+/** The Repositories board's numbers for one repository (`GET /api/repos?stats=1`; worker/src/lib/repo-stats.ts). */
+export const repoStatsSchema = z
+  .object({
+    pulls: z.object({
+      open: z.number(),
+      /** A person's move: approve it, answer a finding. */
+      needsPerson: z.number(),
+      /** Its author's agent has changes to make: failed checks, requested changes, a rebase conflict. */
+      changesRequested: z.number(),
+      /** Waiting for checks or reviews that are running. */
+      checking: z.number(),
+      /** Ready, or waiting on its order or on other pull requests. */
+      queued: z.number(),
+    }),
+    /** Pull requests merged in the last seven UTC days. */
+    merged7d: z.number(),
+    /** Merges per UTC day over those seven days, oldest first, today last. */
+    mergedByDay: z.array(z.number()),
+    /** The share GitOrange merged on its own, 0 to 100; null when nothing merged. */
+    mergedAutomaticallyPct: z.number().nullable(),
+    agents: z.array(
+      z.object({
+        handle: z.string(),
+        name: z.string(),
+        color: z.string(),
+        status: agentActivitySchema,
+      })
+    ),
+    /** Null when the repository's refs could not be read. */
+    branchCount: z.number().nullable(),
+    /** The language most of its source files are written in. */
+    language: z.string().nullable(),
+    /** Epoch milliseconds. */
+    updatedAt: z.number(),
+  })
+  .openapi('RepositoryStats');
+
+/** A repository in the list; `stats` only with `?stats=1`. */
+export const repoWithStatsSchema = repoSchema
+  .extend({ stats: repoStatsSchema.optional() })
+  .openapi('RepositoryListItem');
+
+/** An agent's record: how its findings fared and where it works now (worker/src/lib/agent-stats.ts). */
+export const agentStatsSchema = z
+  .object({
+    handle: z.string(),
+    raised: z.number(),
+    kept: z.number(),
+    dismissed: z.number(),
+    /** kept / (kept + dismissed) as a whole percentage; null until one has been decided. */
+    keptPct: z.number().nullable(),
+    /** Committed lessons. */
+    rules: z.number(),
+    reviews: z.number(),
+    /** 182 UTC days, oldest first, today last. */
+    byDay: z.array(z.object({ date: z.string(), reviews: z.number() })),
+    bestCatch: z
+      .object({ title: z.string(), repo: z.string(), number: z.number() })
+      .nullable(),
+    repos: z.array(
+      z.object({
+        repo: z.string(),
+        status: agentActivitySchema,
+        number: z.number().nullable(),
+      })
+    ),
+  })
+  .openapi('AgentStats');
+
+/** Clef or Fixer: the agents GitOrange has built in. */
+export const builtinAgentSchema = z
+  .object({
+    id: z.enum(['clef', 'fixer']),
+    name: z.string(),
+    job: z.string(),
+    stats: z.array(z.object({ label: z.string(), value: z.string() })),
+  })
+  .openapi('BuiltinAgent');
 
 // A git identity, plus the member it belongs to when the email is a member's account email or a
 // verified alternate (Settings → Emails).

@@ -147,6 +147,16 @@ describe('agentColor', () => {
     expect(AGENT_PALETTE).toContain(fallback);
     expect(agentColor({ color: null }, 'docsagent')).toBe(fallback);
   });
+
+  it("falls back to the preset's colour for a preset's handle, whatever its case", () => {
+    for (const facet of PRESET_FACETS) {
+      const p = PRESETS[facet];
+      expect(agentColor({ color: null }, p.handle)).toBe(p.color);
+      expect(agentColor({ color: null }, p.handle.toUpperCase())).toBe(p.color);
+    }
+    // AGENT.md's own colour still wins.
+    expect(agentColor({ color: '#123456' }, 'securityagent')).toBe('#123456');
+  });
 });
 
 describe('GET /api/agents/presets', () => {
