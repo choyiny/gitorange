@@ -8,3 +8,6 @@ dist
 # Per-deployer wrangler config (template: wrangler.jsonc.example)
 wrangler.jsonc
 .wrangler.jsonc.local-backup
+
+# Superpowers subagent-driven-development workspaces
+.superpowers/
