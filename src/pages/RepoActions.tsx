@@ -1,17 +1,18 @@
 import { Link, useOutletContext, useSearchParams } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
-import {
-  CalendarIcon,
-  PlayIcon,
-  StopwatchIcon,
-  WorkflowIcon,
-} from '@primer/octicons-react';
+import { ClockIcon, PlayIcon } from '@primer/octicons-react';
 import { api, qk, type RepoDetail, type WorkflowRun } from '@/lib/uiApi';
 import { duration, shortSha, timeAgo } from '@/lib/format';
-import { Spinner } from '@/components/Spinner';
+import { parseActionsView } from '@/lib/agentRuns';
+import { useNow } from '@/lib/useNow';
 import { CopyButton } from '@/components/CopyButton';
 import { RunStatusIcon } from '@/components/RunStatusIcon';
-import { AGENT_KINDS, AgentRunList, isAgentKind } from './AgentRuns';
+import { EmptyState } from '@/components/ui/EmptyState';
+import { PageHead } from '@/components/ui/PageHead';
+import { Section } from '@/components/ui/Section';
+import { FilterLinks, Pager } from '@/components/actions/parts';
+import { QueryError, RowsSkeleton } from '@/components/actions/states';
+import { AgentRunList } from './AgentRuns';
 
 const STARTER = `name: CI
 
@@ -37,14 +38,13 @@ function trigger(run: WorkflowRun) {
   if (run.event === 'pull_request')
     return (
       <>
-        Pull request #{run.pullRequestNumber} by{' '}
-        <span className="text-bold">{who}</span>
+        Pull request #{run.pullRequestNumber} by <b>{who}</b>
       </>
     );
   return (
     <>
-      Commit <span className="text-mono">{shortSha(run.headSha)}</span> pushed
-      by <span className="text-bold">{who}</span>
+      Commit <span className="mono">{shortSha(run.headSha)}</span> pushed by{' '}
+      <b>{who}</b>
     </>
   );
 }
@@ -52,254 +52,226 @@ function trigger(run: WorkflowRun) {
 export default function RepoActions() {
   const repo = useOutletContext<RepoDetail>();
   const [params, setParams] = useSearchParams();
-  const workflow = params.get('workflow') ?? '';
-  const agentParam = params.get('agent');
-  const agent = isAgentKind(agentParam) ? agentParam : null;
-  const page = Math.max(1, Number(params.get('page') ?? 1) || 1);
+  const view = parseActionsView(params);
+  const base = `/${repo.fullName}`;
+
+  return (
+    <>
+      <PageHead
+        icon="play"
+        crumbs={[{ label: 'Actions' }]}
+        title="Actions"
+        tab="actions"
+        lede="Your workflows run on Cloudflare Containers. Every AI process GitOrange runs, such as reviews, rebases and conflict fixes, is listed under Agent runs."
+      />
+      <nav className="act-tabs" aria-label="Actions">
+        <Link
+          to={`${base}/actions`}
+          aria-current={view.mode === 'workflows' ? 'page' : undefined}
+        >
+          Workflow runs
+        </Link>
+        <Link
+          to={`${base}/actions?agent=all`}
+          aria-current={view.mode === 'agents' ? 'page' : undefined}
+        >
+          Agent runs
+        </Link>
+      </nav>
+      {view.mode === 'agents' ? (
+        <AgentRunList key={view.kind ?? 'all'} repo={repo} kind={view.kind} />
+      ) : (
+        <WorkflowRuns
+          repo={repo}
+          workflow={view.workflow}
+          page={view.page}
+          setPage={(page) =>
+            setParams({
+              ...(view.workflow ? { workflow: view.workflow } : {}),
+              page: String(page),
+            })
+          }
+        />
+      )}
+    </>
+  );
+}
+
+function WorkflowRuns({
+  repo,
+  workflow,
+  page,
+  setPage,
+}: {
+  repo: RepoDetail;
+  workflow: string;
+  page: number;
+  setPage: (page: number) => void;
+}) {
   const o = repo.owner.username;
+  const base = `/${repo.fullName}`;
   const q = useQuery({
     queryKey: qk.runs(o, repo.name, page, workflow),
     queryFn: () => api.runs(o, repo.name, page, workflow || undefined),
     // Poll while anything on the page is still running.
-    // Not while an Agent kind is shown (the workflow list is hidden).
     refetchInterval: (query) =>
-      !agent && query.state.data?.runs.some((r) => r.status !== 'completed')
+      query.state.data?.runs.some((r) => r.status !== 'completed')
         ? 3000
         : false,
   });
-  const base = `/${repo.fullName}`;
   const data = q.data;
-  const current = data?.workflows.find((w) => w.path === workflow);
-  const pages = data ? Math.ceil(data.totalCount / 25) : 1;
+  const now = useNow(!!data?.runs.some((r) => r.status === 'in_progress'));
 
-  return (
-    <div
-      className="container-xl px-3 px-md-4 px-lg-5 pb-6 d-flex flex-column flex-md-row"
-      style={{ gap: 24 }}
-    >
-      <nav className="col-md-3" style={{ minWidth: 220 }}>
-        <h2 className="f4 mb-2">Actions</h2>
-        <div className="ActionList">
-          <button
-            className={`ActionListItem width-full text-left border-0 rounded-2 px-2 py-1 d-flex flex-items-center ${!workflow && !agent ? 'color-bg-subtle text-bold' : 'color-bg-default'}`}
-            style={{ gap: 8 }}
-            onClick={() => setParams({})}
-          >
-            <WorkflowIcon /> All workflows
-          </button>
-          {data?.workflows.length ? (
-            <div className="f6 color-fg-muted text-bold px-2 mt-3 mb-1">
-              Workflows
-            </div>
-          ) : null}
-          {data?.workflows.map((w) => (
-            <button
-              key={w.path}
-              className={`ActionListItem width-full text-left border-0 rounded-2 px-2 py-1 d-flex flex-items-center ${workflow === w.path ? 'color-bg-subtle text-bold' : 'color-bg-default'}`}
-              style={{ gap: 8 }}
-              onClick={() => setParams({ workflow: w.path })}
-              title={w.path}
-            >
-              <WorkflowIcon className="color-fg-muted" />
-              <span className="css-truncate css-truncate-target">{w.name}</span>
-            </button>
-          ))}
-          <div className="f6 color-fg-muted text-bold px-2 mt-3 mb-1">
-            Agent
+  if (q.isError && !data)
+    return (
+      <div className="panel">
+        <QueryError
+          error={q.error}
+          onRetry={() => void q.refetch()}
+          title="Workflow runs did not load"
+          picture={<PlayIcon size={24} />}
+        />
+      </div>
+    );
+  if (!data) return <RowsSkeleton />;
+
+  if (!data.configured && data.totalCount === 0)
+    return (
+      <div className="panel">
+        <EmptyState
+          picture={<PlayIcon size={24} />}
+          title="Actions isn't set up on this server"
+          body="A site admin can enable Actions by adding the Actions bindings to the deployment. See docs/configuration.md."
+        />
+      </div>
+    );
+
+  if (data.totalCount === 0)
+    return (
+      <section className="panel pad act-starter">
+        <h2>Get started with Actions</h2>
+        <p className="muted">
+          Build and test every push and pull request. Add a workflow file like
+          this one at <code>.github/workflows/ci.yml</code>; it uses the same
+          syntax as GitHub Actions. Jobs run on Linux with Node.js, git and
+          common build tools preinstalled.
+        </p>
+        <div className="act-code">
+          <div className="act-code-head">
+            <span className="mono small muted">.github/workflows/ci.yml</span>
+            <CopyButton
+              text={STARTER}
+              label="Copy workflow"
+              className="btn small quiet"
+            />
           </div>
-          {AGENT_KINDS.map(({ kind, label, icon: Icon }) => (
-            <button
-              key={kind}
-              className={`ActionListItem width-full text-left border-0 rounded-2 px-2 py-1 d-flex flex-items-center ${agent === kind ? 'color-bg-subtle text-bold' : 'color-bg-default'}`}
-              style={{ gap: 8 }}
-              onClick={() => setParams({ agent: kind })}
-            >
-              <Icon className="color-fg-muted" />
-              <span className="css-truncate css-truncate-target">{label}</span>
-            </button>
-          ))}
+          <pre className="mono">{STARTER}</pre>
         </div>
-      </nav>
+        <p className="small muted">
+          Supported today: <code>run</code> steps, <code>actions/checkout</code>
+          , <code>actions/setup-node</code>, <code>needs</code>, <code>if</code>
+          , matrix builds, expressions and step outputs. Use{' '}
+          <code>runs-on: gitorange-standard-2</code> (up to{' '}
+          <code>standard-4</code>) for a bigger machine.
+        </p>
+      </section>
+    );
 
-      {agent && (
-        <div className="flex-1" style={{ minWidth: 0 }}>
-          <AgentRunList repo={repo} kind={agent} />
+  const current = data.workflows.find((w) => w.path === workflow);
+  const pages = Math.ceil(data.totalCount / 25);
+  return (
+    <Section
+      title={
+        <>
+          {current?.name ?? 'All workflows'}
+          {current && <span className="mono small muted">{current.path}</span>}
+        </>
+      }
+      actions={
+        <span className="muted small">
+          {data.totalCount} workflow run{data.totalCount === 1 ? '' : 's'}
+        </span>
+      }
+    >
+      {data.workflows.length > 0 && (
+        <FilterLinks
+          label="Workflows"
+          items={[
+            {
+              key: '',
+              label: 'All workflows',
+              to: `${base}/actions`,
+              current: !workflow,
+            },
+            ...data.workflows.map((w) => ({
+              key: w.path,
+              label: w.name,
+              to: `${base}/actions?workflow=${encodeURIComponent(w.path)}`,
+              current: workflow === w.path,
+            })),
+          ]}
+        />
+      )}
+      {data.runs.length > 0 ? (
+        <ul className="act-list panel">
+          {data.runs.map((run) => (
+            <li key={run.id} className="act-row">
+              <span className="act-lead">
+                <RunStatusIcon
+                  status={run.status}
+                  conclusion={run.conclusion}
+                  size={18}
+                />
+              </span>
+              <div className="act-main">
+                <Link
+                  className="act-title"
+                  to={`${base}/actions/runs/${run.runNumber}`}
+                >
+                  {run.displayTitle}
+                </Link>
+                <p className="small muted">
+                  <b className="act-who">{run.name}</b> #{run.runNumber}:{' '}
+                  {trigger(run)}
+                  {' · '}
+                  {run.pullRequestNumber ? (
+                    <Link
+                      className="mono"
+                      to={`${base}/pull/${run.pullRequestNumber}`}
+                    >
+                      #{run.pullRequestNumber}
+                    </Link>
+                  ) : (
+                    <span className="mono act-branch">{run.refName}</span>
+                  )}
+                </p>
+              </div>
+              <div className="act-meta small muted">
+                {run.startedAt && (
+                  <span className="act-inline">
+                    <ClockIcon size={13} />
+                    {duration(run.startedAt, run.completedAt, now)}
+                  </span>
+                )}
+                <span>{timeAgo(run.createdAt)}</span>
+              </div>
+            </li>
+          ))}
+        </ul>
+      ) : (
+        <div className="panel">
+          <EmptyState title="No runs on this page" />
         </div>
       )}
-      {/* Workflow runs; hidden (not unmounted) while an Agent kind is selected. */}
-      <div
-        className={`flex-1 ${agent ? 'd-none' : ''}`}
-        style={{ minWidth: 0 }}
-      >
-        <div className="d-flex flex-items-baseline mb-3" style={{ gap: 8 }}>
-          <h2 className="f3 text-normal">{current?.name ?? 'All workflows'}</h2>
-          {current && (
-            <span className="f6 color-fg-muted text-mono">{current.path}</span>
-          )}
-        </div>
-        {!data ? (
-          <Spinner />
-        ) : !data.configured && data.totalCount === 0 ? (
-          <div className="blankslate Box">
-            <PlayIcon size={24} className="color-fg-muted mb-2" />
-            <h3 className="blankslate-heading">
-              Actions isn't set up on this server
-            </h3>
-            <p>
-              A site admin can enable Actions by adding the Actions bindings to
-              the deployment. See docs/configuration.md.
-            </p>
-          </div>
-        ) : data.totalCount === 0 ? (
-          <div className="Box">
-            <div className="Box-body">
-              <h3 className="f4 mb-1">Get started with Actions</h3>
-              <p className="color-fg-muted mb-3">
-                Build and test every push and pull request. Add a workflow file
-                like this one at{' '}
-                <span className="text-mono">.github/workflows/ci.yml</span>; it
-                uses the same syntax as GitHub Actions. Jobs run on Linux with
-                Node.js, git, and common build tools preinstalled.
-              </p>
-              <div className="Box">
-                <div className="Box-header d-flex flex-items-center flex-justify-between py-1 px-2">
-                  <span className="f6 color-fg-muted text-mono">
-                    .github/workflows/ci.yml
-                  </span>
-                  <CopyButton
-                    text={STARTER}
-                    label="Copy workflow"
-                    className="btn btn-sm btn-invisible"
-                  />
-                </div>
-                <pre className="p-3 f6 text-mono m-0">{STARTER}</pre>
-              </div>
-              <p className="f6 color-fg-muted mt-3 mb-0">
-                Supported today: <span className="text-mono">run</span> steps,{' '}
-                <span className="text-mono">actions/checkout</span>,{' '}
-                <span className="text-mono">actions/setup-node</span>,{' '}
-                <span className="text-mono">needs</span>,{' '}
-                <span className="text-mono">if</span>, matrix builds,
-                expressions, and step outputs. Use{' '}
-                <span className="text-mono">runs-on: gitorange-standard-2</span>{' '}
-                (up to <span className="text-mono">standard-4</span>) for a
-                bigger machine.
-              </p>
-            </div>
-          </div>
-        ) : (
-          <>
-            <div className="Box">
-              <div className="Box-header py-2">
-                <span className="text-bold f6">
-                  {data.totalCount} workflow run
-                  {data.totalCount === 1 ? '' : 's'}
-                </span>
-              </div>
-              {data.runs.map((run) => (
-                <div
-                  key={run.id}
-                  className="Box-row Box-row--hover-gray d-flex flex-items-start"
-                  style={{ gap: 12 }}
-                >
-                  <span className="pt-1">
-                    <RunStatusIcon
-                      status={run.status}
-                      conclusion={run.conclusion}
-                    />
-                  </span>
-                  <div className="flex-1" style={{ minWidth: 0 }}>
-                    <Link
-                      to={`${base}/actions/runs/${run.runNumber}`}
-                      className="Link--primary text-bold f5 color-fg-default"
-                    >
-                      {run.displayTitle}
-                    </Link>
-                    <div className="f6 color-fg-muted mt-1">
-                      <span className="text-bold">{run.name}</span> #
-                      {run.runNumber}: {trigger(run)}
-                    </div>
-                  </div>
-                  <div className="d-none d-md-block" style={{ width: 160 }}>
-                    {run.pullRequestNumber ? (
-                      <Link
-                        to={`${base}/pull/${run.pullRequestNumber}`}
-                        className="Label Label--accent text-mono"
-                      >
-                        #{run.pullRequestNumber}
-                      </Link>
-                    ) : (
-                      <span className="Label Label--accent text-mono css-truncate css-truncate-target">
-                        {run.refName}
-                      </span>
-                    )}
-                  </div>
-                  <div
-                    className="f6 color-fg-muted d-flex flex-column"
-                    style={{ gap: 4, width: 120 }}
-                  >
-                    <span
-                      className="d-inline-flex flex-items-center"
-                      style={{ gap: 4 }}
-                    >
-                      <CalendarIcon size={14} /> {timeAgo(run.createdAt)}
-                    </span>
-                    {run.startedAt && (
-                      <span
-                        className="d-inline-flex flex-items-center"
-                        style={{ gap: 4 }}
-                      >
-                        <StopwatchIcon size={14} />{' '}
-                        {duration(run.startedAt, run.completedAt)}
-                      </span>
-                    )}
-                  </div>
-                </div>
-              ))}
-            </div>
-            {pages > 1 && (
-              <nav className="paginate-container" aria-label="Pagination">
-                <div className="pagination">
-                  {page > 1 ? (
-                    <button
-                      className="previous_page btn-link"
-                      onClick={() =>
-                        setParams({
-                          ...(workflow ? { workflow } : {}),
-                          page: String(page - 1),
-                        })
-                      }
-                    >
-                      Previous
-                    </button>
-                  ) : (
-                    <span className="previous_page" aria-disabled="true">
-                      Previous
-                    </span>
-                  )}
-                  {page < pages ? (
-                    <button
-                      className="next_page btn-link"
-                      onClick={() =>
-                        setParams({
-                          ...(workflow ? { workflow } : {}),
-                          page: String(page + 1),
-                        })
-                      }
-                    >
-                      Next
-                    </button>
-                  ) : (
-                    <span className="next_page" aria-disabled="true">
-                      Next
-                    </span>
-                  )}
-                </div>
-              </nav>
-            )}
-          </>
-        )}
-      </div>
-    </div>
+      {pages > 1 && (
+        <Pager
+          prevLabel="Previous"
+          nextLabel="Next"
+          note={`Page ${page} of ${pages}`}
+          onPrev={page > 1 ? () => setPage(page - 1) : undefined}
+          onNext={page < pages ? () => setPage(page + 1) : undefined}
+        />
+      )}
+    </Section>
   );
 }
