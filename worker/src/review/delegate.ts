@@ -25,6 +25,7 @@ import {
   prClassifications,
   prReviewFlags,
   pullRequests,
+  repositoryAgents,
 } from '../db/app.schema';
 import { users } from '../db/auth.schema';
 import type { DrizzleDB } from '../db/middleware';
@@ -235,9 +236,10 @@ export type DecideFindingResult =
 /**
  * GitOrange AI decides one finding as `userId`: approve, request changes (its reason is the note), or leave it for
  * the person with a reason. Refuses a guarded agent's finding (422), an agent's own change request (400), a decided
- * one (409), and a person who can't push to the repository (403). `model` undefined: the instance's (none without an
- * AI binding); null: none. `pullRequestId`: the route's pull request, which the finding must belong to. A failing or
- * unusable model never throws: the finding is left for the person.
+ * one or one whose agent was deleted or removed from the repository (409), and a person who can't push to the
+ * repository (403). `model` undefined: the instance's (none without an AI binding); null: none. `pullRequestId`: the
+ * route's pull request, which the finding must belong to. A failing or unusable model never throws: the finding is
+ * left for the person.
  */
 export async function decideFinding(
   env: CloudflareBindings,
@@ -258,6 +260,8 @@ export async function decideFinding(
       agentName: agents.name,
       bio: agents.bio,
       guarded: agents.guarded,
+      live: sql<boolean>`${agents.userId} IS NOT NULL AND ${agents.deletedAt} IS NULL`,
+      invited: repositoryAgents.agentId,
     })
     .from(prReviewFlags)
     .innerJoin(
@@ -270,6 +274,13 @@ export async function decideFinding(
     )
     .leftJoin(users, eq(users.id, prReviewFlags.agentId))
     .leftJoin(agents, eq(agents.userId, prReviewFlags.agentId))
+    .leftJoin(
+      repositoryAgents,
+      and(
+        eq(repositoryAgents.repositoryId, pullRequests.repositoryId),
+        eq(repositoryAgents.agentId, prReviewFlags.agentId)
+      )
+    )
     .where(eq(prReviewFlags.id, flagId))
     .get();
   if (!row || (deps.pullRequestId && row.pr.id !== deps.pullRequestId))
@@ -291,6 +302,13 @@ export async function decideFinding(
   const label = agentLabel({ agentName: row.agentName, agent: row.handle });
   if (row.guarded)
     return { ok: false, status: 422, error: guardedNotForAi(label) };
+  // An agent that was deleted or removed from the repository no longer speaks for it: a person decides.
+  if (!row.live || !row.invited)
+    return {
+      ok: false,
+      status: 409,
+      error: `${label} no longer reviews this repository: decide this finding yourself`,
+    };
   if (flag.approvedAt || flag.changesRequestedAt)
     return {
       ok: false,

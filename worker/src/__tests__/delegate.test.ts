@@ -282,6 +282,37 @@ describe('deciding one finding (decideFinding)', () => {
     expect(decider.calls).toEqual([]);
   });
 
+  it('refuses a finding whose agent was removed from the repository or deleted', async () => {
+    const { t, person } = await questionedPull();
+    const me = await userId(t);
+    const decider = fakeDecider();
+    const run = () =>
+      decideFinding(t.env, db(t), person.id, me, {
+        model: decider.model,
+        after: after(t),
+      });
+    const invites = await t.env.DB.prepare(
+      'SELECT * FROM repository_agents'
+    ).all<Record<string, unknown>>();
+    await t.env.DB.prepare('DELETE FROM repository_agents').run();
+    expect(await run()).toMatchObject({ ok: false, status: 409 });
+    // Invited again, but the agent is deleted.
+    for (const r of invites.results)
+      await t.env.DB.prepare(
+        `INSERT INTO repository_agents (${Object.keys(r).join(', ')}) VALUES (${Object.keys(
+          r
+        )
+          .map(() => '?')
+          .join(', ')})`
+      )
+        .bind(...Object.values(r))
+        .run();
+    await t.env.DB.prepare('UPDATE agents SET deleted_at = 1').run();
+    expect(await run()).toMatchObject({ ok: false, status: 409 });
+    expect(decider.calls).toEqual([]);
+    expect(await flagState(t, person.id)).toMatchObject({ approved_at: null });
+  });
+
   it('needs the person to have push rights', async () => {
     const { t, admin, person } = await questionedPull();
     await addMember(t, admin, 'bob');
