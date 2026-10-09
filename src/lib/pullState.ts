@@ -76,6 +76,8 @@ export function reasonText(r: PullReason): string {
         : 'the review failed';
     case 'needs_approval':
       return 'no agent reviewed it: a person approves it';
+    case 'merging_paused':
+      return 'Merging is paused';
     default:
       return r.kind.replace(/_/g, ' ');
   }

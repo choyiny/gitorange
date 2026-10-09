@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { blocking, reasonText, STATE_LABEL } from './pullState';
+import { blocking, reasonText, STATE_LABEL, stateText } from './pullState';
 
 describe('pull state text', () => {
   it('names each state as the spec does', () => {
@@ -50,6 +50,25 @@ describe('pull state text', () => {
     ).toBe('must account for #28');
     expect(reasonText({ kind: 'stacked_on', pr: 28 })).toBe('stacked on #28');
     expect(reasonText({ kind: 'something_new' })).toBe('something new');
+  });
+
+  it('says merging is paused in plain English, and counts it as holding the pull request', () => {
+    expect(reasonText({ kind: 'merging_paused' })).toBe('Merging is paused');
+    expect(blocking({ kind: 'merging_paused' })).toBe(true);
+  });
+
+  it('gives the pause as the reason a paused pull request waits', () => {
+    expect(
+      stateText({ state: 'waiting', reasons: [{ kind: 'merging_paused' }] })
+        .reason
+    ).toBe('Merging is paused');
+    // Stacking only informs: the pause is still the first thing that holds it.
+    expect(
+      stateText({
+        state: 'waiting',
+        reasons: [{ kind: 'stacked_on', pr: 3 }, { kind: 'merging_paused' }],
+      }).reason
+    ).toBe('Merging is paused');
   });
 
   it('omits a missing number instead of printing NaN', () => {

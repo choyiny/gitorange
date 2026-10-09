@@ -15,65 +15,53 @@ import { useCurrentUser } from '@/lib/auth';
 import type { RecentRepo } from '@/lib/recentRepos';
 import {
   CLEARED,
+  EMPTY_RESULTS,
+  SEARCH_DEBOUNCE_MS,
   blurCloses,
   flattenSections,
   hitsFromResults,
   jumpHits,
-  localResults,
   pageHits,
   searchKey,
   searchSections,
+  searchTerm,
   type SearchHit,
   type SearchResults,
   type SearchState,
 } from '@/lib/searchKeys';
+import { searchQueryOptions } from '@/lib/searchQuery';
 import { api, qk } from '@/lib/uiApi';
 import type { ShellRepo } from './AppShell';
 import { CrewIcon } from './icons';
 
+/** `value`, once it has stopped changing for `ms`. */
+function useDebounced<T>(value: T, ms: number): T {
+  const [debounced, setDebounced] = useState(value);
+  useEffect(() => {
+    const timer = setTimeout(() => setDebounced(value), ms);
+    return () => clearTimeout(timer);
+  }, [value, ms]);
+  return debounced;
+}
+
 /**
- * Where results come from. Until `GET /api/search` exists this filters what the app already loads (repositories,
- * agents, people, the current repository's branches); crew redesign C0 replaces this one function with
- * `api.search(q, repo)`, which also finds pull requests and files.
+ * Where results come from: `GET /api/search`, scoped to the current repository when inside one (which also finds
+ * its branches and files). The query is debounced; the previous results stay up while the next ones load (within
+ * the same scope only), and a superseded request is aborted through the query's signal.
  */
 function useSearchResults(
   q: string,
   repo: ShellRepo | null,
   enabled: boolean
-): { results: SearchResults; pending: boolean } {
-  const repos = useQuery({ queryKey: qk.repos, queryFn: api.repos, enabled });
-  const agents = useQuery({
-    queryKey: qk.agents,
-    queryFn: api.agents,
-    enabled,
-  });
-  const people = useQuery({
-    queryKey: qk.members,
-    queryFn: api.members,
-    enabled,
-  });
-  const results = useMemo(
-    () =>
-      localResults(q, {
-        repos: repos.data ?? [],
-        agents: (agents.data ?? [])
-          .filter((a) => !a.deletedAt)
-          .map((a) => ({
-            username: a.username,
-            name: a.name,
-            // Sent since crew redesign B1; typed in uiApi by C0.
-            color: (a as { color?: string | null }).color,
-          })),
-        people: people.data ?? [],
-        repo: repo
-          ? { fullName: repo.fullName, branches: repo.branches }
-          : null,
-      }),
-    [q, repos.data, agents.data, people.data, repo]
-  );
+): { results: SearchResults; pending: boolean; failed: boolean } {
+  const wanted = searchTerm(q);
+  const term = useDebounced(wanted, SEARCH_DEBOUNCE_MS);
+  const scope = repo?.fullName ?? null;
+  const search = useQuery(searchQueryOptions(term, scope, enabled));
   return {
-    results,
-    pending: repos.isPending || agents.isPending || people.isPending,
+    results: search.data ?? EMPTY_RESULTS,
+    pending: wanted !== '' && (wanted !== term || search.isFetching),
+    failed: search.isError,
   };
 }
 
@@ -135,7 +123,7 @@ export function GlobalSearch({
     queryFn: api.repos,
     enabled: open,
   });
-  const { results, pending } = useSearchResults(state.q, repo, open);
+  const { results, pending, failed } = useSearchResults(state.q, repo, open);
   const recentNames = recent.map((r) => r.fullName).join('\n');
   const hits = useMemo(
     () =>
@@ -278,7 +266,11 @@ export function GlobalSearch({
         >
           {sections.length === 0 ? (
             <p className="gs-empty" role="status">
-              {pending ? 'Searching…' : `No results for “${state.q.trim()}”.`}
+              {pending
+                ? 'Searching…'
+                : failed
+                  ? 'Search isn’t available right now.'
+                  : `No results for “${state.q.trim()}”.`}
             </p>
           ) : (
             sections.map((s) => (
