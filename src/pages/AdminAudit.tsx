@@ -22,8 +22,8 @@ type Filter = AuditCategory | 'all';
  */
 export default function AdminAudit() {
   const log = useInfiniteQuery({
-    queryKey: qk.adminAudit,
-    queryFn: ({ pageParam }) => api.adminAudit(pageParam),
+    queryKey: qk.adminAudit(),
+    queryFn: ({ pageParam }) => api.adminAudit(pageParam ?? undefined),
     initialPageParam: null as string | null,
     getNextPageParam: (last) => last.nextCursor,
   });

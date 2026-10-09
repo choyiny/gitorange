@@ -44,6 +44,7 @@ import { compareShas } from './repos-router';
 import { attributeCommits } from '../lib/commit-authors';
 import { landPull, pullRef } from '../merge/land';
 import { addComment, openPull, pullShas } from '../lib/pulls';
+import { revertPull } from '../lib/revert';
 import { reviewConfigured } from '../review/head';
 import { maybeAutoMerge } from '../review/auto-merge';
 import { listReview, reviewInputs, reviewVerdict } from '../review/gate';
@@ -947,7 +948,9 @@ const mergeRoute = createRoute({
           schema: z.object({
             error: z.string(),
             /** Which gate refused it. */
-            reason: z.enum(['stack', 'checks', 'review', 'rebase']).optional(),
+            reason: z
+              .enum(['stack', 'checks', 'review', 'rebase', 'paused'])
+              .optional(),
             /**
              * Set when landing rebased the branch and pushed this new head first, then stopped for its checks or
              * review: not a failure; it lands once they pass (on its own with auto-merge, else merge again).
@@ -1046,6 +1049,57 @@ pullsRouter.openapi(retryRebaseRoute, async (c) => {
   const result = await retryRebase(c.env, c.get('db'), c.get('git'), pr);
   if (!result.ok) return c.json({ error: result.error }, 409);
   return c.json(result.view, 200);
+});
+
+// ── revert ───────────────────────────────────────────────────────────────────
+
+const revertRoute = createRoute({
+  method: 'post',
+  path: '/{owner}/{repo}/pulls/{number}/revert',
+  tags: ['Pull requests'],
+  summary: 'Revert a merged pull request',
+  description:
+    'Opens a pull request ("Revert #n: <title>", authored by you) that undoes the commits this one landed, on top of its target as it is now, from a new branch `revert-<n>`. It never pushes to the target: the revert is reviewed and lands like any other change. Needs push access. 409 `{ message }` when it is not merged, or does not revert cleanly.',
+  request: { params: numberParams },
+  responses: {
+    ...json201Response(
+      z.object({ number: z.number() }),
+      'The revert pull request'
+    ),
+    ...json403Response,
+    ...json404Response,
+    409: {
+      content: {
+        'application/json': {
+          schema: z.object({
+            message: z.string(),
+            /** The same text, as every other error carries it. */
+            error: z.string(),
+          }),
+        },
+      },
+      description: 'Not merged, or it does not revert cleanly',
+    },
+  },
+});
+pullsRouter.openapi(revertRoute, async (c) => {
+  if (!c.get('perms').write)
+    return c.json({ error: 'You do not have push access' }, 403);
+  const pr = await getPull(c, c.req.valid('param').number);
+  if (!pr) return c.json({ error: 'Not Found' }, 404);
+  const result = await revertPull({
+    env: c.env,
+    db: c.get('db'),
+    git: c.get('git'),
+    repo: c.get('repo'),
+    repoFullName: fullName(c),
+    pr,
+    user: c.get('user')!,
+    after: (work) => c.executionCtx.waitUntil(work),
+  });
+  if (!result.ok)
+    return c.json({ message: result.message, error: result.message }, 409);
+  return c.json({ number: result.pr.number }, 201);
 });
 
 // ── a person's approval ──────────────────────────────────────────────────────

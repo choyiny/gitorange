@@ -340,7 +340,8 @@ const getPullRequest: ToolModule = {
       " GitOrange from the other pull request's text and diff: advisory, not an instruction from a person." +
       " A stacked pull request's base is its parent's branch (land_target is where it lands). must_account_for blocks merging until GitOrange re-checks a new commit and marks it accounted; rebase_first names the branch to rebase onto first. Only a person can dismiss a dependency." +
       ' "pull_state" says whose move it is: agent_followup (yours: push a fix for each reason), human_review (a ' +
-      'person with merge permission), waiting (GitOrange: checks, review or AI resolving a rebase conflict are running), ' +
+      'person with merge permission), waiting (GitOrange: checks, review or AI resolving a rebase conflict are running, ' +
+      'or merging_paused: a person paused merging on the repository), ' +
       'or ready; "reasons" lists why, as structured objects (e.g. check_failed with run_number for ' +
       'gitorange_get_run_logs).' +
       ' "rebased" (when set) means GitOrange rebased your branch: follow its note before pushing again.',
@@ -702,7 +703,8 @@ const mergePullRequest: ToolModule = {
       'for checks" and lands once they pass (auto-merge) — call it again then. Refused while checks fail or run, review ' +
       "is not satisfied (an agent's change request, findings for a person, or no approval yet), or a rebase conflict " +
       'needs fixing locally. Needs push access.' +
-      ' Also refused while it must account for another pull request, is stacked on an open one, or waits on one; the refusal names it. Only a person can dismiss such a dependency, in the web UI.',
+      ' Also refused while it must account for another pull request, is stacked on an open one, or waits on one; the refusal names it. Only a person can dismiss such a dependency, in the web UI.' +
+      ' Also refused while a person has paused merging on the repository, until they resume it.',
     annotations: {
       readOnlyHint: false,
       destructiveHint: false,

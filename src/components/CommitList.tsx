@@ -1,15 +1,12 @@
 import { Link } from 'react-router-dom';
-import { GitCommitIcon } from '@primer/octicons-react';
-import { useState } from 'react';
+import { CodeIcon, GitCommitIcon } from '@primer/octicons-react';
+import { useMemo, useState } from 'react';
 import type { Commit, CommitRuns, RepoDetail } from '@/lib/uiApi';
-import {
-  dayLabel,
-  firstLine,
-  restOfMessage,
-  shortSha,
-  timeAgo,
-} from '@/lib/format';
+import { shortSha, timeAgo } from '@/lib/format';
+import { parseCommitMessage } from '@/lib/commitMessage';
+import { groupByDay } from '@/lib/commits';
 import { CommitAuthor } from './CommitAuthor';
+import { CoAuthored, CommitBody } from './CommitBody';
 import { CopyButton } from './CopyButton';
 import { ChecksBadge, useCommitStatuses } from './Checks';
 
@@ -25,56 +22,60 @@ function CommitRow({
   checks?: CommitRuns;
 }) {
   const [expanded, setExpanded] = useState(false);
-  const rest = restOfMessage(c.message);
+  const message = useMemo(() => parseCommitMessage(c.message), [c.message]);
+  const more = !!message.body || message.trailers.length > 0;
   return (
-    <li className="Box-row d-flex flex-items-start" style={{ gap: 12 }}>
-      <div className="flex-1" style={{ minWidth: 0 }}>
-        <div className="d-flex flex-items-center" style={{ gap: 6 }}>
-          <Link
-            to={`${base}/commit/${c.hash}`}
-            className="text-bold color-fg-default f5 text-truncate"
-          >
-            {firstLine(c.message)}
+    <li>
+      <div className="cl-main">
+        <div className="cl-top">
+          <Link to={`${base}/commit/${c.hash}`} className="cl-subj">
+            {message.subject}
           </Link>
           {repo && <ChecksBadge repo={repo} checks={checks} />}
-          {rest && (
+          {more && (
             <button
+              type="button"
               className="ellipsis-expander"
+              aria-expanded={expanded}
               onClick={() => setExpanded(!expanded)}
-              aria-label="Show description"
+              aria-label={
+                expanded
+                  ? 'Hide the rest of the message'
+                  : 'Show the rest of the message'
+              }
             >
               …
             </button>
           )}
         </div>
-        {expanded && (
-          <pre
-            className="f6 color-fg-muted mt-2"
-            style={{ whiteSpace: 'pre-wrap' }}
-          >
-            {rest}
-          </pre>
-        )}
-        <div
-          className="f6 color-fg-muted mt-1 d-flex flex-items-center flex-wrap"
-          style={{ columnGap: 6, rowGap: 2 }}
-        >
-          <CommitAuthor commit={c} size={16} />
+        {expanded && <CommitBody message={message} />}
+        <p className="cl-by small muted">
+          <CommitAuthor commit={c} size={16} repo={repo} />
+          <CoAuthored trailers={message.trailers} />
           <span className="no-wrap">committed {timeAgo(c.committedAt)}</span>
-        </div>
+        </p>
       </div>
-      <div className="BtnGroup d-flex">
+      <div className="cl-side">
         <Link
           to={`${base}/commit/${c.hash}`}
-          className="btn btn-sm BtnGroup-item text-mono-sm"
+          className="shabtn mono"
+          title="Open this commit"
         >
           {shortSha(c.hash)}
         </Link>
         <CopyButton
           text={c.hash}
-          className="btn btn-sm BtnGroup-item"
+          className="btn small quiet"
           label="Copy full SHA"
         />
+        <Link
+          to={`${base}/tree/${c.hash}`}
+          className="btn small quiet"
+          aria-label={`Browse the code at ${shortSha(c.hash)}`}
+          title="Browse the code at this commit"
+        >
+          <CodeIcon />
+        </Link>
       </div>
     </li>
   );
@@ -95,24 +96,14 @@ export function CommitList({
     repo,
     commits.map((c) => c.hash)
   );
-  const groups: { day: string; commits: Commit[] }[] = [];
-  for (const c of commits) {
-    const day = dayLabel(c.committedAt);
-    const last = groups[groups.length - 1];
-    if (last?.day === day) last.commits.push(c);
-    else groups.push({ day, commits: [c] });
-  }
   return (
-    <div>
-      {groups.map((g) => (
-        <div key={g.day} className="mb-4">
-          <h3
-            className="f5 text-normal color-fg-muted d-flex flex-items-center mb-2"
-            style={{ gap: 8 }}
-          >
+    <div className="commit-days">
+      {groupByDay(commits).map((g) => (
+        <section key={g.day} className="section">
+          <h3 className="daylabel">
             <GitCommitIcon /> Commits on {g.day}
           </h3>
-          <ul className="Box">
+          <ul className="commitlist panel">
             {g.commits.map((c) => (
               <CommitRow
                 key={c.hash}
@@ -123,7 +114,7 @@ export function CommitList({
               />
             ))}
           </ul>
-        </div>
+        </section>
       ))}
     </div>
   );

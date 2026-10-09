@@ -1,0 +1,513 @@
+/* The code browser: repository home, directories, files, README, and the setup steps of an empty repository.
+   Ported from docs/design/crew/repo.css (Code). Tokens only. */
+
+.code-page {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 22px;
+  min-width: 0;
+}
+.code-page .grow {
+  flex: 1;
+}
+
+/* ---------- Toolbar: branch, branches, branch map, search, clone ---------- */
+.codebar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.branch-count {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+}
+.codebar .btn > b {
+  color: var(--ink);
+}
+.codebar .css-truncate-target {
+  max-width: 160px;
+}
+
+/* ---------- Path ---------- */
+.pathbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 4px;
+  font-size: 15px;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.pathbar a {
+  color: var(--accent);
+}
+.pathbar .sep {
+  color: var(--muted);
+}
+.pathbar-part {
+  display: inline-flex;
+  gap: 4px;
+}
+
+/* ---------- Files ---------- */
+.filetable,
+.filebox,
+.readme {
+  min-width: 0;
+}
+.ft-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 14px;
+  background: var(--surface-2);
+  border-bottom: 1px solid var(--line);
+  border-radius: var(--r) var(--r) 0 0;
+  font-size: 13px;
+  min-width: 0;
+}
+.ft-head .authors {
+  flex: 0 1 auto;
+  min-width: 0;
+}
+.authors {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+.ft-msg {
+  flex: 1;
+  min-width: 0;
+  color: var(--muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+a.ft-msg:hover {
+  color: var(--accent);
+}
+.ft-meta {
+  flex: none;
+  color: var(--muted);
+  font-size: 12.5px;
+  white-space: nowrap;
+}
+.ft-meta .ft-sha {
+  color: var(--muted);
+}
+.ft-count {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  color: var(--ink-2);
+  font-size: 12.5px;
+}
+.ft {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13.5px;
+  table-layout: fixed;
+}
+.ft td {
+  padding: 7px 14px;
+  border-top: 1px solid var(--line);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.ft tr:first-child td {
+  border-top: 0;
+}
+.ft tr:hover {
+  background: var(--surface-2);
+}
+.ft tr:last-child td:first-child {
+  border-bottom-left-radius: var(--r);
+}
+.ft tr:last-child td:last-child {
+  border-bottom-right-radius: var(--r);
+}
+.ft-col-name {
+  width: 34%;
+}
+.ft-col-date {
+  width: 136px;
+}
+.ft-name {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--ink);
+}
+.ft-name:hover {
+  color: var(--accent);
+}
+.ft-name .icon.dir {
+  color: #54aeff;
+}
+.ft-name .icon.file {
+  color: var(--muted);
+}
+.ft-subj a {
+  color: var(--muted);
+}
+.ft-subj a:hover {
+  color: var(--accent);
+}
+.ft-subj .sk {
+  display: block;
+  height: 10px;
+}
+.ft-date {
+  text-align: right;
+  color: var(--muted);
+  font-size: 12.5px;
+}
+.ft-empty {
+  color: var(--muted);
+}
+
+/* ---------- README and rendered Markdown ---------- */
+.readme-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 16px;
+  border-bottom: 1px solid var(--line);
+  font-size: 13.5px;
+}
+.readme-head > svg {
+  color: var(--muted);
+}
+.md {
+  padding: 18px 28px 26px;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.md .markdown-body {
+  font-family: var(--font);
+  font-size: 14.5px;
+  line-height: 1.65;
+  color: var(--ink);
+  background: transparent;
+}
+.md .markdown-body a {
+  color: var(--accent);
+}
+.md .markdown-body table {
+  display: block;
+  max-width: 100%;
+  overflow-x: auto;
+}
+.readme-text {
+  margin: 0;
+  padding: 18px 28px 26px;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  font-family: var(--mono);
+  font-size: 12.5px;
+}
+/* A leading YAML block, such as an agent's AGENT.md settings. */
+.frontmatter {
+  margin-bottom: 16px;
+  border: 1px solid var(--line);
+  border-radius: var(--r-sm);
+  background: var(--surface-2);
+}
+.frontmatter summary {
+  padding: 6px 12px;
+  cursor: pointer;
+  color: var(--muted);
+  font-size: 12.5px;
+  font-weight: 600;
+}
+.frontmatter pre {
+  margin: 0;
+  padding: 4px 12px 10px;
+  overflow-x: auto;
+  font-family: var(--mono);
+  font-size: 12px;
+  line-height: 1.55;
+  color: var(--ink-2);
+}
+
+/* ---------- A file ---------- */
+.fb-bar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 14px;
+  border-bottom: 1px solid var(--line);
+  flex-wrap: wrap;
+}
+.fb-stat {
+  color: var(--muted);
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-family: var(--mono);
+}
+.fb-stat b {
+  color: var(--ink);
+  font-weight: 600;
+}
+.lfs-label {
+  margin-left: 8px;
+  padding: 0 8px;
+  border: 1px solid var(--line-2);
+  border-radius: 99px;
+  font-family: var(--font);
+  font-size: 11.5px;
+  font-weight: 600;
+  line-height: 20px;
+}
+.codeview {
+  overflow-x: auto;
+  padding: 6px 0;
+}
+.code-t {
+  border-collapse: collapse;
+  width: 100%;
+  font-family: var(--mono);
+  font-size: 12.5px;
+  line-height: 20px;
+  tab-size: 4;
+}
+.code-t .ln {
+  width: 1%;
+  min-width: 50px;
+  padding: 0 12px 0 16px;
+  text-align: right;
+  vertical-align: top;
+  user-select: none;
+}
+.code-t .ln a {
+  color: var(--faint);
+}
+.code-t .ln a:hover {
+  color: var(--ink);
+  text-decoration: none;
+}
+.code-t .lc {
+  padding: 0 16px 0 8px;
+  white-space: pre;
+  color: var(--ink);
+}
+.code-t tr:hover .lc,
+.code-t tr:hover .ln {
+  background: color-mix(in srgb, var(--accent) 6%, transparent);
+}
+/* The lines a #L12 or #L12-L20 link points at. */
+.code-t tr.hit .lc,
+.code-t tr.hit .ln {
+  background: color-mix(in srgb, var(--warn) 20%, transparent);
+}
+.code-t tr.hit .ln {
+  box-shadow: inset 2px 0 0 var(--warn);
+}
+.fb-note {
+  padding: 36px 24px;
+  text-align: center;
+  color: var(--muted);
+}
+.fb-image {
+  max-width: 100%;
+  height: auto;
+}
+
+/* ---------- Beside the files ---------- */
+.about {
+  min-width: 0;
+}
+.about-agent {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  color: var(--ink);
+}
+.about-agent > span:last-child {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+}
+.agentstack {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+/* ---------- Clone menu ---------- */
+.select-panel.clone-menu {
+  max-width: calc(100vw - 32px);
+}
+.clone-body {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 10px;
+  padding: 12px 14px;
+}
+.clone-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+.clone-url {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.clone-url input {
+  flex: 1;
+  min-width: 0;
+}
+
+/* ---------- A prompt for a coding agent ---------- */
+.agent-prompt {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 8px;
+  min-width: 0;
+}
+.promptbox {
+  border: 1px solid var(--line);
+  border-radius: var(--r-sm);
+  background: var(--surface-2);
+  overflow: hidden;
+}
+.promptbox-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 2px 6px 2px 12px;
+  border-bottom: 1px solid var(--line);
+}
+.promptbox-text {
+  margin: 0;
+  padding: 12px 14px;
+  max-height: 320px;
+  overflow: auto;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  font-family: var(--mono);
+  font-size: 12px;
+  line-height: 1.55;
+  color: var(--ink);
+  background: transparent;
+  border: 0;
+}
+.promptbox-text.compact {
+  max-height: 220px;
+}
+.agent-prompt-hint {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+}
+
+/* ---------- An empty repository ---------- */
+.setup-steps {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 16px;
+  max-width: 920px;
+  min-width: 0;
+}
+.setup-step {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 10px;
+  padding: 16px 18px;
+  min-width: 0;
+}
+.setup-step h2 {
+  font-size: 15px;
+  font-weight: 600;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.setup-step.setup-agent {
+  background: var(--accent-tint);
+  border-color: var(--accent-tint-2);
+}
+.setup-step .seg {
+  justify-self: start;
+}
+.codeblock {
+  position: relative;
+}
+.codeblock pre {
+  margin: 0;
+  padding: 12px 52px 12px 14px;
+  overflow-x: auto;
+  border: 1px solid var(--line);
+  border-radius: var(--r-sm);
+  background: var(--surface-2);
+  font-family: var(--mono);
+  font-size: 12.5px;
+  line-height: 1.55;
+  color: var(--ink);
+}
+.codeblock .btn {
+  position: absolute;
+  top: 6px;
+  right: 6px;
+}
+
+/* ---------- Narrow screens ---------- */
+@media (max-width: 767.98px) {
+  .md {
+    padding: 14px 16px 20px;
+  }
+  .readme-text {
+    padding: 14px 16px 20px;
+  }
+  .ft-col-date {
+    width: 112px;
+  }
+}
+@media (max-width: 543.98px) {
+  /* The last-commit message column goes; the name and the age need the room. */
+  .ft-col-msg,
+  td.ft-subj {
+    display: none;
+  }
+  .ft-col-name {
+    width: auto;
+  }
+  .ft td {
+    padding: 8px 12px;
+  }
+  .ft-head {
+    padding: 8px 12px;
+    gap: 8px;
+  }
+  .ft-meta .ft-sha,
+  .ft-meta .ft-sha-dot,
+  .ft-count-label {
+    display: none;
+  }
+  .code-t .ln {
+    min-width: 36px;
+    padding: 0 8px 0 10px;
+  }
+  /* The clone menu spans the screen, just below its button. */
+  .select-panel.clone-menu {
+    position: fixed;
+    left: 16px !important;
+    right: 16px !important;
+    width: auto !important;
+    max-width: none;
+  }
+  .setup-step {
+    padding: 14px;
+  }
+}

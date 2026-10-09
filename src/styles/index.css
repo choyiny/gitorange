@@ -8,4 +8,8 @@
 @import './pages/account.css';
 @import './pages/admin.css';
 @import './pages/auth.css';
+@import './pages/actions.css';
+@import './pages/insights.css';
+@import './pages/code.css';
+@import './pages/commits.css';
 @import './legacy.css';

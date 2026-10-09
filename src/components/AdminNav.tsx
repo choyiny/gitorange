@@ -16,6 +16,9 @@ export function AdminNav() {
         <NavLink to="/admin/usage" className={cls}>
           Usage &amp; cost
         </NavLink>
+        <NavLink to="/admin/audit" className={cls}>
+          Audit log
+        </NavLink>
       </div>
     </nav>
   );

@@ -12,12 +12,15 @@ export function BranchSelect({
   onSelect,
   label,
   defaultBranch,
+  triggerClassName = 'btn',
 }: {
   branches: { name: string }[];
   current: string;
   onSelect: (name: string) => void;
   label?: string;
   defaultBranch?: string;
+  /** The trigger's classes (design-system modifiers such as `btn small`). */
+  triggerClassName?: string;
 }) {
   const [filter, setFilter] = useState('');
   const shown = branches.filter((b) =>
@@ -25,10 +28,13 @@ export function BranchSelect({
   );
   return (
     <Dropdown
-      trigger={(_, toggle) => (
+      trigger={(open, toggle) => (
         <button
-          className="btn d-inline-flex flex-items-center"
+          type="button"
+          className={`${triggerClassName} d-inline-flex flex-items-center`}
           style={{ gap: 6, maxWidth: 260 }}
+          aria-haspopup="true"
+          aria-expanded={open}
           onClick={toggle}
         >
           <GitBranchIcon className="color-fg-muted" />

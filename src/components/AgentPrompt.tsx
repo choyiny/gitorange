@@ -21,9 +21,9 @@ export function AgentPrompt({
       ? importFromGitHubPrompt(repo, origin, appName)
       : agentPrompt(repo, origin, appName);
   return (
-    <div>
+    <div className="agent-prompt">
       {!compact && (
-        <p className="f5 color-fg-muted mb-2">
+        <p className="small muted">
           No command line needed. Paste this into{' '}
           <a
             href="https://claude.com/claude-code"
@@ -38,31 +38,24 @@ export function AgentPrompt({
             : 'and it will set up the repository on your computer, including Git LFS for large files, then help you make changes and open pull requests.'}
         </p>
       )}
-      <div className="Box">
-        <div className="Box-header d-flex flex-items-center flex-justify-between py-1 px-2">
-          <span className="f6 color-fg-muted text-mono">Prompt</span>
+      <div className="promptbox">
+        <div className="promptbox-head">
+          <span className="small muted mono">Prompt</span>
           <CopyButton
             text={prompt}
             label="Copy prompt"
-            className="btn btn-sm btn-invisible"
+            className="btn small quiet"
           />
         </div>
         <pre
-          className="p-3 f6 text-mono m-0"
-          style={{
-            whiteSpace: 'pre-wrap',
-            maxHeight: compact ? 220 : 320,
-            overflowY: 'auto',
-          }}
+          className={compact ? 'promptbox-text compact' : 'promptbox-text'}
+          tabIndex={0}
         >
           {prompt}
         </pre>
       </div>
       {compact && (
-        <p
-          className="f6 color-fg-muted mt-2 mb-0 d-flex flex-items-center"
-          style={{ gap: 4 }}
-        >
+        <p className="small muted agent-prompt-hint">
           <SparkleFillIcon size={12} /> Paste into Claude Code or another coding
           agent.
         </p>

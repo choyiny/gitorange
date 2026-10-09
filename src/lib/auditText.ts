@@ -419,12 +419,18 @@ export function auditParts(
           other !== null && pull(other)
         );
       case 'ordered': {
+        // Recorded on the pull request that lands later (`e.pull`); `before` lands first; `for_pr` is a third
+        // pull request that builds on both.
         const before = num(d.before);
+        const forPr = num(d.for_pr);
         return say(
           ' set ',
-          pull(num(d.for_pr) ?? e.pull),
+          pull(),
           before !== null ? ' to land after ' : ' to land in order',
-          before !== null && pull(before)
+          before !== null && pull(before),
+          forPr !== null && forPr !== e.pull && ', so ',
+          forPr !== null && forPr !== e.pull && pull(forPr),
+          forPr !== null && forPr !== e.pull && ' can build on both'
         );
       }
       case 'must_account_for':
@@ -473,7 +479,7 @@ export function auditText(e: AuditEvent, opts: AuditOptions = {}): string {
 
 /** A value from a settings change, as a few words. */
 function show(v: unknown): string {
-  if (v === null || v === undefined) return 'none';
+  if (v === null || v === undefined || v === '') return 'none';
   if (Array.isArray(v)) return v.length ? v.map(String).join(', ') : 'none';
   if (typeof v === 'boolean') return v ? 'on' : 'off';
   return String(v);
@@ -508,6 +514,8 @@ export function auditDetail(e: AuditEvent): string | null {
       return join(title, labelled('Taught', d.teach));
     case 'finding.assigned':
       return join(title);
+    case 'merging.paused':
+      return labelled('Reason', d.reason);
     case 'finding.undone': {
       const undid = str(d.undid);
       return join(title, undid && UNDID[undid] && `Undid ${UNDID[undid]}`);

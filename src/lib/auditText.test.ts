@@ -617,14 +617,24 @@ describe('the pull request timeline in the same log', () => {
       'System unstacked #74 from #73',
     ],
     [
-      'ordered',
+      'ordered: recorded on the pull request that lands later',
       {
         actor: system,
         action: 'pull.ordered',
-        pull: 74,
-        data: { before: 73, for_pr: 74 },
+        pull: 73,
+        data: { before: 72, for_pr: 74 },
       },
-      'System set #74 to land after #73',
+      'System set #73 to land after #72, so #74 can build on both',
+    ],
+    [
+      'ordered without a third pull request',
+      {
+        actor: system,
+        action: 'pull.ordered',
+        pull: 73,
+        data: { before: 72, for_pr: 73 },
+      },
+      'System set #73 to land after #72',
     ],
     [
       'must account for',
@@ -865,6 +875,31 @@ describe('the second line', () => {
         })
       )
     ).toBe('Never expires');
+  });
+
+  it('gives the reason merging was paused', () => {
+    expect(
+      auditDetail(
+        ev({
+          action: 'merging.paused',
+          data: { reason: 'Freeze for the demo' },
+        })
+      )
+    ).toBe('Reason: Freeze for the demo');
+    expect(
+      auditDetail(ev({ action: 'merging.paused', data: { reason: '' } }))
+    ).toBeNull();
+  });
+
+  it('shows an empty value as none', () => {
+    expect(
+      auditDetail(
+        ev({
+          action: 'settings.changed',
+          data: { changes: { description: { from: '', to: 'A code host' } } },
+        })
+      )
+    ).toBe('Description: none → A code host');
   });
 
   it('has nothing to add to a plain event', () => {

@@ -66,7 +66,9 @@ export type Reason =
   /** An agent's review (null: the review of this commit) failed: fix the agent, retry, or remove it. */
   | { kind: 'agent_review_failed'; agent: string | null; error: string | null }
   /** No agent was requested: a person approves the commit. */
-  | { kind: 'needs_approval' };
+  | { kind: 'needs_approval' }
+  /** Someone paused merging on the repository: nothing lands (button or auto-merge) until someone resumes it. */
+  | { kind: 'merging_paused' };
 export type ReasonKind = Reason['kind'];
 
 // Adding a kind to Reason without listing it here is a type error.
@@ -87,6 +89,7 @@ const KINDS: Record<ReasonKind, true> = {
   agent_changes_requested: true,
   agent_review_failed: true,
   needs_approval: true,
+  merging_paused: true,
 };
 export const REASON_KINDS = Object.keys(KINDS) as [ReasonKind, ...ReasonKind[]];
 
@@ -113,6 +116,8 @@ export function reasonState(r: Reason): PullStateName | null {
     case 'resolution_running':
     case 'stack_checking':
     case 'agent_reviewing':
+    // Until someone resumes merging.
+    case 'merging_paused':
       return 'waiting';
     case 'stacked_on':
     case 'waits_on':

@@ -1,0 +1,515 @@
+/* Actions: workflow runs, run and job pages, agent runs. Ported from docs/design/crew/repo.css (Actions) and
+   views.css (steps). Tokens only, except the log, which is dark in every theme (as on GitHub). */
+
+.act-headline {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-width: 0;
+}
+.act-headline .ph-title {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+/* ---------- Tabs and filters ---------- */
+.act-tabs {
+  display: flex;
+  gap: 4px;
+  border-bottom: 1px solid var(--line);
+}
+.view .act-tabs a {
+  padding: 8px 12px;
+  font-size: 13.5px;
+  color: var(--ink-2);
+  border-bottom: 2px solid transparent;
+  margin-bottom: -1px;
+}
+.view .act-tabs a:hover {
+  color: var(--ink);
+  text-decoration: none;
+}
+.view .act-tabs a[aria-current='page'] {
+  color: var(--ink);
+  font-weight: 600;
+  border-bottom-color: var(--accent);
+}
+.act-pills {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.view .act-pills a {
+  border: 1px solid var(--line);
+  background: var(--surface);
+  padding: 4px 12px;
+  border-radius: 999px;
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--ink-2);
+}
+.view .act-pills a:hover {
+  background: var(--surface-3);
+  color: var(--ink);
+  text-decoration: none;
+}
+.view .act-pills a[aria-current='true'] {
+  background: var(--ink);
+  color: var(--bg);
+  border-color: var(--ink);
+}
+
+/* ---------- Run lists (workflow runs and agent runs) ---------- */
+.act-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+.act-row {
+  display: grid;
+  grid-template-columns: 32px minmax(0, 1fr) auto;
+  gap: 12px;
+  align-items: center;
+  padding: 11px 14px;
+  border-top: 1px solid var(--line);
+}
+.act-row:first-child {
+  border-top: 0;
+}
+.act-lead {
+  display: grid;
+  place-items: center;
+}
+.act-main {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+}
+.view a.act-title {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--ink);
+  overflow-wrap: anywhere;
+}
+.act-who {
+  color: var(--ink-2);
+  font-weight: 600;
+}
+.act-meta {
+  display: grid;
+  justify-items: end;
+  gap: 4px;
+  text-align: right;
+  white-space: nowrap;
+}
+.act-inline {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+.act-err {
+  color: var(--bad);
+  overflow-wrap: anywhere;
+}
+.act-branch {
+  background: var(--surface-3);
+  border-radius: 6px;
+  padding: 0 6px;
+  overflow-wrap: anywhere;
+}
+.act-glyph {
+  display: inline-grid;
+  place-items: center;
+  border-radius: 30%;
+  background: var(--surface-3);
+  color: var(--muted);
+  flex: none;
+}
+.act-pager {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+}
+
+/* ---------- Get started ---------- */
+.act-code {
+  border: 1px solid var(--line);
+  border-radius: var(--r-sm);
+  background: var(--surface-2);
+  overflow: hidden;
+}
+.act-code-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 4px 8px 4px 12px;
+  border-bottom: 1px solid var(--line);
+}
+.act-code pre {
+  margin: 0;
+  padding: 12px;
+  overflow-x: auto;
+  font-size: 12.5px;
+  line-height: 1.55;
+  background: none;
+  border: 0;
+  color: var(--ink);
+}
+
+/* ---------- A run ---------- */
+.act-error {
+  border: 1px solid var(--bad-line);
+  background: var(--bad-bg);
+  color: var(--bad);
+  border-radius: var(--r);
+  padding: 10px 14px;
+  font-size: 13.5px;
+  overflow-wrap: anywhere;
+}
+.act-error pre {
+  margin: 0;
+  white-space: pre-wrap;
+  font-family: inherit;
+  background: none;
+  border: 0;
+  padding: 0;
+  color: inherit;
+}
+.act-runlayout {
+  display: grid;
+  grid-template-columns: 260px minmax(0, 1fr);
+  gap: 16px;
+  align-items: start;
+}
+.act-joblist {
+  display: grid;
+  padding: 6px;
+  position: sticky;
+  top: 16px;
+}
+.view .act-joblist a {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 10px;
+  border-radius: 7px;
+  font-size: 13px;
+  color: var(--ink);
+}
+.view .act-joblist a:hover {
+  background: var(--surface-2);
+  text-decoration: none;
+}
+.view .act-joblist a[aria-current='page'] {
+  background: var(--accent-tint);
+  font-weight: 600;
+}
+.act-joblist-name {
+  flex: 1;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.act-joblist-h {
+  padding: 8px 10px 2px;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--muted);
+}
+.act-runmain {
+  display: grid;
+  gap: 16px;
+  min-width: 0;
+}
+.act-facts {
+  margin: 0;
+  display: grid;
+  gap: 10px;
+}
+.act-facts > div {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+}
+.act-facts dt {
+  font-size: 12.5px;
+  font-weight: 400;
+  color: var(--muted);
+}
+.act-facts dd {
+  margin: 0;
+  font-size: 14px;
+  overflow-wrap: anywhere;
+}
+.act-facts-row {
+  grid-template-columns: repeat(auto-fit, minmax(150px, max-content));
+  gap: 14px 36px;
+}
+.act-actor {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+}
+.act-actor .identicon {
+  border-radius: 50%;
+}
+.act-jobcards {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+  gap: 10px;
+}
+.view a.act-jobcard {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 12px;
+  color: var(--ink);
+}
+.view a.act-jobcard:hover {
+  border-color: var(--accent);
+  text-decoration: none;
+}
+.act-jobcard-name {
+  flex: 1;
+  min-width: 0;
+  font-weight: 600;
+  font-size: 13px;
+  overflow-wrap: anywhere;
+}
+
+/* ---------- The log: dark in every theme ---------- */
+.act-logbox {
+  overflow: hidden;
+  --log-bg: #0d1117;
+  --log-fg: #e6edf3;
+  --log-dim: #8b949e;
+  --log-num: #6e7681;
+  --log-hover: rgba(255, 255, 255, 0.05);
+  --log-err: #f85149;
+}
+.act-log-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 10px 14px;
+  border-bottom: 1px solid var(--line);
+}
+.act-log-head > div {
+  min-width: 0;
+}
+.act-log-head > span {
+  flex: none;
+  white-space: nowrap;
+}
+.act-log {
+  background: var(--log-bg);
+  color: var(--log-fg);
+  padding: 6px 0;
+}
+/* Primer's colour utilities are !important. */
+.act-log .color-fg-success {
+  color: #3fb950 !important;
+}
+.act-log .color-fg-danger {
+  color: var(--log-err) !important;
+}
+.act-log .color-fg-attention {
+  color: #d29922 !important;
+}
+.act-log .color-fg-muted {
+  color: var(--log-dim) !important;
+}
+.act-logstep-btn {
+  display: flex;
+  width: 100%;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 14px;
+  border: 0;
+  border-radius: 0;
+  background: none;
+  color: var(--log-fg);
+  font: inherit;
+  font-size: 13px;
+  text-align: left;
+  cursor: pointer;
+}
+.act-logstep-btn:hover {
+  background: var(--log-hover);
+}
+.act-logstep-btn:focus-visible {
+  outline: 2px solid #79c0ff;
+  outline-offset: -2px;
+}
+.act-chev {
+  display: inline-grid;
+  color: var(--log-dim);
+}
+.act-logstep-name {
+  flex: 1;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.act-logstep-time {
+  color: var(--log-dim);
+  font-size: 12px;
+  white-space: nowrap;
+}
+.act-log-lines {
+  padding: 4px 14px 10px 0;
+  font-family: var(--mono);
+  font-size: 12px;
+  line-height: 20px;
+}
+.act-line {
+  display: grid;
+  grid-template-columns: 56px minmax(0, 1fr);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.act-line.err {
+  color: var(--log-err);
+}
+.act-ln {
+  padding-right: 14px;
+  text-align: right;
+  color: var(--log-num);
+  user-select: none;
+}
+.act-log-note {
+  padding: 4px 14px 10px 42px;
+  color: var(--log-dim);
+  font-size: 12.5px;
+}
+
+/* ---------- An agent run ---------- */
+.act-steps {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+.act-step {
+  display: grid;
+  grid-template-columns: 24px 22px minmax(0, 1fr);
+  gap: 8px;
+  padding: 10px 14px;
+  border-top: 1px solid var(--line);
+  align-items: start;
+}
+.act-step:first-child {
+  border-top: 0;
+}
+.act-step.failed {
+  background: color-mix(in srgb, var(--bad) 6%, transparent);
+}
+.act-step-n {
+  line-height: 22px;
+  text-align: right;
+}
+.act-step-ic {
+  display: grid;
+  place-items: center;
+  height: 22px;
+}
+.act-step-body {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+}
+.act-step-head {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 4px 8px;
+  line-height: 22px;
+}
+.act-step-head b {
+  font-size: 13.5px;
+  overflow-wrap: anywhere;
+}
+.act-step-time {
+  margin-left: auto;
+  white-space: nowrap;
+}
+.act-step-model {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 2px 12px;
+}
+.act-decision {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.act-links {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.act-links .btn {
+  white-space: normal;
+  text-align: left;
+}
+.act-model {
+  display: inline-block;
+  margin: 0 6px 2px 0;
+  font-size: 12px;
+}
+.act-instance {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.act-instance code {
+  font-size: 12px;
+  overflow-wrap: anywhere;
+  min-width: 0;
+}
+
+/* ---------- Narrow screens ---------- */
+@media (max-width: 980px) {
+  .act-runlayout {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  /* The jobs become one scrolling row, so the log is not pushed below a tall list. */
+  .act-joblist {
+    position: static;
+    display: flex;
+    gap: 4px;
+    overflow-x: auto;
+  }
+  .act-joblist-h {
+    display: none;
+  }
+  .view .act-joblist a {
+    flex: none;
+    white-space: nowrap;
+  }
+  .act-joblist-name {
+    flex: none;
+  }
+}
+@media (max-width: 640px) {
+  .act-row {
+    grid-template-columns: 32px minmax(0, 1fr);
+  }
+  .act-meta {
+    grid-column: 2;
+    grid-auto-flow: column;
+    justify-content: start;
+    justify-items: start;
+    text-align: left;
+    gap: 12px;
+  }
+  .act-step {
+    grid-template-columns: 22px minmax(0, 1fr);
+  }
+  .act-step-n {
+    display: none;
+  }
+  .act-headline {
+    align-items: flex-start;
+  }
+}
