@@ -1,16 +1,31 @@
 <!doctype html>
-<html
-  lang="en"
-  data-color-mode="auto"
-  data-light-theme="light"
-  data-dark-theme="dark"
->
+<html lang="en">
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <link rel="icon" type="image/png" sizes="48x48" href="/favicon.png" />
     <link rel="apple-touch-icon" sizes="180x180" href="/apple-touch-icon.png" />
     <title>GitOrange</title>
+    <script>
+      // Applies the stored theme before the first paint, so there is no flash. Mirrors rootAttributes in
+      // src/lib/theme.ts (keys go-theme-id and go-mode); ThemeProvider keeps it applied afterwards.
+      (function () {
+        var root = document.documentElement;
+        var theme = null;
+        var mode = null;
+        try {
+          theme = localStorage.getItem('go-theme-id');
+          mode = localStorage.getItem('go-mode');
+        } catch (e) {}
+        if (mode !== 'light' && mode !== 'dark') mode = 'system';
+        root.setAttribute('data-skin', theme === 'github' ? 'dev' : 'hq');
+        root.setAttribute('data-color-mode', mode === 'system' ? 'auto' : mode);
+        root.setAttribute('data-light-theme', 'light');
+        root.setAttribute('data-dark-theme', 'dark');
+        if (mode === 'system') root.removeAttribute('data-theme');
+        else root.setAttribute('data-theme', mode);
+      })();
+    </script>
   </head>
   <body>
     <div id="root"></div>

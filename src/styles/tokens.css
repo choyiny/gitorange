@@ -1,0 +1,415 @@
+/* Design tokens. Every component reads these; Primer reads them through primer-bridge.css.
+   <html data-skin="hq|dev" data-theme="light|dark"> (no data-theme = follow the system), set by the boot script in
+   index.html and ThemeProvider. The chrome colourway sits on the shell: .app[data-chrome]. Orange belongs to the
+   GitOrange mark only. Ported from docs/design/crew/app.css and dev.css. */
+
+/* ---------- HQ skin, light (HQ's cool neutral scale, XY Space indigo) ---------- */
+:root {
+  --bg: #f2f4f7;
+  --surface: #ffffff;
+  --surface-2: #f8fafc;
+  --surface-3: #eef1f5;
+  --ink: #14171c;
+  --ink-2: #383e48;
+  --muted: #616873;
+  --faint: #99a1ae;
+  --line: #e6e9ee;
+  --line-2: #d3d8e0;
+  --line-3: #eef1f5;
+  --accent: #3730a3;
+  --accent-2: #282176;
+  --accent-tint: #eef0fb;
+  --accent-tint-2: #dcdff7;
+  --on-accent: #ffffff;
+  --ok: #0f7245;
+  --ok-bg: #e6f5ed;
+  --ok-line: #b6e0c8;
+  --warn: #96610b;
+  --warn-bg: #fdf3df;
+  --warn-line: #ecd7a4;
+  --change: #a8461b;
+  --change-bg: #fbeee6;
+  --change-line: #f0cdb8;
+  --bad: #b3312a;
+  --bad-bg: #fdeceb;
+  --bad-line: #f2c5c1;
+  --run: #0a6a75;
+  --run-bg: #e4f4f6;
+  --run-line: #b7dde2;
+  --brand-orange: #f6821f;
+  --font: 'Figtree', 'Satoshi', system-ui, -apple-system, sans-serif;
+  --mono: 'IBM Plex Mono', ui-monospace, 'SFMono-Regular', Menlo, monospace;
+  --wordmark: 'Inter Tight', 'Inter', ui-sans-serif, system-ui, sans-serif;
+  --r: 10px;
+  --r-sm: 7px;
+  --sh: 0 1px 2px rgba(16, 24, 40, 0.05);
+  --sh-md:
+    0 1px 3px rgba(16, 24, 40, 0.07), 0 10px 24px -16px rgba(16, 24, 40, 0.22);
+  --sh-lg: 0 18px 50px -18px rgba(16, 24, 40, 0.3);
+  --scrim: rgba(8, 11, 18, 0.44);
+  /* Aliases the page styles use */
+  --good: var(--ok);
+  --serious: var(--change);
+  --critical: var(--bad);
+  --focus: var(--accent);
+  --accent-soft: var(--accent-tint);
+  --accent-ink: var(--on-accent);
+  --shadow: var(--sh-md);
+  --display: var(--font);
+  --body: var(--font);
+  color-scheme: light;
+}
+
+/* ---------- HQ skin, dark (HQ midnight). Twice: following the system, and chosen. ---------- */
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme='light']) {
+    --bg: #14171d;
+    --surface: #1b1f26;
+    --surface-2: #21262e;
+    --surface-3: #2a303a;
+    --ink: #f2f4f8;
+    --ink-2: #c8cfda;
+    --muted: #98a1b0;
+    --faint: #868fa0;
+    --line: #272d37;
+    --line-2: #343c48;
+    --line-3: #222831;
+    --accent: #a5b4fc;
+    --accent-2: #c3ccff;
+    --accent-tint: #1c1f3a;
+    --accent-tint-2: #2a2f5a;
+    --on-accent: #10131a;
+    --ok: #4ade80;
+    --ok-bg: #11291c;
+    --ok-line: #1e5138;
+    --warn: #fbbf24;
+    --warn-bg: #2c220c;
+    --warn-line: #57431a;
+    --change: #fb923c;
+    --change-bg: #2c1a0e;
+    --change-line: #5a3418;
+    --bad: #f87171;
+    --bad-bg: #2e1719;
+    --bad-line: #5c2a2d;
+    --run: #38bdf8;
+    --run-bg: #10262f;
+    --run-line: #1c4a5c;
+    --sh: 0 1px 2px rgba(0, 0, 0, 0.44);
+    --sh-md: 0 1px 3px rgba(0, 0, 0, 0.5), 0 10px 24px -16px rgba(0, 0, 0, 0.7);
+    --sh-lg: 0 18px 50px -18px rgba(0, 0, 0, 0.78);
+    --scrim: rgba(0, 0, 0, 0.55);
+    color-scheme: dark;
+  }
+}
+:root[data-theme='dark'] {
+  --bg: #14171d;
+  --surface: #1b1f26;
+  --surface-2: #21262e;
+  --surface-3: #2a303a;
+  --ink: #f2f4f8;
+  --ink-2: #c8cfda;
+  --muted: #98a1b0;
+  --faint: #868fa0;
+  --line: #272d37;
+  --line-2: #343c48;
+  --line-3: #222831;
+  --accent: #a5b4fc;
+  --accent-2: #c3ccff;
+  --accent-tint: #1c1f3a;
+  --accent-tint-2: #2a2f5a;
+  --on-accent: #10131a;
+  --ok: #4ade80;
+  --ok-bg: #11291c;
+  --ok-line: #1e5138;
+  --warn: #fbbf24;
+  --warn-bg: #2c220c;
+  --warn-line: #57431a;
+  --change: #fb923c;
+  --change-bg: #2c1a0e;
+  --change-line: #5a3418;
+  --bad: #f87171;
+  --bad-bg: #2e1719;
+  --bad-line: #5c2a2d;
+  --run: #38bdf8;
+  --run-bg: #10262f;
+  --run-line: #1c4a5c;
+  --sh: 0 1px 2px rgba(0, 0, 0, 0.44);
+  --sh-md: 0 1px 3px rgba(0, 0, 0, 0.5), 0 10px 24px -16px rgba(0, 0, 0, 0.7);
+  --sh-lg: 0 18px 50px -18px rgba(0, 0, 0, 0.78);
+  --scrim: rgba(0, 0, 0, 0.55);
+  color-scheme: dark;
+}
+
+/* ---------- Dev skin (the GitHub theme): Primer's colours, system type, 6px radius, green primary ---------- */
+:root[data-skin='dev'] {
+  --bg: #ffffff;
+  --surface: #ffffff;
+  --surface-2: #f6f8fa;
+  --surface-3: #eff2f5;
+  --ink: #1f2328;
+  --ink-2: #1f2328;
+  --muted: #59636e;
+  --faint: #818b98;
+  --line: #d1d9e0;
+  --line-2: #d1d9e0;
+  --line-3: #eff2f5;
+  --accent: #0969da;
+  --accent-2: #0550ae;
+  --accent-tint: #ddf4ff;
+  --accent-tint-2: #b6e3ff;
+  --on-accent: #ffffff;
+  --ok: #1a7f37;
+  --ok-bg: #dafbe1;
+  --ok-line: #aceebb;
+  --warn: #9a6700;
+  --warn-bg: #fff8c5;
+  --warn-line: #eac54f;
+  --change: #bc4c00;
+  --change-bg: #fff1e5;
+  --change-line: #ffc499;
+  --bad: #d1242f;
+  --bad-bg: #ffebe9;
+  --bad-line: #ffcecb;
+  --run: #8250df;
+  --run-bg: #fbefff;
+  --run-line: #e7d4ff;
+  --primary: #1f883d;
+  --primary-hover: #1c8139;
+  --font:
+    -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Noto Sans', Helvetica,
+    Arial, sans-serif;
+  --mono:
+    ui-monospace, SFMono-Regular, 'SF Mono', Menlo, Consolas, 'Liberation Mono',
+    monospace;
+  --wordmark: var(--font);
+  --r: 6px;
+  --r-sm: 6px;
+  --sh: 0 1px 0 rgba(31, 35, 40, 0.04);
+  --sh-md: 0 3px 6px rgba(140, 149, 159, 0.15);
+  --sh-lg: 0 8px 24px rgba(140, 149, 159, 0.2);
+  color-scheme: light;
+}
+@media (prefers-color-scheme: dark) {
+  :root[data-skin='dev']:not([data-theme='light']) {
+    --bg: #0d1117;
+    --surface: #0d1117;
+    --surface-2: #151b23;
+    --surface-3: #212830;
+    --ink: #f0f6fc;
+    --ink-2: #f0f6fc;
+    --muted: #9198a1;
+    --faint: #656c76;
+    --line: #3d444d;
+    --line-2: #3d444d;
+    --line-3: #262c36;
+    --accent: #4493f8;
+    --accent-2: #79c0ff;
+    --accent-tint: #121d2f;
+    --accent-tint-2: #1f3a5f;
+    --on-accent: #ffffff;
+    --ok: #3fb950;
+    --ok-bg: #12261e;
+    --ok-line: #23633a;
+    --warn: #d29922;
+    --warn-bg: #272115;
+    --warn-line: #5c4a1a;
+    --change: #db6d28;
+    --change-bg: #2c1b10;
+    --change-line: #6b3a1a;
+    --bad: #f85149;
+    --bad-bg: #2d1416;
+    --bad-line: #6e2a2a;
+    --run: #ab7df8;
+    --run-bg: #211833;
+    --run-line: #4c3580;
+    --primary: #238636;
+    --primary-hover: #29903b;
+    --sh: none;
+    --sh-md: 0 3px 6px #010409;
+    --sh-lg: 0 8px 24px #010409;
+    color-scheme: dark;
+  }
+}
+:root[data-skin='dev'][data-theme='dark'] {
+  --bg: #0d1117;
+  --surface: #0d1117;
+  --surface-2: #151b23;
+  --surface-3: #212830;
+  --ink: #f0f6fc;
+  --ink-2: #f0f6fc;
+  --muted: #9198a1;
+  --faint: #656c76;
+  --line: #3d444d;
+  --line-2: #3d444d;
+  --line-3: #262c36;
+  --accent: #4493f8;
+  --accent-2: #79c0ff;
+  --accent-tint: #121d2f;
+  --accent-tint-2: #1f3a5f;
+  --on-accent: #ffffff;
+  --ok: #3fb950;
+  --ok-bg: #12261e;
+  --ok-line: #23633a;
+  --warn: #d29922;
+  --warn-bg: #272115;
+  --warn-line: #5c4a1a;
+  --change: #db6d28;
+  --change-bg: #2c1b10;
+  --change-line: #6b3a1a;
+  --bad: #f85149;
+  --bad-bg: #2d1416;
+  --bad-line: #6e2a2a;
+  --run: #ab7df8;
+  --run-bg: #211833;
+  --run-line: #4c3580;
+  --primary: #238636;
+  --primary-hover: #29903b;
+  --sh: none;
+  --sh-md: 0 3px 6px #010409;
+  --sh-lg: 0 8px 24px #010409;
+  color-scheme: dark;
+}
+
+/* ---------- Chrome colourways (HQ). Every chrome rule reads a --chrome-* token. ---------- */
+.app {
+  --chrome-bg: #16203a;
+  --chrome-edge: #2c3a5c;
+  --chrome-fg: #ffffff;
+  --chrome-fg-2: rgba(232, 236, 246, 0.74);
+  --chrome-dim: rgba(232, 236, 246, 0.52);
+  --chrome-faint: rgba(232, 236, 246, 0.36);
+  --chrome-soft: rgba(255, 255, 255, 0.06);
+  --chrome-hover: rgba(255, 255, 255, 0.09);
+  --chrome-hover-2: rgba(255, 255, 255, 0.13);
+  --chrome-on: rgba(255, 255, 255, 0.15);
+  --chrome-line: rgba(255, 255, 255, 0.07);
+  --chrome-line-2: rgba(255, 255, 255, 0.13);
+  --chrome-accent: #a5b4fc;
+  --chrome-warn-bg: rgba(224, 147, 11, 0.24);
+  --chrome-warn: #f0c069;
+  --chrome-gutter: 10px;
+  --chrome-grain: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='180' height='180'%3E%3Cfilter id='g'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='3' stitchTiles='stitch'/%3E%3CfeColorMatrix type='saturate' values='0'/%3E%3C/filter%3E%3Crect width='180' height='180' filter='url(%23g)' opacity='0.055'/%3E%3C/svg%3E");
+}
+.app[data-chrome='ink'] {
+  --chrome-bg: #101113;
+  --chrome-edge: #292b30;
+  --chrome-accent: #d8d5cf;
+}
+.app[data-chrome='slate'] {
+  --chrome-bg: #1e242b;
+  --chrome-edge: #363f4a;
+  --chrome-accent: #9fd0e8;
+}
+.app[data-chrome='indigo'] {
+  --chrome-bg: #241f52;
+  --chrome-edge: #3f3782;
+  --chrome-fg-2: rgba(228, 226, 250, 0.76);
+  --chrome-dim: rgba(228, 226, 250, 0.54);
+  --chrome-faint: rgba(228, 226, 250, 0.38);
+  --chrome-accent: #c7d2fe;
+}
+.app[data-chrome='forest'] {
+  --chrome-bg: #122a1f;
+  --chrome-edge: #234a37;
+  --chrome-fg-2: rgba(226, 244, 233, 0.76);
+  --chrome-dim: rgba(226, 244, 233, 0.54);
+  --chrome-faint: rgba(226, 244, 233, 0.38);
+  --chrome-accent: #86efac;
+}
+.app[data-chrome='claret'] {
+  --chrome-bg: #2c1419;
+  --chrome-edge: #52272f;
+  --chrome-fg-2: rgba(248, 230, 232, 0.76);
+  --chrome-dim: rgba(248, 230, 232, 0.54);
+  --chrome-faint: rgba(248, 230, 232, 0.38);
+  --chrome-accent: #fda4af;
+}
+.app[data-chrome='paper'] {
+  --chrome-bg: #dee2ea;
+  --chrome-edge: #c6ccd8;
+  --chrome-fg: #14161f;
+  --chrome-fg-2: rgba(20, 22, 31, 0.78);
+  --chrome-dim: rgba(20, 22, 31, 0.55);
+  --chrome-faint: rgba(20, 22, 31, 0.42);
+  --chrome-soft: rgba(20, 22, 31, 0.05);
+  --chrome-hover: rgba(20, 22, 31, 0.075);
+  --chrome-hover-2: rgba(20, 22, 31, 0.1);
+  --chrome-on: rgba(20, 22, 31, 0.11);
+  --chrome-line: rgba(20, 22, 31, 0.09);
+  --chrome-line-2: rgba(20, 22, 31, 0.14);
+  --chrome-accent: #3730a3;
+  --chrome-warn-bg: rgba(224, 147, 11, 0.2);
+  --chrome-warn: #8a5a0a;
+}
+/* Paper in dark mode (resolveTheme turns it into this). */
+.app[data-chrome='midnight'] {
+  --chrome-bg: #0b0e13;
+  --chrome-edge: #262c36;
+  --chrome-fg: #f2f4f8;
+  --chrome-fg-2: rgba(242, 244, 248, 0.76);
+  --chrome-dim: rgba(242, 244, 248, 0.54);
+  --chrome-faint: rgba(242, 244, 248, 0.38);
+  --chrome-grain: none;
+}
+
+/* ---------- Dev skin chrome: GitHub's header and sidebar, light and dark ---------- */
+:root[data-skin='dev'] .app,
+:root[data-skin='dev'] .app[data-chrome] {
+  --chrome-bg: #f6f8fa;
+  --chrome-edge: #d1d9e0;
+  --chrome-fg: #1f2328;
+  --chrome-fg-2: #1f2328;
+  --chrome-dim: #59636e;
+  --chrome-faint: #818b98;
+  --chrome-soft: #ffffff;
+  --chrome-hover: rgba(208, 215, 222, 0.32);
+  --chrome-hover-2: rgba(208, 215, 222, 0.48);
+  --chrome-on: rgba(208, 215, 222, 0.48);
+  --chrome-line: #d1d9e0;
+  --chrome-line-2: #d1d9e0;
+  --chrome-accent: #0969da;
+  --chrome-warn-bg: #fff8c5;
+  --chrome-warn: #9a6700;
+  --chrome-grain: none;
+  --chrome-gutter: 0px;
+}
+@media (prefers-color-scheme: dark) {
+  :root[data-skin='dev']:not([data-theme='light']) .app,
+  :root[data-skin='dev']:not([data-theme='light']) .app[data-chrome] {
+    --chrome-bg: #010409;
+    --chrome-edge: #3d444d;
+    --chrome-fg: #f0f6fc;
+    --chrome-fg-2: #f0f6fc;
+    --chrome-dim: #9198a1;
+    --chrome-faint: #656c76;
+    --chrome-soft: #0d1117;
+    --chrome-hover: rgba(101, 108, 118, 0.2);
+    --chrome-hover-2: rgba(101, 108, 118, 0.3);
+    --chrome-on: rgba(101, 108, 118, 0.3);
+    --chrome-line: #3d444d;
+    --chrome-line-2: #3d444d;
+    --chrome-accent: #4493f8;
+    --chrome-warn-bg: #272115;
+    --chrome-warn: #d29922;
+    --chrome-grain: none;
+  }
+}
+:root[data-skin='dev'][data-theme='dark'] .app,
+:root[data-skin='dev'][data-theme='dark'] .app[data-chrome] {
+  --chrome-bg: #010409;
+  --chrome-edge: #3d444d;
+  --chrome-fg: #f0f6fc;
+  --chrome-fg-2: #f0f6fc;
+  --chrome-dim: #9198a1;
+  --chrome-faint: #656c76;
+  --chrome-soft: #0d1117;
+  --chrome-hover: rgba(101, 108, 118, 0.2);
+  --chrome-hover-2: rgba(101, 108, 118, 0.3);
+  --chrome-on: rgba(101, 108, 118, 0.3);
+  --chrome-line: #3d444d;
+  --chrome-line-2: #3d444d;
+  --chrome-accent: #4493f8;
+  --chrome-warn-bg: #272115;
+  --chrome-warn: #d29922;
+  --chrome-grain: none;
+}

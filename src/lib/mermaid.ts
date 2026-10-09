@@ -19,8 +19,12 @@ function loadMermaid(dark: boolean): Promise<MermaidApi> {
   });
 }
 
-const prefersDark = () =>
-  window.matchMedia?.('(prefers-color-scheme: dark)').matches ?? false;
+/** The appearance chosen in the account menu (`<html data-theme>`), else the system's. */
+const prefersDark = () => {
+  const chosen = document.documentElement.getAttribute('data-theme');
+  if (chosen === 'dark' || chosen === 'light') return chosen === 'dark';
+  return window.matchMedia?.('(prefers-color-scheme: dark)').matches ?? false;
+};
 
 /** Draws Mermaid source as sanitized SVG markup; rejects when the source doesn't parse. */
 export async function renderMermaid(source: string): Promise<string> {

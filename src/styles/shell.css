@@ -1,0 +1,929 @@
+/* The shell, after HQ: a rail that runs the full height and turns the corner across the top (the top band), with
+   the work in a panel inset into it. The panel (.content) is the only scroller. Rail states: collapsed 64px
+   (.snav.shut), hover peek overlay (.peeking), pinned 236px (.pinned), drawer below 900px (.app.nav-open).
+   Ported from docs/design/crew/app.css, repo.css (top band, repository header) and dev.css (GitHub shapes). */
+
+/* While the shell is mounted the page never scrolls behind it. Pages outside the shell (sign-in) scroll as usual. */
+html:has(.app),
+html:has(.app) body {
+  height: 100%;
+}
+html:has(.app) {
+  padding-top: env(safe-area-inset-top, 0px);
+  padding-bottom: env(safe-area-inset-bottom, 0px);
+}
+body:has(.app) {
+  overflow: hidden;
+}
+
+.app {
+  display: flex;
+  /* The root is padded by the safe areas (above), so the shell takes what is left. */
+  height: calc(
+    100vh - env(safe-area-inset-top, 0px) - env(safe-area-inset-bottom, 0px)
+  );
+  height: calc(
+    100dvh - env(safe-area-inset-top, 0px) - env(safe-area-inset-bottom, 0px)
+  );
+  overflow: hidden;
+  background-color: var(--chrome-bg);
+  background-image: var(--chrome-grain);
+  color: var(--ink);
+}
+.app-main {
+  flex: 1 1 auto;
+  min-width: 0;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+.topnav {
+  flex: 0 0 auto;
+  position: relative;
+  z-index: 30;
+  background-color: var(--chrome-bg);
+  background-image: var(--chrome-grain);
+}
+/* The work panel is the only scroller, so its rounded inset and the chrome around it hold still. */
+.content {
+  flex: 1;
+  min-height: 0;
+  overflow-x: hidden;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-gutter: stable;
+  background: var(--bg);
+  margin: 0 var(--chrome-gutter) var(--chrome-gutter) 0;
+  padding: 26px 28px 34px;
+  border: 1px solid var(--chrome-edge);
+  border-radius: 18px;
+  min-width: 0;
+  display: grid;
+  gap: 18px;
+  align-content: start;
+}
+.content > * {
+  width: 100%;
+  max-width: 1180px;
+  margin-inline: auto;
+}
+
+/* ---------- The rail ---------- */
+.snav {
+  flex: 0 0 auto;
+  width: 236px;
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  color: var(--chrome-fg-2);
+  transition: width 0.2s cubic-bezier(0.3, 0.8, 0.3, 1);
+  z-index: 40;
+}
+.snav.shut {
+  width: 64px;
+}
+.snav-panel {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
+  width: 100%;
+  background-color: var(--chrome-bg);
+  background-image: var(--chrome-grain);
+}
+.snav.peeking .snav-panel {
+  position: absolute;
+  inset: 0 auto 0 0;
+  width: 236px;
+  box-shadow: 12px 0 30px -18px rgba(0, 0, 0, 0.6);
+}
+.snav-brand {
+  flex: 0 0 auto;
+  height: 52px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 0 18px;
+  text-decoration: none;
+  color: var(--chrome-fg);
+}
+.snav-brand:hover {
+  text-decoration: none;
+}
+.snav-brand svg,
+.snav-brand img {
+  flex: none;
+}
+.brand-wordmark {
+  font-family: var(--wordmark);
+  font-weight: 800;
+  font-size: 18px;
+  letter-spacing: -0.026em;
+  white-space: nowrap;
+}
+.snav-ws {
+  flex: 0 0 auto;
+  height: 45px;
+  display: flex;
+  align-items: center;
+  padding: 0 12px;
+  position: relative;
+}
+.snav-org-btn {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  width: 100%;
+  height: 32px;
+  padding: 0 9px;
+  border-radius: 8px;
+  background: var(--chrome-soft);
+  border: 1px solid var(--chrome-line-2);
+  color: var(--chrome-fg-2);
+  font-size: 12.5px;
+  font-weight: 600;
+  transition: 0.12s;
+}
+.snav-org-btn:hover {
+  background: var(--chrome-hover-2);
+}
+.snav-org-btn .chev {
+  color: var(--chrome-dim);
+}
+.snav-org-nm {
+  flex: 1;
+  min-width: 0;
+  text-align: left;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-family: var(--font);
+  font-weight: 600;
+  font-size: 12.5px;
+}
+.org-dot {
+  width: 18px;
+  height: 18px;
+  border-radius: 5px;
+  background: linear-gradient(135deg, #f6821f, #e26a17);
+  flex: none;
+}
+.snav-list {
+  position: relative;
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  scrollbar-width: none;
+  padding: 6px 10px 10px;
+  display: flex;
+  flex-direction: column;
+}
+.snav-list::-webkit-scrollbar {
+  display: none;
+}
+.snav-sec {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+.snav-label {
+  font-family: var(--mono);
+  font-size: 9.5px;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--chrome-faint);
+  padding: 10px 9px 5px;
+  white-space: nowrap;
+  overflow: hidden;
+}
+.snav-rule {
+  height: 1px;
+  background: var(--chrome-soft);
+  margin: 9px;
+}
+.snav-item {
+  display: flex;
+  align-items: center;
+  gap: 11px;
+  width: 100%;
+  padding: 6px 9px;
+  border-radius: 8px;
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--chrome-fg-2);
+  text-decoration: none;
+  position: relative;
+  transition:
+    background 0.12s,
+    color 0.12s;
+}
+.snav-item:hover {
+  background: var(--chrome-hover);
+  color: var(--chrome-fg);
+  text-decoration: none;
+}
+.snav-item[aria-current='page'] {
+  background: var(--chrome-on);
+  color: var(--chrome-fg);
+  font-weight: 600;
+}
+.snav-ic {
+  flex: 0 0 auto;
+  display: grid;
+  place-items: center;
+  color: var(--chrome-dim);
+}
+.snav-item:hover .snav-ic {
+  color: var(--chrome-fg);
+}
+.snav-item[aria-current='page'] .snav-ic {
+  color: var(--chrome-accent);
+}
+.snav-ic agent-robot-avatar {
+  margin: -2px;
+}
+.snav-nm {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-family: var(--font);
+}
+.snav-own {
+  color: var(--chrome-faint);
+  font-weight: 400;
+}
+.snav-item[aria-current='page'] .snav-own {
+  color: var(--chrome-dim);
+}
+.snav-item .nav-count {
+  font-size: 10.5px;
+  font-weight: 700;
+  padding: 0 6px;
+  border-radius: 20px;
+  min-width: 18px;
+  height: auto;
+  text-align: center;
+  line-height: 17px;
+  background: var(--chrome-soft);
+  color: var(--chrome-fg-2);
+}
+.snav-item .nav-count.warn {
+  background: var(--chrome-warn-bg);
+  color: var(--chrome-warn);
+}
+.snav-item .nav-count[data-zero] {
+  display: none;
+}
+/* The count's stand-in on the collapsed rail. */
+.snav-dot {
+  position: absolute;
+  top: 6px;
+  right: 6px;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--chrome-warn);
+  box-shadow: 0 0 0 2px var(--chrome-bg);
+  display: none;
+}
+.snav-fold-row {
+  flex: 0 0 auto;
+  display: flex;
+  padding: 6px 10px 8px;
+}
+.snav-fold {
+  display: flex;
+  align-items: center;
+  gap: 11px;
+  width: 100%;
+  height: 32px;
+  padding: 0 9px;
+  border-radius: 8px;
+  font-size: 12.5px;
+  font-weight: 500;
+  color: var(--chrome-faint);
+  background: none;
+  border: 0;
+}
+.snav-fold:hover {
+  background: var(--chrome-hover);
+  color: var(--chrome-fg);
+}
+.snav.pinned .snav-fold svg {
+  color: var(--chrome-accent);
+}
+/* Collapsed rail: one markup, CSS decides what shows. */
+.snav.shut:not(.peeking) .brand-wordmark,
+.snav.shut:not(.peeking) .snav-nm,
+.snav.shut:not(.peeking) .snav-org-nm,
+.snav.shut:not(.peeking) .snav-org-btn .chev,
+.snav.shut:not(.peeking) .snav-fold span,
+.snav.shut:not(.peeking) .nav-count,
+.snav.shut:not(.peeking) .snav-label {
+  display: none;
+}
+.snav.shut:not(.peeking) .snav-brand {
+  justify-content: center;
+  padding: 0;
+}
+.snav.shut:not(.peeking) .snav-ws {
+  padding: 0;
+  justify-content: center;
+}
+.snav.shut:not(.peeking) .snav-org-btn {
+  width: 40px;
+  justify-content: center;
+  padding: 0;
+}
+.snav.shut:not(.peeking) .snav-list {
+  padding: 10px 0;
+  align-items: center;
+}
+.snav.shut:not(.peeking) .snav-item {
+  width: 40px;
+  justify-content: center;
+  padding: 8px 0;
+}
+.snav.shut:not(.peeking) .snav-rule {
+  width: 26px;
+  margin: 9px auto;
+}
+.snav.shut:not(.peeking) .snav-fold-row {
+  justify-content: center;
+  padding: 6px 0 8px;
+}
+.snav.shut:not(.peeking) .snav-fold {
+  width: 34px;
+  justify-content: center;
+  padding: 0;
+}
+.snav.shut:not(.peeking) .snav-item.has-count .snav-dot {
+  display: block;
+}
+/* The first layout paints without transitions, so the rail never animates from full width on load. */
+.app.boot .snav,
+.app.boot .snav * {
+  transition: none !important;
+}
+
+/* ---------- Menus that hang off the chrome ---------- */
+.ws-menu {
+  position: absolute;
+  top: calc(100% + 6px);
+  left: 0;
+  min-width: 236px;
+  background: var(--surface);
+  border: 1px solid var(--line-2);
+  border-radius: 10px;
+  box-shadow: var(--sh-lg);
+  padding: 6px;
+  z-index: 70;
+  color: var(--ink);
+}
+.ws-menu.right {
+  left: auto;
+  right: 0;
+}
+.snav-ws .ws-menu {
+  left: 12px;
+  right: 12px;
+  min-width: 0;
+}
+.snav.shut:not(.peeking) .ws-menu {
+  left: 8px;
+  right: auto;
+  width: 268px;
+}
+.ws-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 10px;
+  border-radius: 7px;
+  width: 100%;
+  text-align: left;
+  background: none;
+  border: 0;
+  color: var(--ink);
+  text-decoration: none;
+}
+.ws-item:hover {
+  background: var(--surface-2);
+  text-decoration: none;
+}
+.ws-item.on {
+  background: var(--accent-tint);
+}
+.ws-item.on b {
+  color: var(--accent-2);
+}
+.ws-item b {
+  font-size: 13px;
+  font-weight: 600;
+  display: block;
+}
+.ws-item .sub {
+  font-size: 11.5px;
+  color: var(--muted);
+  display: block;
+}
+.ws-item .wd {
+  width: 16px;
+  height: 16px;
+  border-radius: 5px;
+  flex: 0 0 auto;
+  box-shadow: inset 0 0 0 1px rgba(0, 0, 0, 0.18);
+}
+.dd-label {
+  font-family: var(--mono);
+  font-size: 10px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--faint);
+  font-weight: 500;
+  padding: 7px 11px 3px;
+}
+.dd-sep {
+  height: 1px;
+  background: var(--line-3);
+  margin: 5px 4px;
+}
+.ws-menu .seg {
+  margin: 4px 6px 6px;
+}
+
+/* ---------- The top band: drawer button, page icon, trail and title, search, tools, account ---------- */
+.ph-bar {
+  display: flex;
+  align-items: center;
+  gap: 11px;
+  height: 52px;
+  padding: 0 22px 0 16px;
+  color: var(--chrome-fg);
+}
+.ph-ic {
+  flex: 0 0 auto;
+  width: 26px;
+  height: 26px;
+  border-radius: 8px;
+  display: grid;
+  place-items: center;
+  background: var(--chrome-soft);
+  color: var(--chrome-accent);
+}
+.ph-trail {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  min-width: 0;
+  font-size: 13px;
+  white-space: nowrap;
+  overflow: hidden;
+}
+.ph-trail a {
+  color: var(--chrome-dim);
+  text-decoration: none;
+}
+.ph-trail a:hover {
+  color: var(--chrome-fg);
+  text-decoration: underline;
+}
+.crumb-sep {
+  color: var(--chrome-faint);
+}
+.ph-bar h1 {
+  flex: 0 1 auto;
+  margin: 0;
+  font-size: 15px;
+  font-weight: 650;
+  letter-spacing: -0.016em;
+  line-height: 1.2;
+  color: var(--chrome-fg);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  outline: none;
+}
+.ph-grow {
+  flex: 1;
+  min-width: 8px;
+}
+.drawer-btn {
+  display: none;
+  place-items: center;
+  width: 30px;
+  height: 30px;
+  flex: 0 0 auto;
+  border: 0;
+  background: none;
+  border-radius: 8px;
+  color: var(--chrome-fg-2);
+}
+.drawer-btn:hover {
+  background: var(--chrome-hover);
+  color: var(--chrome-fg);
+}
+.scrim {
+  display: none;
+  position: fixed;
+  inset: 0;
+  z-index: 55;
+  background: var(--scrim);
+}
+
+/* Search: only its results redraw, so the input keeps focus and caret. */
+.gsearch {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: min(360px, 34vw);
+  height: 32px;
+  padding: 0 8px 0 10px;
+  border-radius: 8px;
+  background: var(--chrome-soft);
+  border: 1px solid var(--chrome-line-2);
+  color: var(--chrome-dim);
+}
+.gsearch:focus-within {
+  background: var(--surface);
+  border-color: var(--accent);
+  color: var(--muted);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 22%, transparent);
+}
+.gsearch input {
+  flex: 1;
+  min-width: 0;
+  border: 0;
+  background: transparent;
+  outline: none;
+  font-size: 13px;
+  color: var(--chrome-fg);
+}
+.gsearch:focus-within input {
+  color: var(--ink);
+}
+.gsearch input::placeholder {
+  color: var(--chrome-dim);
+}
+.gsearch .gs-ic {
+  width: 15px;
+  height: 15px;
+  flex: none;
+}
+.gsearch kbd,
+.gsearch .gs-kbd {
+  font-family: var(--mono);
+  font-weight: 600;
+  background: transparent;
+  border: 1px solid var(--chrome-line-2);
+  border-bottom-width: 1px;
+  border-radius: 5px;
+  color: var(--chrome-dim);
+  font-size: 10.5px;
+  padding: 0 5px;
+  line-height: 16px;
+  box-shadow: none;
+}
+.gs-menu {
+  left: 0;
+  right: 0;
+  top: calc(100% + 6px);
+  max-height: min(70vh, 520px);
+  overflow-y: auto;
+  min-width: 340px;
+}
+.gs-item {
+  align-items: flex-start;
+}
+.gs-item svg {
+  margin-top: 2px;
+  color: var(--muted);
+  flex: none;
+}
+.gs-item.sel {
+  background: var(--accent-tint);
+}
+.gs-item b {
+  font-size: 13px;
+  overflow-wrap: anywhere;
+}
+.gs-empty {
+  padding: 10px 12px;
+  color: var(--muted);
+}
+.ph-tools {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.tool-wrap {
+  position: relative;
+}
+.tool {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  height: 32px;
+  padding: 0 8px;
+  border-radius: 8px;
+  border: 1px solid var(--chrome-line-2);
+  background: transparent;
+  color: var(--chrome-fg-2);
+  text-decoration: none;
+}
+.tool:hover {
+  background: var(--chrome-hover);
+  color: var(--chrome-fg);
+  text-decoration: none;
+}
+.tool .chev {
+  width: 12px;
+  height: 12px;
+}
+.tool-dot {
+  position: absolute;
+  top: -5px;
+  right: -6px;
+  min-width: 17px;
+  height: 17px;
+  padding: 0 4px;
+  border-radius: 99px;
+  background: var(--chrome-warn);
+  color: #1a1205;
+  font-size: 10.5px;
+  font-weight: 700;
+  display: grid;
+  place-items: center;
+}
+
+/* Account button and menu: identity, theme grid, appearance, links. */
+.acct-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  height: 34px;
+  padding: 0 8px 0 3px;
+  border-radius: 99px;
+  border: 1px solid var(--chrome-line-2);
+  background: var(--chrome-soft);
+  color: var(--chrome-fg);
+  font-weight: 600;
+  font-size: 13px;
+}
+.acct-btn:hover {
+  background: var(--chrome-hover-2);
+}
+.acct-btn .identicon {
+  box-shadow: 0 0 0 1.5px var(--chrome-line-2);
+}
+.acct-btn .chev {
+  width: 12px;
+  height: 12px;
+  color: var(--chrome-dim);
+}
+.acct-menu {
+  width: 300px;
+  top: calc(100% + 8px);
+  max-height: 75vh;
+  overflow-y: auto;
+}
+.acct-head {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  padding: 8px 10px;
+}
+.acct-head b {
+  display: block;
+  font-size: 14px;
+}
+.acct-head .sub {
+  font-size: 12px;
+  color: var(--muted);
+}
+.theme-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 4px;
+  padding: 2px 6px 6px;
+}
+.theme-opt {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 7px 8px;
+  border-radius: 8px;
+  border: 1px solid transparent;
+  background: none;
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--ink);
+  text-align: left;
+}
+.theme-opt:hover {
+  background: var(--surface-2);
+}
+.theme-opt.on,
+.theme-opt[aria-pressed='true'] {
+  border-color: var(--accent);
+  background: var(--accent-tint);
+  font-weight: 600;
+}
+.theme-sw {
+  width: 20px;
+  height: 20px;
+  border-radius: 6px;
+  flex: none;
+  background: linear-gradient(135deg, var(--a) 0 55%, var(--b) 55%);
+  box-shadow: inset 0 0 0 1px rgba(0, 0, 0, 0.15);
+}
+
+/* ---------- Repository header and tabs (GitHub-like), at the top of the panel ---------- */
+.rhead {
+  display: grid;
+  gap: 12px;
+  border-bottom: 1px solid var(--line);
+  margin-bottom: -4px;
+}
+.rhead-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+.rhead-name {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 18px;
+}
+.rhead-name > svg {
+  color: var(--muted);
+}
+.rhead-name a {
+  color: var(--accent);
+  text-decoration: none;
+}
+.rhead-name a:hover {
+  text-decoration: underline;
+}
+.rhead-name .sep {
+  color: var(--muted);
+}
+.vis {
+  font-size: 11.5px;
+  font-weight: 600;
+  color: var(--muted);
+  border: 1px solid var(--line-2);
+  border-radius: 99px;
+  padding: 0 8px;
+  line-height: 20px;
+}
+.rtabs {
+  position: relative;
+  display: flex;
+  gap: 2px;
+  overflow-x: auto;
+  scrollbar-width: none;
+  margin-bottom: -1px;
+}
+.rtabs::-webkit-scrollbar {
+  display: none;
+}
+.rtabs a {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  padding: 8px 11px;
+  color: var(--ink-2);
+  text-decoration: none;
+  font-size: 13.5px;
+  white-space: nowrap;
+  border-bottom: 2px solid transparent;
+  border-radius: 6px 6px 0 0;
+}
+.rtabs a > svg {
+  color: var(--muted);
+}
+.rtabs a:hover {
+  background: var(--surface-3);
+  text-decoration: none;
+}
+.rtabs a[aria-current='page'] {
+  color: var(--ink);
+  font-weight: 600;
+  border-bottom-color: var(--accent);
+}
+.rtabs a[aria-current='page'] > svg {
+  color: var(--ink);
+}
+
+/* ---------- Narrow screens: the rail becomes a drawer ---------- */
+@media (max-width: 900px) {
+  .snav,
+  .snav.shut {
+    position: fixed;
+    top: 0;
+    bottom: 0;
+    left: 0;
+    z-index: 60;
+    width: 268px;
+    transform: translateX(-100%);
+    transition: transform 0.22s cubic-bezier(0.3, 0.8, 0.3, 1);
+    box-shadow: var(--sh-lg);
+  }
+  .app.nav-open .snav {
+    transform: none;
+  }
+  .app.nav-open .scrim {
+    display: block;
+  }
+  .snav-fold-row {
+    display: none;
+  }
+  .drawer-btn {
+    display: grid;
+  }
+  .ph-bar {
+    padding: 0 12px;
+    gap: 8px;
+    height: 48px;
+  }
+  .ph-ic {
+    display: none;
+  }
+  .ph-trail {
+    display: none;
+  }
+  .gsearch {
+    width: auto;
+    flex: 1;
+  }
+  .content {
+    margin: 0 8px 8px;
+    padding: 20px 16px 28px;
+    border-radius: 14px;
+  }
+}
+@media (max-width: 640px) {
+  .acct-name {
+    display: none;
+  }
+  .acct-btn {
+    padding: 0 6px 0 3px;
+  }
+}
+@media (max-width: 560px) {
+  .ph-trail .crumb-anc,
+  .ph-trail .crumb-sep {
+    display: none;
+  }
+  .gsearch kbd,
+  .gsearch .gs-kbd {
+    display: none;
+  }
+  .tool-wrap:has([data-menu='create']) {
+    display: none;
+  }
+  .acct-btn .chev {
+    display: none;
+  }
+}
+
+/* ---------- Dev skin (GitHub): flat chrome, hairlines, square panel ---------- */
+:root[data-skin='dev'] .snav {
+  border-right: 1px solid var(--chrome-line);
+}
+:root[data-skin='dev'] .topnav {
+  border-bottom: 1px solid var(--chrome-line);
+}
+:root[data-skin='dev'] .content {
+  margin: 0;
+  border: 0;
+  border-radius: 0;
+  padding: 24px 32px 40px;
+}
+:root[data-skin='dev'] .brand-wordmark {
+  font-weight: 700;
+  letter-spacing: -0.01em;
+  font-size: 17px;
+}
+:root[data-skin='dev'] .snav-item[aria-current='page'] {
+  box-shadow: inset 3px 0 0 var(--chrome-accent);
+}
+:root[data-skin='dev'] .gsearch,
+:root[data-skin='dev'] .tool {
+  border-radius: 6px;
+}
+:root[data-skin='dev'] .rtabs a[aria-current='page'] {
+  border-bottom-color: #fd8c73;
+}
+@media (max-width: 900px) {
+  :root[data-skin='dev'] .content {
+    padding: 20px 16px 28px;
+  }
+}
