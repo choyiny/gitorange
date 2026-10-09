@@ -2,7 +2,12 @@ import type { CSSProperties } from 'react';
 import { Link } from 'react-router-dom';
 import { BookIcon, HistoryIcon } from '@primer/octicons-react';
 import { dismissedText, LESSON_STATUS, lessonNote } from '@/lib/lessons';
-import { engineText, lessonTone, thresholdText } from '@/lib/agentPage';
+import {
+  engineText,
+  latestNote,
+  lessonTone,
+  thresholdText,
+} from '@/lib/agentPage';
 import { splitFrontmatter } from '@/lib/codeView';
 import { timeAgo, fullDate } from '@/lib/format';
 import type { Namespace } from '@/lib/uiApi';
@@ -13,8 +18,11 @@ import { EmptyState } from '@/components/ui/EmptyState';
 
 type Agent = NonNullable<Namespace['agent']>;
 
-/** Its latest reviews, newest first: which pull request, what it decided, when. */
-export function ReviewsTab({ agent }: { agent: Agent }) {
+/**
+ * Its latest reviews, newest first: which pull request, what it decided, when. The list holds the newest ten; `total`
+ * is the record's count of all of them (absent until the record loads).
+ */
+export function ReviewsTab({ agent, total }: { agent: Agent; total?: number }) {
   const rows = agent.recentReviews;
   if (rows.length === 0)
     return (
@@ -27,25 +35,28 @@ export function ReviewsTab({ agent }: { agent: Agent }) {
       </div>
     );
   return (
-    <ul className="list revlist">
-      {rows.map((r) => (
-        <li key={`${r.repository}#${r.number}@${r.headSha}`}>
-          <Chip status={r.status} />
-          <span>
-            <Link to={`/${r.repository}/pull/${r.number}`}>
-              <b>{r.title}</b>
-            </Link>
-            <br />
-            <span className="muted small">
-              {r.repository}#{r.number}
+    <>
+      <p className="small muted">{latestNote(rows.length, total, 'review')}</p>
+      <ul className="list revlist">
+        {rows.map((r) => (
+          <li key={`${r.repository}#${r.number}@${r.headSha}`}>
+            <Chip status={r.status} />
+            <span>
+              <Link to={`/${r.repository}/pull/${r.number}`}>
+                <b>{r.title}</b>
+              </Link>
+              <br />
+              <span className="muted small">
+                {r.repository}#{r.number}
+              </span>
             </span>
-          </span>
-          <span className="when" title={fullDate(r.createdAt)}>
-            {timeAgo(r.createdAt)}
-          </span>
-        </li>
-      ))}
-    </ul>
+            <span className="when" title={fullDate(r.createdAt)}>
+              {timeAgo(r.createdAt)}
+            </span>
+          </li>
+        ))}
+      </ul>
+    </>
   );
 }
 
@@ -53,7 +64,7 @@ export function ReviewsTab({ agent }: { agent: Agent }) {
  * What it learned from change requests people dismissed, newest first: each lesson with its status, the findings
  * that taught it, and (once saved) the commit in its own repository.
  */
-export function RulesTab({ agent }: { agent: Agent }) {
+export function RulesTab({ agent, rules }: { agent: Agent; rules?: number }) {
   const lessons = agent.lessons;
   if (lessons.length === 0)
     return (
@@ -67,6 +78,11 @@ export function RulesTab({ agent }: { agent: Agent }) {
     );
   return (
     <div className="ag-config">
+      <p className="small muted">
+        {latestNote(lessons.length, undefined, 'lesson')}
+        {rules !== undefined &&
+          ` · ${rules} ${rules === 1 ? 'rule' : 'rules'} saved in all`}
+      </p>
       {lessons.map((l) => {
         const note = lessonNote(l);
         const sha = note?.kind === 'commit' ? note.sha : null;

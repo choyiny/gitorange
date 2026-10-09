@@ -9,7 +9,6 @@ import type {
   AgentPreset,
   AgentStats,
   CrewResult,
-  Lesson,
   LessonStatus,
   Repo,
 } from './uiApi';
@@ -199,9 +198,19 @@ export function presetState(
   return agentHandles.has(preset.handle.toLowerCase()) ? 'created' : 'taken';
 }
 
-/** Lessons that became a rule in the agent's repository. */
-export function ruleCount(lessons: readonly Pick<Lesson, 'status'>[]): number {
-  return lessons.filter((l) => l.status === 'committed').length;
+/**
+ * What a capped list says it shows: "Latest 10 of 143 reviews", "All 4 reviews", or, while the total isn't known,
+ * "Latest 4 reviews". The profile's lists hold only the newest ten; the totals come from the agent's record.
+ */
+export function latestNote(
+  shown: number,
+  total: number | undefined,
+  noun: string
+): string {
+  const plural = (n: number) => `${n} ${noun}${n === 1 ? '' : 's'}`;
+  if (total === undefined) return `Latest ${plural(shown)}`;
+  if (total <= shown) return shown === 1 ? plural(1) : `All ${plural(shown)}`;
+  return `Latest ${shown} of ${plural(total)}`;
 }
 
 const LESSON_TONE: Record<LessonStatus, Tone> = {

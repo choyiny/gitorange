@@ -125,6 +125,23 @@ describe('splitFrontmatter', () => {
     );
     expect(r.body).toBe('# Security\n');
   });
+  it('is not fooled by a README that opens with a rule, a heading and a line that looks like a key', () => {
+    const text = '---\n\n# Title\n\nNote: this is a draft.\n\n---\n\nMore';
+    expect(splitFrontmatter(text)).toEqual({ frontmatter: null, body: text });
+  });
+  it('needs every line inside to read as YAML', () => {
+    const text = '---\nname: A\nSome prose in the middle.\n---\nBody';
+    expect(splitFrontmatter(text)).toEqual({ frontmatter: null, body: text });
+  });
+  it('accepts lists, nested keys and indented comments', () => {
+    const r = splitFrontmatter(
+      '---\n# note\nname: A\ntrigger:\n  # why\n  ask: B\ntags:\n- one\n- two\n---\nBody'
+    );
+    expect(r.frontmatter).toBe(
+      '# note\nname: A\ntrigger:\n  # why\n  ask: B\ntags:\n- one\n- two'
+    );
+    expect(r.body).toBe('Body');
+  });
   it('is not fooled by a block that is only comments', () => {
     const text = '---\n# just a note\n---\n\nBody';
     expect(splitFrontmatter(text)).toEqual({ frontmatter: null, body: text });

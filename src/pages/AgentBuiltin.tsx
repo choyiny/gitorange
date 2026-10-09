@@ -3,6 +3,7 @@ import { Link, useParams } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
 import { ClockIcon, GlobeIcon } from '@primer/octicons-react';
 import { api, qk } from '@/lib/uiApi';
+import { agentColor } from '@/lib/agentLook';
 import { AgentAvatar } from '@/components/AgentAvatar';
 import { useEnter } from '@/components/code/useEnter';
 import { LoadError } from '@/components/Notice';
@@ -12,8 +13,6 @@ import { Section } from '@/components/ui/Section';
 import { Skeleton } from '@/components/ui/Skeleton';
 import { usePageHead } from '@/components/ui/PageHead';
 import { NOT_FOUND_HEAD, NotFound } from './NotFound';
-
-const COLOR = { clef: '#e26a17', fixer: '#e34948' } as const;
 
 /** What each built-in agent does, in the words of the pull request's own flow. */
 const ABOUT = {
@@ -60,7 +59,7 @@ export default function AgentBuiltin() {
       />
     );
   if (!agent) return <Skeleton kind="detail" />;
-  const color = COLOR[known];
+  const color = agentColor(known);
   return (
     <div className={entering}>
       <div className="profile" style={{ '--agent': color } as CSSProperties}>

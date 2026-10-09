@@ -3,6 +3,7 @@ import { useQueries, useQuery } from '@tanstack/react-query';
 import { PlusIcon, ShieldIcon } from '@primer/octicons-react';
 import { api, qk, type Agent, type AgentStats } from '@/lib/uiApi';
 import { useCurrentUser } from '@/lib/auth';
+import { agentColor } from '@/lib/agentLook';
 import {
   avatarStatusOf,
   cardStats,
@@ -202,7 +203,7 @@ export default function Agents() {
                 key={b.id}
                 to={`/agents/${b.id}`}
                 handle={b.id}
-                color={b.id === 'clef' ? '#e26a17' : '#e34948'}
+                color={agentColor(b.id)}
                 name={b.name}
                 subtitle="Built in"
                 bio={b.job}
@@ -238,6 +239,12 @@ export default function Agents() {
               what="the reviewer presets"
               error={presets.error}
               onRetry={() => void presets.refetch()}
+            />
+          ) : agents.isError ? (
+            <LoadError
+              what="the agents"
+              error={agents.error}
+              onRetry={() => void agents.refetch()}
             />
           ) : !ready || !presets.data ? (
             <CardsSkeleton />

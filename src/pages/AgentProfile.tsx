@@ -16,7 +16,6 @@ import {
   overallStatus,
   parseProfileTab,
   PROFILE_TABS,
-  ruleCount,
   wakeText,
   type ProfileTab,
 } from '@/lib/agentPage';
@@ -69,9 +68,10 @@ export default function AgentProfile({
     repositories.find(
       (r) => r.fullName.toLowerCase() === agent.repository?.toLowerCase()
     )?.defaultBranch ?? 'main';
+  // The tab lists hold only the newest ten; the badges are the record's totals, so they appear once it loads.
   const counts: Partial<Record<ProfileTab, number>> = {
-    reviews: agent.recentReviews.length,
-    rules: ruleCount(agent.lessons),
+    reviews: stats.data?.reviews,
+    rules: stats.data?.rules,
   };
 
   return (
@@ -184,8 +184,12 @@ export default function AgentProfile({
             <AgentRecord stats={stats} color={agent.color} />
           </>
         )}
-        {tab === 'reviews' && <ReviewsTab agent={agent} />}
-        {tab === 'rules' && <RulesTab agent={agent} />}
+        {tab === 'reviews' && (
+          <ReviewsTab agent={agent} total={stats.data?.reviews} />
+        )}
+        {tab === 'rules' && (
+          <RulesTab agent={agent} rules={stats.data?.rules} />
+        )}
         {tab === 'config' && <ConfigTab agent={agent} branch={branch} />}
       </div>
     </div>

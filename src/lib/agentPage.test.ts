@@ -7,24 +7,17 @@ import {
   groupAgents,
   handleProblem,
   inviteChoices,
+  latestNote,
   lessonTone,
   listNames,
   overallStatus,
   parseProfileTab,
   presetState,
   thresholdText,
-  ruleCount,
   wakeText,
   whereText,
 } from './agentPage';
-import type {
-  Agent,
-  AgentPreset,
-  AgentStats,
-  CrewResult,
-  Lesson,
-  Repo,
-} from './uiApi';
+import type { Agent, AgentPreset, AgentStats, CrewResult, Repo } from './uiApi';
 
 const agent = (handle: string, extra: Partial<Agent> = {}): Agent => ({
   id: `id-${handle}`,
@@ -364,31 +357,15 @@ describe('presetState', () => {
   });
 });
 
-describe('ruleCount', () => {
-  const lesson = (status: Lesson['status']): Lesson => ({
-    id: status,
-    repository: 'o/r',
-    number: 1,
-    title: 't',
-    findings: [],
-    status,
-    commitSha: null,
-    summary: null,
-    error: null,
-    createdAt: '2026-10-01T00:00:00Z',
-    finishedAt: null,
+describe('latestNote', () => {
+  it('says how much of the whole a capped list shows', () => {
+    expect(latestNote(10, 143, 'review')).toBe('Latest 10 of 143 reviews');
+    expect(latestNote(4, 4, 'review')).toBe('All 4 reviews');
+    expect(latestNote(1, 1, 'review')).toBe('1 review');
   });
-  it('counts the lessons that became a rule', () => {
-    expect(
-      ruleCount([
-        lesson('committed'),
-        lesson('committed'),
-        lesson('nothing'),
-        lesson('pending'),
-        lesson('failed'),
-      ])
-    ).toBe(2);
-    expect(ruleCount([])).toBe(0);
+  it('does not claim to be everything while the total is unknown', () => {
+    expect(latestNote(10, undefined, 'review')).toBe('Latest 10 reviews');
+    expect(latestNote(1, undefined, 'lesson')).toBe('Latest 1 lesson');
   });
 });
 

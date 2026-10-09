@@ -220,6 +220,13 @@ function BlankForm() {
       await refresh();
     },
   });
+  // AGENT.md lives on its repository's default branch; until that is known the link goes to the repository.
+  const [madeOwner = '', madeName = ''] = (made?.repository ?? '').split('/');
+  const madeRepo = useQuery({
+    queryKey: qk.repo(madeOwner, madeName),
+    queryFn: () => api.repo(madeOwner, madeName),
+    enabled: !!made?.repository,
+  });
   const shown = handle || 'handle';
   return (
     <>
@@ -229,7 +236,11 @@ function BlankForm() {
           AGENT.md in{' '}
           {made.repository ? (
             <Link
-              to={`/${made.repository}/blob/main/AGENT.md`}
+              to={
+                madeRepo.data
+                  ? `/${made.repository}/blob/${madeRepo.data.defaultBranch}/AGENT.md`
+                  : `/${made.repository}`
+              }
               className="mono"
             >
               {made.repository}

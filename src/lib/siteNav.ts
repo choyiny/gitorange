@@ -34,6 +34,6 @@ export function adminSection(
         : 'people';
   if (pathname === '/admin/usage') return 'usage';
   if (pathname === '/admin/audit') return 'audit';
-  if (pathname === '/admin/agents' || pathname === '/agents') return 'agents';
+  if (pathname === '/admin/agents') return 'agents';
   return null;
 }

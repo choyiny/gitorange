@@ -71,18 +71,37 @@ export const isMarkdownPath = (path: string) => /\.(md|markdown)$/i.test(path);
 // horizontal rule (and has another one further down) starts with a blank line or prose instead.
 const FIRST_KEY = /^(?:[A-Za-z_][\w.-]*|"[^"\n]*"|'[^'\n]*')[ \t]*:(?:[ \t]|$)/;
 
+/** Whether every line of a block reads as YAML: a blank or `#` comment line, `key:`, an indented continuation or `- item`. */
+function looksLikeYaml(lines: string[]): boolean {
+  return lines.every(
+    (l) =>
+      !l.trim() ||
+      /^\s*#/.test(l) ||
+      FIRST_KEY.test(l) ||
+      /^[ \t]+\S/.test(l) ||
+      /^-(?:[ \t]|$)/.test(l)
+  );
+}
+
 /**
  * A leading `---` YAML block and the text after it. An agent's AGENT.md starts with its settings this way. It needs
- * a closing `---` line and must begin with a `key:` (after any blank or `#` comment lines, which an agent's
- * settings open with), so a horizontal rule is not mistaken for one.
+ * a closing `---` line; the line straight after the opening one (no blank line between) must be a `key:` or a `#`
+ * comment (an agent's settings open with a comment), and every line inside must read as YAML, with at least one
+ * `key:`. A horizontal rule, and the Markdown after it, is not mistaken for one.
  */
 export function splitFrontmatter(text: string): {
   frontmatter: string | null;
   body: string;
 } {
   const m = /^---[ \t]*\r?\n([\s\S]*?)\r?\n---[ \t]*(?:\r?\n|$)/.exec(text);
-  const first = m?.[1].split(/\r?\n/).find((l) => l.trim() && !/^\s*#/.test(l));
-  if (!m || first === undefined || !FIRST_KEY.test(first))
+  const lines = m?.[1].split(/\r?\n/) ?? [];
+  const opens = FIRST_KEY.test(lines[0] ?? '') || /^\s*#/.test(lines[0] ?? '');
+  if (
+    !m ||
+    !opens ||
+    !looksLikeYaml(lines) ||
+    !lines.some((l) => FIRST_KEY.test(l))
+  )
     return { frontmatter: null, body: text };
   return {
     frontmatter: m[1].replace(/\r/g, ''),
