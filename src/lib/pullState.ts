@@ -77,10 +77,21 @@ export function reasonText(r: PullReason): string {
     case 'needs_approval':
       return 'no agent reviewed it: a person approves it';
     case 'merging_paused':
-      return 'Merging is paused';
+      return 'merging is paused';
     default:
       return r.kind.replace(/_/g, ' ');
   }
+}
+
+/**
+ * The state's label: `STATE_LABEL`, except that a waiting pull request merging is paused on reads "Paused" (the pause
+ * is why it is not landing, whatever else it waits for). A person's or an agent's move keeps its own label.
+ */
+export function stateLabel(state: PullState): string {
+  return state.state === 'waiting' &&
+    state.reasons.some((r) => r.kind === 'merging_paused')
+    ? 'Paused'
+    : STATE_LABEL[state.state];
 }
 
 /** The state as the list's label reads it ("Ready, stacked on #3"), and the first reason it shows beside it. */
@@ -92,7 +103,7 @@ export function stateText(state: PullState): {
   const first = state.reasons.find(blocking) ?? state.reasons[0];
   return {
     label:
-      STATE_LABEL[state.state] +
+      stateLabel(state) +
       (state.state === 'ready' && stacked
         ? `, stacked on #${Number(stacked.pr)}`
         : ''),

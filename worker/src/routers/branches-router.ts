@@ -41,7 +41,10 @@ const branchInfoSchema = z
         pullState: pullStateSchema.nullable(),
         /** The app that opened it; null means by hand. */
         createdVia: z.string().nullable(),
+        /** The session label that app reported. */
         session: z.string().nullable(),
+        /** The id `GET /sessions` gives its session; never null (a pull request by hand is its author's session). */
+        sessionId: z.string(),
       })
       .nullable(),
     /** Its newest pull request is merged and the branch is still there (never the default or a protected branch). */
@@ -80,7 +83,10 @@ const branchMapSchema = z
         reasons: z.array(z.string()),
         author: personRefSchema,
         createdVia: z.string().nullable(),
+        /** The session label that app reported. */
         session: z.string().nullable(),
+        /** The id `GET /sessions` gives its session; never null (a pull request by hand is its author's session). */
+        sessionId: z.string(),
         /** The pull request whose branch this one is based on, when stacked. */
         stackedOn: z.number().nullable(),
       })

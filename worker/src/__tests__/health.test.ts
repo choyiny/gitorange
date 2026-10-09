@@ -248,6 +248,44 @@ describe('GET /api/repos/{o}/{r}/health', () => {
     expect(['Passing', 'Failing now']).toContain(tests.status);
   });
 
+  it('calls the trend the same, and claims no improvement, when this week has no runs to compare', async () => {
+    const s = await crewRepo();
+    // Last week half the runs failed; this week nothing has run on main. Zero is "no data", not "no failures".
+    for (const c of ['success', 'failure']) await mainRun(s, inWeek(1), c);
+    const tests = area(await health(s), 'tests');
+    expect(tests).toMatchObject({
+      thisWeek: 0,
+      lastWeek: 50,
+      trend: 'same',
+      detail: 'No test runs this week',
+    });
+    expect(`${tests.status} ${tests.detail}`).not.toMatch(
+      /better|improv|fewer|down|was/i
+    );
+    expect((await health(s)).summary).toBe('Nothing got worse this week.');
+  });
+
+  it('calls the trend the same, and claims no decline, when last week has no runs to compare', async () => {
+    const s = await crewRepo();
+    // This week 1 of 4 runs failed; last week had no runs at all (only an older week did).
+    for (const c of ['success', 'success', 'success', 'failure'])
+      await mainRun(s, inWeek(0), c);
+    await mainRun(s, inWeek(3), 'success');
+    const report = await health(s);
+    const tests = area(report, 'tests');
+    expect(tests).toMatchObject({
+      thisWeek: 25,
+      lastWeek: 0,
+      trend: 'same',
+      detail: '75% of 4 runs passed this week',
+    });
+    expect(`${tests.status} ${tests.detail}`).not.toMatch(
+      /worse|down|was|more/i
+    );
+    // "Got worse" is never said of a row with nothing to compare against.
+    expect(report.summary).toBe('Nothing got worse this week.');
+  });
+
   it('says so when no tests have run', async () => {
     const quiet = await crewRepo();
     expect(area(await health(quiet), 'tests')).toMatchObject({
@@ -321,6 +359,8 @@ describe('GET /api/repos/{o}/{r}/health', () => {
     await invitedAgent(s.t, s.admin, 'secagent');
     const p = await pr(s, 1, { mergedAt: inWeek(0) });
     await findings(s, p, 'secagent', inWeek(0), 1);
+    // Last week's passing run is the baseline: without one there is nothing for the tests to be worse than.
+    await mainRun(s, inWeek(1), 'success');
     await mainRun(s, inWeek(0), 'failure');
     expect((await health(s)).summary).toBe(
       'secagent agent and Tests on main got worse this week.'

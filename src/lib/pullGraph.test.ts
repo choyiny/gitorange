@@ -313,6 +313,18 @@ describe('nodeTooltip', () => {
     expect(t[2]).toMatch(/changes requested on 2 flags/);
   });
 
+  it('says a pull request waiting on the pause is paused, as the list does', () => {
+    const t = nodeTooltip(
+      node(3, {
+        pullState: {
+          state: 'waiting',
+          reasons: [{ kind: 'merging_paused' }],
+        },
+      })
+    ).split('\n');
+    expect(t[2]).toBe('Paused: merging is paused');
+  });
+
   it('describes each dependency kind, pending, unchecked and checking', () => {
     const t = nodeTooltip(
       node(3, {

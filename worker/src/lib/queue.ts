@@ -21,6 +21,7 @@ import { stackTreeView, type StackTreeView } from '../stack/view';
 import { recordAudit } from './audit';
 import { landTargetOf } from './land-target';
 import { GHOST, personRefs, type PersonRef } from './person-ref';
+import { pullSessionIds } from './sessions';
 
 // The merge queue: per land target, the open pull requests in the order they are expected to land, what holds each
 // back (from its computed state, never stored) and a rough estimate of when it lands. Pausing merging is per
@@ -39,6 +40,8 @@ export type QueueEntry = {
   createdVia: string | null;
   /** The session label that app reported. */
   session: string | null;
+  /** The id `GET /sessions` gives its session; never null (a pull request by hand is its author's session). */
+  sessionId: string;
   /** Its pull request state (`agent_followup`, `human_review`, `waiting`, `ready`). */
   state: string;
   /** What holds it back, in plain words, most urgent first; empty when it is ready. */
@@ -284,10 +287,11 @@ export async function mergeQueue(
   const handles = [...states.values()].flatMap((s) =>
     s.reasons.flatMap((r) => ('agent' in r && r.agent ? [r.agent] : []))
   );
-  const [step, people, names] = await Promise.all([
+  const [step, people, names, sessionIds] = await Promise.all([
     etaStepMs(db, repo.id),
     personRefs(db, [...open.map((p) => p.authorId), repo.mergingPausedById]),
     agentNames(db, handles),
+    pullSessionIds(open),
   ]);
   const nameOf = (h: string) => names.get(h) ?? h;
   const paused = await pauseOf(db, repo, people);
@@ -360,6 +364,7 @@ export async function mergeQueue(
         author: people.get(pr.authorId) ?? GHOST,
         createdVia: pr.createdVia || null,
         session: pr.sessionLabel || null,
+        sessionId: sessionIds.get(pr.id)!,
         state: s?.state ?? 'waiting',
         blockers: s
           ? [...new Set(s.reasons.map((r) => blockerText(r, nameOf)))]

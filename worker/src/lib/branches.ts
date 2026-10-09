@@ -17,6 +17,7 @@ import { landTargetIs, landTargetOf } from './land-target';
 import { GHOST, personRefs, type PersonRef } from './person-ref';
 import { pullRef } from '../merge/land';
 import { protectedBy } from './protected-branches';
+import { pullSessionIds } from './sessions';
 
 // Branches: the list with each branch's pull request, the merged branches nobody deleted (and their clean-up), and the
 // branch map, which draws the default branch, what landed on it, and the branches in flight.
@@ -41,6 +42,8 @@ export type BranchInfo = {
     pullState: PullState | null;
     createdVia: string | null;
     session: string | null;
+    /** The id `GET /sessions` gives its session; never null (a pull request by hand is its author's session). */
+    sessionId: string;
   } | null;
   mergedNotDeleted: boolean;
 };
@@ -195,9 +198,12 @@ export async function branchInfos(
       !newest.has(t.name) && commits[i] ? [commits[i]!.author.email] : []
     )
   );
-  const people = await personRefs(db, [
-    ...[...newest.values()].map((p) => p.authorId),
-    ...[...byEmail.values()].map((u) => u.id),
+  const [people, sessionIds] = await Promise.all([
+    personRefs(db, [
+      ...[...newest.values()].map((p) => p.authorId),
+      ...[...byEmail.values()].map((u) => u.id),
+    ]),
+    pullSessionIds([...newest.values()]),
   ]);
 
   return tips.map((t, i): BranchInfo => {
@@ -227,6 +233,7 @@ export async function branchInfos(
             pullState: pr.state === 'open' ? (states.get(pr.id) ?? null) : null,
             createdVia: pr.createdVia || null,
             session: pr.sessionLabel || null,
+            sessionId: sessionIds.get(pr.id)!,
           }
         : null,
       mergedNotDeleted: mergedNotDeleted(t),
@@ -306,6 +313,8 @@ export type BranchMap = {
     author: PersonRef;
     createdVia: string | null;
     session: string | null;
+    /** The id `GET /sessions` gives its session; never null (a pull request by hand is its author's session). */
+    sessionId: string;
     stackedOn: number | null;
   }[];
   leftover: { branch: string; number: number; mergedAt: number }[];
@@ -414,10 +423,13 @@ export async function branchMap(
       intoMain.map((p) => p.id)
     ).catch(() => new Map<string, PullState>()));
 
-  const people = await personRefs(
-    db,
-    intoMain.map((p) => p.authorId)
-  );
+  const [people, sessionIds] = await Promise.all([
+    personRefs(
+      db,
+      intoMain.map((p) => p.authorId)
+    ),
+    pullSessionIds(intoMain),
+  ]);
   // A stacked pull request's base is another open pull request's head branch.
   const opened = (base: string, landsOn: string) => {
     const candidates = open.filter((p) => p.headRef === base);
@@ -455,6 +467,7 @@ export async function branchMap(
           author: people.get(p.authorId) ?? GHOST,
           createdVia: p.createdVia || null,
           session: p.sessionLabel || null,
+          sessionId: sessionIds.get(p.id)!,
           stackedOn: parent && parent.id !== p.id ? parent.number : null,
         },
       ];

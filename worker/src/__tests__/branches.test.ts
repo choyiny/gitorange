@@ -34,6 +34,7 @@ type Branch = {
     pullState: { state: string; reasons: { kind: string }[] } | null;
     createdVia: string | null;
     session: string | null;
+    sessionId: string;
   } | null;
   mergedNotDeleted: boolean;
 };
@@ -113,6 +114,7 @@ describe('GET /api/repos/{o}/{r}/branches', () => {
       pullState: { state: 'human_review', reasons: expect.any(Array) },
       createdVia: 'Claude Code',
       session: 's4',
+      sessionId: expect.stringMatching(/^s-[0-9a-f]{10}$/),
     });
     // Made by whoever opened its pull request.
     expect(b.feature.author).toEqual({
@@ -485,6 +487,7 @@ describe('GET /api/repos/{o}/{r}/branches/map', () => {
       author: { login: string };
       createdVia: string | null;
       session: string | null;
+      sessionId: string;
       stackedOn: number | null;
     }[];
     leftover: { branch: string; number: number; mergedAt: number }[];
@@ -653,6 +656,7 @@ describe('GET /api/repos/{o}/{r}/branches/map', () => {
       author: { login: 'octocat', name: 'Admin', isAgent: false, color: null },
       createdVia: 'Claude Code',
       session: 's7',
+      sessionId: expect.stringMatching(/^s-[0-9a-f]{10}$/),
       stackedOn: null,
     });
     expect(m.open[0].reasons).toContain('needs_approval');
@@ -764,7 +768,12 @@ describe('landing deletes the head branch when the repository says so', () => {
       target: 'feature',
       actor_kind: 'system',
     });
-    expect(JSON.parse(results[0].data)).toEqual({ sha: head, merged: true });
+    // `pull` is the pull request whose landing deleted it, so the audit log can say "after #n merged".
+    expect(JSON.parse(results[0].data)).toEqual({
+      sha: head,
+      merged: true,
+      pull: n,
+    });
   });
 
   it('keeps the branch when the repository keeps merged branches', async () => {
@@ -812,6 +821,13 @@ describe('landing deletes the head branch when the repository says so', () => {
     expect(result.ok).toBe(true);
     await settle(s.t);
     expect(s.repo.refs.has('refs/heads/feature')).toBe(false);
+    // Auto-merge's deletion names the pull request too.
+    const { results } = await mergedRows(s);
+    expect(results).toHaveLength(1);
+    expect(JSON.parse(results[0].data)).toMatchObject({
+      merged: true,
+      pull: n,
+    });
   });
 
   it('keeps a branch another open pull request is based on, and a protected branch', async () => {

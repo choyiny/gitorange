@@ -386,7 +386,12 @@ export async function repoHealth(
     thisWeek: failedPct[last],
     lastWeek: failedPct[last - 1],
     weeks: failedPct,
-    trend: trendOf(failedPct[last], failedPct[last - 1]),
+    // A week without runs has no failure rate (0 is only the placeholder in `weeks`): with nothing to compare, the
+    // trend is the same, never better or worse than a week that wasn't measured.
+    trend:
+      total(last) && total(last - 1)
+        ? trendOf(failedPct[last], failedPct[last - 1])
+        : 'same',
     status: {
       failing: 'Failing now',
       passing: 'Passing',

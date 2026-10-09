@@ -42,6 +42,8 @@ export const queueTargetSchema = z
         createdVia: z.string().nullable(),
         /** The session label that app reported. */
         session: z.string().nullable(),
+        /** The id `GET /sessions` gives its session; never null (a pull request by hand is its author's session). */
+        sessionId: z.string(),
         /** Its pull request state: agent_followup, human_review, waiting or ready. */
         state: z.string(),
         /** What holds it back, in plain words; empty when it is ready. */

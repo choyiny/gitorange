@@ -29,6 +29,7 @@ type QueueTarget = {
     author: PersonRef;
     createdVia: string | null;
     session: string | null;
+    sessionId: string;
     state: string;
     blockers: string[];
     etaMinutes: number | null;
@@ -229,6 +230,7 @@ describe('GET /api/repos/{o}/{r}/queue', () => {
         },
         createdVia: null,
         session: null,
+        sessionId: expect.stringMatching(/^s-[0-9a-f]{10}$/),
         state: 'human_review',
         blockers: ['Needs a person to approve it'],
         etaMinutes: null,
