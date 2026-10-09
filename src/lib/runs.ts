@@ -55,3 +55,7 @@ export function stepLabel(
     }[conclusion ?? 'skipped'] ?? 'Done'
   );
 }
+
+/** Whether the run page shows its "Confirm cancel" step: asked for, and the run is still going to be cancelled. */
+export const confirmingCancel = (asked: boolean, status: RunStatus): boolean =>
+  asked && status !== 'completed';

@@ -1,5 +1,12 @@
 import { describe, expect, it } from 'vitest';
-import { focusStep, isErrorLine, runLabel, runTone, stepLabel } from './runs';
+import {
+  confirmingCancel,
+  focusStep,
+  isErrorLine,
+  runLabel,
+  runTone,
+  stepLabel,
+} from './runs';
 
 describe('isErrorLine', () => {
   it('marks lines that start with Error or ##[error]', () => {
@@ -81,5 +88,16 @@ describe('runLabel', () => {
     expect(runLabel('completed', 'failure')).toBe('Failed');
     expect(runLabel('completed', 'cancelled')).toBe('Cancelled');
     expect(runLabel('completed', null)).toBe('Skipped');
+  });
+});
+
+describe('confirmingCancel', () => {
+  it('shows the confirm step only after Cancel was clicked on a run that is still going', () => {
+    expect(confirmingCancel(true, 'in_progress')).toBe(true);
+    expect(confirmingCancel(true, 'queued')).toBe(true);
+    expect(confirmingCancel(false, 'in_progress')).toBe(false);
+  });
+  it('drops it once the run has completed, so a finished run is never one click from being cancelled', () => {
+    expect(confirmingCancel(true, 'completed')).toBe(false);
   });
 });

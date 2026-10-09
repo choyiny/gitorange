@@ -23,7 +23,13 @@ import {
 } from '@/lib/uiApi';
 import { errorMessage } from '@/lib/api';
 import { duration, shortSha, timeAgo } from '@/lib/format';
-import { focusStep, isErrorLine, runLabel, stepLabel } from '@/lib/runs';
+import {
+  confirmingCancel,
+  focusStep,
+  isErrorLine,
+  runLabel,
+  stepLabel,
+} from '@/lib/runs';
 import { useNow } from '@/lib/useNow';
 import { Identicon } from '@/components/Identicon';
 import { RunStatusIcon } from '@/components/RunStatusIcon';
@@ -253,7 +259,16 @@ function Summary({
   );
 }
 
+/**
+ * A run. Keyed by run number: re-running navigates to the next number with the same route, and the "Confirm
+ * cancel" step (and any action error) of the run you left must not carry over to the new one.
+ */
 export default function RunView() {
+  const { number = '' } = useParams();
+  return <RunPage key={number} />;
+}
+
+function RunPage() {
   const repo = useOutletContext<RepoDetail>();
   const { number = '', jobId } = useParams();
   const num = Number(number);
@@ -315,6 +330,8 @@ export default function RunView() {
   if (!q.data || !run) return <Skeleton kind="detail" />;
   const { jobs } = q.data;
   const actionError = rerun.error ?? cancel.error;
+  // Only a run that is still going can be cancelled, so the confirm step ends when it does.
+  const confirming = confirmingCancel(confirmCancel, run.status);
 
   return (
     <>
@@ -358,7 +375,7 @@ export default function RunView() {
             >
               <SyncIcon size={14} /> Re-run all jobs
             </PendingButton>
-          ) : confirmCancel ? (
+          ) : confirming ? (
             <>
               <PendingButton
                 className="small danger"

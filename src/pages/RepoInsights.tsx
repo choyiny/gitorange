@@ -123,6 +123,7 @@ function Report({
       flags.raised +
       flags.pendingNow +
       resolutions.attempts +
+      learning.length +
       ci.runs ===
     0;
   if (quiet)
