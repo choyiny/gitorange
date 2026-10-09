@@ -24,6 +24,7 @@ import AcceptInvite from './pages/AcceptInvite';
 import Home from './pages/Home';
 import Repositories from './pages/Repositories';
 import Approvals from './pages/Approvals';
+import Finding from './pages/Finding';
 import NewRepo from './pages/NewRepo';
 import Profile from './pages/Profile';
 import RepoCode from './pages/RepoCode';
@@ -121,6 +122,7 @@ const App = () => (
               />
               <Route path="/new" element={<NewRepo />} />
               <Route path="/approvals" element={<Approvals />} />
+              <Route path="/approvals/:flagId" element={<Finding />} />
               <Route path="/settings/tokens" element={<SettingsTokens />} />
               <Route path="/settings/mcp" element={<SettingsMcp />} />
               <Route path="/settings/emails" element={<SettingsEmails />} />
