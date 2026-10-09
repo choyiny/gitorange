@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   blocking,
+  isPaused,
   reasonText,
   STATE_LABEL,
   stateLabel,
@@ -63,6 +64,16 @@ describe('pull state text', () => {
     // Lowercase: callers join reason fragments into sentences ("… ; merging is paused").
     expect(reasonText({ kind: 'merging_paused' })).toBe('merging is paused');
     expect(blocking({ kind: 'merging_paused' })).toBe(true);
+  });
+
+  it('is paused only when it waits and the pause is among its reasons', () => {
+    const pause = { kind: 'merging_paused' };
+    expect(isPaused({ state: 'waiting', reasons: [pause] })).toBe(true);
+    expect(isPaused({ state: 'waiting', reasons: [] })).toBe(false);
+    expect(isPaused({ state: 'human_review', reasons: [pause] })).toBe(false);
+    expect(isPaused({ state: 'ready', reasons: [] })).toBe(false);
+    expect(isPaused(null)).toBe(false);
+    expect(isPaused(undefined)).toBe(false);
   });
 
   it('labels a waiting pull request that merging is paused on "Paused", not "Waiting for checks"', () => {

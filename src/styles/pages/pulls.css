@@ -1,0 +1,577 @@
+/* Pull requests (board, list, graph) and compare. Ported from docs/design/crew/views.css (lanes, prcard) and
+   repo.css (rows). Tokens only. The board's cards are one link each: the title's ::after covers the card, and
+   whatever else on it is interactive (the session chip, the checks badge) sits above it. */
+
+.pulls-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+.prboard-note {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+/* ---------- Board ---------- */
+.lanes {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  gap: 12px;
+  align-items: start;
+}
+.lanes.single {
+  grid-template-columns: minmax(0, 1fr);
+}
+.lanes.single .lane-cards {
+  grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+}
+.lane {
+  display: grid;
+  gap: 8px;
+  align-content: start;
+  min-width: 0;
+}
+.lane h3 {
+  font-family: var(--font);
+  font-size: 12.5px;
+  font-weight: 600;
+  color: var(--ink-2);
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.lane h3 > svg {
+  flex: none;
+}
+.lane-cards {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 8px;
+  min-width: 0;
+}
+.lane-cards > li {
+  min-width: 0;
+}
+.prcard {
+  position: relative;
+  display: grid;
+  gap: 7px;
+  padding: 11px 12px;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: var(--r);
+  min-width: 0;
+}
+.prcard:hover,
+.prcard:focus-within {
+  border-color: color-mix(in srgb, var(--ink) 35%, var(--line));
+}
+.prcard-title {
+  margin: 0;
+  font-family: var(--font);
+  font-size: inherit;
+  font-weight: 600;
+  line-height: 1.35;
+  letter-spacing: -0.004em;
+}
+.view a.prcard-open {
+  color: var(--ink);
+  overflow-wrap: anywhere;
+}
+.view a.prcard-open:hover {
+  text-decoration: none;
+}
+.prcard-open::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  border-radius: var(--r);
+}
+.prcard-open:focus-visible {
+  outline: none;
+}
+.prcard-open:focus-visible::after {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+.prcard-reason {
+  font-size: 12.5px;
+  color: var(--ink-2);
+  overflow-wrap: anywhere;
+}
+.prcard-reviewers {
+  list-style: none;
+  margin: 0;
+  padding: 2px 2px 0;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+/* The merged lane's heading note and its link to the rest. */
+.lane-note {
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--muted);
+}
+.view a.lane-all {
+  display: inline-block;
+  padding: 2px 2px 0;
+  font-size: 12.5px;
+  color: var(--ink-2);
+}
+/* A card's reviewer avatars, with the review's verdict beside them. */
+.prcard-review {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 10px;
+}
+.prcard-review .chip {
+  position: relative;
+}
+/* The reviewers beside a list row's status. */
+.reviewer-avatars {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+}
+.prcard-foot {
+  display: flex;
+  gap: 4px 10px;
+  align-items: center;
+  font-size: 12px;
+  color: var(--muted);
+  flex-wrap: wrap;
+}
+.prcard-eta,
+.prcard-comments {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+/* Above the card's link: they take their own clicks and show their own tooltips. */
+.prcard .coder-link,
+.prcard-reviewers > li,
+.prcard-foot > *,
+.prcard-reason [title] {
+  position: relative;
+}
+.prcard.merged {
+  background: color-mix(in srgb, var(--surface) 60%, var(--bg));
+}
+
+/* A coding session's chip links to its page. */
+.view a.coder-link {
+  color: inherit;
+  justify-self: start;
+}
+.view a.coder-link:hover {
+  text-decoration: none;
+}
+.view a.coder-link:hover > span:last-child {
+  text-decoration: underline;
+}
+
+/* ---------- List ---------- */
+.plist {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 12px;
+  min-width: 0;
+}
+.pl-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+.pl-tabs {
+  display: flex;
+  gap: 6px;
+}
+.view a.pl-tab {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 8px 4px 12px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: var(--surface);
+  color: var(--ink-2);
+  font-size: 13px;
+  font-weight: 500;
+}
+.view a.pl-tab:hover {
+  background: var(--surface-3);
+  color: var(--ink);
+  text-decoration: none;
+}
+.view a.pl-tab[aria-current='page'] {
+  background: var(--ink);
+  color: var(--bg);
+  border-color: var(--ink);
+}
+.pl-tab:not(:has(.count)) {
+  padding-right: 12px;
+}
+.view a.pl-tab[aria-current='page'] .count {
+  background: color-mix(in srgb, var(--bg) 22%, transparent);
+  color: var(--bg);
+}
+.pl-tools {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  flex: 1 1 320px;
+  justify-content: flex-end;
+  min-width: 0;
+}
+.pl-select {
+  padding: 6px 10px;
+  border: 1px solid var(--line-2);
+  border-radius: 999px;
+  background: var(--surface);
+  color: var(--ink);
+  font: inherit;
+  font-size: 13px;
+}
+.pl-search {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex: 1 1 260px;
+  max-width: 440px;
+  min-width: 0;
+  padding: 0 12px;
+  border: 1px solid var(--line-2);
+  border-radius: 999px;
+  background: var(--surface);
+  color: var(--muted);
+}
+.pl-search:focus-within {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+.pl-search svg {
+  flex: none;
+}
+.pl-search input {
+  flex: 1;
+  min-width: 0;
+  border: 0;
+  background: none;
+  padding: 6px 0;
+  font: inherit;
+  font-size: 13px;
+  color: var(--ink);
+  outline: none;
+}
+.pl-search input::placeholder {
+  color: var(--muted);
+}
+.prows {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  overflow: hidden;
+}
+.prow {
+  /* The containing block for the screen-reader text in its status pill (an absolute element is not clipped by
+     the shell's panel otherwise, and would make the window scroll). */
+  position: relative;
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  gap: 12px;
+  align-items: center;
+  padding: 11px 14px;
+  border-top: 1px solid var(--line);
+}
+.prow:first-child {
+  border-top: 0;
+}
+.prow:hover {
+  background: color-mix(in srgb, var(--surface-2) 45%, transparent);
+}
+.prow-icon {
+  display: grid;
+  place-items: center;
+  align-self: start;
+  padding-top: 2px;
+}
+.prow-main {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+}
+.prow-title {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 2px 8px;
+  min-width: 0;
+}
+.view a.prow-open {
+  font-weight: 600;
+  color: var(--ink);
+  overflow-wrap: anywhere;
+}
+.view a.prow-open:hover {
+  color: var(--accent);
+}
+.prow-meta {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 2px 10px;
+  font-size: 12.5px;
+  color: var(--muted);
+}
+.view a.prow-author {
+  color: var(--ink-2);
+  font-weight: 500;
+}
+.prow-side {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  flex-wrap: wrap;
+  gap: 6px 12px;
+  min-width: 0;
+}
+.prow-state {
+  display: inline-grid;
+  justify-items: end;
+  gap: 2px;
+  min-width: 0;
+}
+.prow-why {
+  max-width: 32ch;
+  text-align: right;
+  overflow-wrap: anywhere;
+}
+.view a.prow-comments {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 12.5px;
+}
+
+/* ---------- Graph ---------- */
+.pg {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 14px;
+  min-width: 0;
+}
+.pg-legend {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 16px;
+}
+.pg-key {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+.pg-target {
+  overflow: hidden;
+  min-width: 0;
+}
+.pg-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 10px;
+  padding: 10px 14px;
+  background: var(--surface-2);
+  border-bottom: 1px solid var(--line);
+}
+.pg-head > svg {
+  flex: none;
+  color: var(--muted);
+}
+.pg-branch {
+  overflow-wrap: anywhere;
+}
+.pg-cycle {
+  margin: 12px 14px 0;
+}
+.pg-note {
+  padding: 12px 14px;
+}
+.pg-target > .sk-block {
+  margin: 14px;
+}
+/* Mermaid draws into this; its SVG is sanitised and scrolls sideways inside the panel. */
+.pull-graph {
+  padding: 16px;
+  overflow-x: auto;
+  text-align: center;
+}
+.pull-graph svg {
+  max-width: 100%;
+  height: auto;
+}
+.pull-graph g.node:focus-visible {
+  outline: 2px solid var(--accent);
+}
+
+/* ---------- Compare ---------- */
+.cmp {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 22px;
+  min-width: 0;
+}
+.cmp-bar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 12px;
+}
+.cmp-status {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 10px;
+  margin-left: 6px;
+  min-width: 0;
+}
+.cmp-picks {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  /* Under the empty state's words: its icon is 24px wide with a 12px gap. */
+  padding: 0 14px 16px 50px;
+}
+.cmp-wait {
+  display: grid;
+  gap: 14px;
+}
+.cmp-open {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 14px 16px;
+}
+.cmp-form {
+  display: grid;
+  grid-template-columns: 40px minmax(0, 1fr);
+  gap: 14px;
+  padding: 16px;
+}
+.cmp-avatar {
+  display: block;
+  margin-top: 2px;
+  line-height: 0;
+}
+.cmp-arrow {
+  display: inline-flex;
+  align-items: center;
+}
+.cmp-fields {
+  display: grid;
+  gap: 14px;
+  min-width: 0;
+}
+.cmp-error {
+  padding: 8px 12px;
+  border-radius: var(--r-sm);
+  border: 1px solid var(--bad-line);
+  background: var(--bad-bg);
+  color: var(--bad);
+}
+.cmp-actions {
+  display: flex;
+  justify-content: flex-end;
+}
+.cmp-stats {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-around;
+  gap: 8px 24px;
+  padding: 10px 16px;
+}
+.cmp-stats > span {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+/* A section's one column may not grow to the longest line of a diff; the diff scrolls inside its panel. */
+.cmp .section {
+  grid-template-columns: minmax(0, 1fr);
+}
+/* The diffs sit in the same panels as everything else (as on the commit page). */
+.cmp .Box {
+  background: var(--surface);
+  border-color: var(--line);
+  border-radius: var(--r);
+}
+.cmp .file-header {
+  background: var(--surface-2);
+  border-bottom-color: var(--line);
+  border-radius: var(--r) var(--r) 0 0;
+  color: var(--ink);
+}
+
+/* ---------- Responsive ---------- */
+@media (max-width: 1360px) {
+  .lanes {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+}
+@media (max-width: 900px) {
+  .lanes {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+@media (max-width: 760px) {
+  .prow {
+    grid-template-columns: auto minmax(0, 1fr);
+  }
+  .prow-side {
+    grid-column: 2;
+    justify-content: flex-start;
+  }
+  .prow-state {
+    justify-items: start;
+  }
+  .prow-why {
+    text-align: left;
+  }
+}
+@media (max-width: 640px) {
+  .lanes {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .cmp-picks {
+    padding-left: 14px;
+  }
+  .cmp-form {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .cmp-avatar,
+  .cmp-arrow {
+    display: none;
+  }
+  .cmp-stats {
+    justify-content: flex-start;
+  }
+}
