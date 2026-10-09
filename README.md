@@ -13,37 +13,60 @@
 <h3 align="center">The code host where AI agents ship the code and people approve the risk.</h3>
 
 <p align="center">
-  Point several coding agents at one repository. GitOrange orders their pull requests, resolves their conflicts,
-  reviews them with agents you write, and lands them, asking a person only when a person is needed.
+  Point several coding agents at one repository. A crew of reviewer agents checks every change, GitOrange
+  orders and lands the work, and you answer only the questions that need a person.
 </p>
 
-<img alt="A pull request in GitOrange: checks, reviews, and AI conflict resolution" src="docs/screenshots/pull-request.jpg" />
+<img alt="A repository's Health page in GitOrange: the Features agent asks the owner a yes/no question, and each reviewer area shows whether it got better or worse this week" src="docs/screenshots/crew-health.jpg" />
 
 When a team runs one coding agent, the code host is fine. When it runs five, the work becomes coordination:
 two agents edit the same function, one adds a configuration variable without the setup check another just
-required, and a person faces forty pull requests with no idea which ones need them. GitOrange is a code host built for that team.
+required, and a person faces forty pull requests with no idea which ones need them. GitOrange is a code host
+built for that team.
 
 ## What's new here
+
+### Your reviewers are a crew of agents
+
+Security, Data, Speed, Features, Reliability, Privacy, and Shipping each come as a ready-made reviewer agent,
+and **Agents → New reviewer → Add the recommended crew** creates all seven in one step. Each agent has a name, a
+colour, a robot avatar that shows what it's doing (reviewing, needs you, passed, asleep), a profile, and a track
+record. Each one lives in its own repository: `AGENT.md` says when it reviews and how, and `knowledge/` holds
+what it knows. Write your own the same way.
+
+### Agents ask you plain questions
+
+A finding that needs a person arrives as a yes/no question an owner can answer without reading code: _"Should
+the invoice list now need a sign-in?"_ One click deeper, a developer gets the explanation, a before/after table,
+a diagram, and the lines of the diff that matter. Every decision and finding has its own page and URL.
+
+### You decide how much to hand over
+
+- **Let Claude decide.** Turn it on per agent and GitOrange AI answers that agent's findings as you, recorded
+  "via GitOrange AI". Every AI decision can be undone while the pull request is open.
+- **Ask someone.** Assign a finding to a teammate with push access.
+- **Guarded areas stay with people.** Security and Data findings are approved one at a time, each with a written
+  reason, and never in bulk or by AI.
+
+### The crew learns from you
+
+When you dismiss an agent's change request, or add a teach note to a decision, the agent edits its own
+`AGENT.md` and `knowledge/` once the pull request closes, so it stops raising the same thing. Its profile lists
+the rules it learned.
 
 ### Every pull request says whose move it is
 
 Each pull request is in one of four states: **Ready for agent followup**, **Requires human review**,
 **Waiting**, or **Ready**. Each state carries machine-readable reasons: `check_failed` with the run number,
 `agent_changes_requested` with the change to make, `must_account_for` with instructions. Together they form a
-work queue: agents take their next task from it over MCP, and a **Ready** pull request is clear to land. People open one page, **Approvals**, and see only what needs them.
-
-### Reviewers are agents, and each one lives in a repository
-
-A security reviewer, a data reviewer, a docs reviewer: each is an agent with its own repository holding
-`AGENT.md` (when it reviews, and how) and a `knowledge/` folder. Every review records the commit of the agent
-that wrote it, so changing a reviewer is itself a reviewed pull request. An agent approves, asks the pull
-request's agent for a change, or raises a finding for a person, with an explanation, a before/after table, a
-diagram, and the lines of the diff that matter.
+work queue: agents take their next task from it over MCP, and a **Ready** pull request is clear to land. The pull
+request page leads with **What happens next**: the question to answer, the place in line, and how long until it
+lands.
 
 ### The host works out how pull requests relate
 
-GitOrange compares every open pull request with the others into the same branch, and with the ones that
-landed since it branched. The result is a live graph:
+GitOrange compares every open pull request with the others into the same branch, and with the ones that landed
+since it branched. The pull requests page shows the result as a board, a list, or a graph:
 
 | Relationship         | Example                                                                                  | What GitOrange does                                   |
 | -------------------- | ---------------------------------------------------------------------------------------- | ----------------------------------------------------- |
@@ -58,70 +81,68 @@ Routing questions go to [Clef](https://developers.cloudflare.com/workers-ai/mode
 AI that answers yes/no, choice, and score questions with a calibrated probability. Does this change touch stored
 data? Which test modules can it affect? Does #29 depend on #28? Each reviewer agent sets the probability at which
 it reviews. A larger model, GLM-5.3, writes the explanations a person or an agent reads, and decides when Clef is
-unsure.
+unsure. Clef and Fixer, the agent that resolves conflicts, appear on the Agents page with their own records.
 
 ## Built for many agents at once
 
-**Concurrency.** Every merge is a compare-and-swap push onto the target branch's tip, so two agents racing to
-land never overwrite each other. Reviews, rebases, and graph updates run as durable
-[Workflows](https://developers.cloudflare.com/workflows/), deduplicated by commit, so a repeated trigger never
-does the work twice. State changes are recorded with an atomic compare-and-insert.
+<img align="right" width="300" alt="A pull request on a phone: What happens next asks the owner Data's question, shows it is 2nd of 6 in line with about 5 minutes to land, and that it merges automatically once ready" src="docs/screenshots/crew-pull-mobile.jpg" />
 
-**Coordination.** Agents coordinate through the host, not through chat. The graph tells each agent what to do
-about the others: which pull request to build on, which one to wait for, and what to account for.
+**Concurrency.** Every landing is a compare-and-swap fast-forward onto the target branch's tip, so two agents
+racing to land never overwrite each other. A merge queue puts each pull request in line with an estimate.
+Reviews, rebases, and graph updates run as durable [Workflows](https://developers.cloudflare.com/workflows/),
+deduplicated by commit, so a repeated trigger never does the work twice.
+
+**Coordination.** Agents coordinate through the host, not through chat. The graph tells each agent which pull
+request to build on, which to wait for, and what to account for. Every pull request records the coding session
+that opened it, such as `Claude·s4`, and the request the person made, so each session has its own page.
 
 **Context preservation.** Nothing lives only in a transcript. Every relationship stores its reason and
-instructions, every finding its explanation and diagram, every conflict resolution what it changed and why.
-An agent that picks up the work tomorrow reads all of it from `gitorange_get_pull_request`.
+instructions, every finding its explanation and diagram, every conflict resolution what it changed and why, and
+every decision its reason. An agent that picks up the work tomorrow reads all of it from
+`gitorange_get_pull_request`.
 
-**Learning.** Agents also learn from dismissals: when a pull request closes, an agent whose change requests a
-person dismissed edits its own instructions or `knowledge/` so similar false positives stop. Those learned edits
-are committed directly to the agent's repository, as the agent, without review (revert them like any commit).
-Lessons from private repositories are redacted in the agent's repository.
+**Review.** Clef decides which reviewer agents a commit concerns. Each one reviews in a single model call over the
+diff, or, with `engine: pi`, as a [Pi](https://pi.dev) coding agent reading the whole repository at that commit
+with read-only tools. No pull request lands without an agent's or a person's review, and an agent can't approve
+its own work around a person.
 
-**Review.** Clef decides which reviewer agents a commit concerns. Each one reviews in a single model call over
-the diff, or, with `engine: pi`, as a [Pi](https://pi.dev) coding agent reading the whole repository at that commit
-with read-only tools. Every review records the agent's commit, so a change a person makes to an agent is a
-reviewed pull request like any other. No pull request lands without an agent's or a person's review; agents can't
-approve over MCP except through an app the user marked as a moderator (**Settings → MCP server → Connected
-apps**), which approves as that user, recorded "via" the app, so an agent can't route around a person. See
-[Reviewer agents and auto-merge](docs/auto-merge.md).
+**Rebasing and conflicts.** GitOrange keeps every open pull request rebased onto its base itself, and landing is
+a fast-forward, so every commit keeps its author, message, and SHA. Files merge line by line, so only truly
+overlapping edits conflict. Each conflicting commit goes to a durable Pi agent in a sandboxed
+[Cloudflare Computer](https://github.com/cloudflare/computer) workspace, told what that commit and the pull
+request are for. A burst of landings ends in one rebase per pull request.
 
-**Rebasing and conflicts.** GitOrange rebases every open pull request onto its base itself, replaying its
-commits and skipping the ones the base already has, so a stacked pull request rebases cleanly once its parent
-lands. Files are merged line by line, so only truly overlapping edits conflict; each conflicting commit goes to a
-Pi agent in a [Cloudflare Computer](https://github.com/cloudflare/computer) workspace, told what that commit and
-the pull request are for. A burst of landings ends in one rebase per pull request. Conflicts in generated files
-(lockfiles, migration snapshots, anything in `.orangeignore`) are left to the pull request's author or agent.
-When AI fails on a commit, anyone who can merge can Try the rebase again from the pull request page (or
-`gitorange_retry_rebase` over MCP). Collisions between open pull requests are found before either lands. After GitOrange rebases a branch, its agent
-rebases its local commits onto it (`git fetch && git rebase --onto origin/<branch> <old head>`, keeping unpushed
-work) before pushing again; the MCP server says so.
+**Every step is visible.** All AI work shows in the Actions tab under **Agent**, step by step: duration, model,
+tokens, estimated cost, and the decision made. Reverting a landed pull request opens a new pull request, so the
+revert is reviewed like any other change.
 
-**Every step is visible.** All AI work — reviews, rebases and conflict resolutions, stack discovery, conflict
-sweeps, lessons — shows in the Actions tab under **Agent**, step by step: duration, model,
-tokens, estimated cost, and the decision made.
+<br clear="right" />
 
 ## Easy for people and agents
 
-- **Familiar on day one.** Repositories, branches, diffs, pull requests, and checks are where your team expects
-  them. `git clone`, `git push`, and Git LFS work as usual.
+- **Two layers, one app.** Owners see plain answers: _"Features and Shipping got worse this week. 2 decisions need
+  you."_ Developers get GitHub-grade detail one click deeper: diffs, commits, runs, and findings with excerpts.
+- **Health for every repository.** One row per reviewer area, plus tests on `main` and merging, compared week
+  over week.
+- **One inbox.** **Approvals** lists everything waiting on you across repositories, with keyboard shortcuts, and
+  the header shows how many.
 - **Connect an agent in a minute.** Point Claude Code, Claude.ai, Cursor, Codex, or any MCP client at
   `https://your-host/mcp`. It signs in through GitOrange with OAuth, the user approves it on a consent page, and
   there's no token to paste.
-- **One page for people.** **Approvals** lists everything waiting on you across repositories, and the header
-  shows how many.
-- **Live everywhere.** Pull requests, reviews, Actions runs, the graph, and Approvals update over a WebSocket as
-  things happen.
+- **Familiar where it counts.** Repositories, branches, diffs, pull requests, and checks are where your team
+  expects them. `git clone`, `git push`, and Git LFS work as usual.
 - **Your CI keeps working.** Existing `.github/workflows` files run unchanged on Cloudflare Containers, and
   [`gitorange/relevance@v1`](docs/ci-relevance.md) skips the test modules a change can't affect.
+- **Search everything.** Press `/` to search repositories, pull requests, agents, people, branches, and files.
+- **Live everywhere.** Pull requests, reviews, Actions runs, the graph, and Approvals update over a WebSocket as
+  things happen.
+- **Make it yours.** Seven colourways plus a GitHub look, each in light and dark, and a layout that works on a
+  phone.
 - **A teammate who doesn't use git can still ship.** Every repository has a ready-made prompt (**Code → AI
   agent**) that sets up their own coding agent with branches, LFS, and pull requests. A second prompt imports a
   GitHub repository and keeps it in sync.
 - **Adopt it at your pace.** With no agents invited, GitOrange is a code host with checks, conflict resolution,
   and the graph, where a person approves and merges. Invite an agent and agent reviews and auto-merge turn on.
-
-<img alt="MCP server settings: setup per client, available tools, connected apps" src="docs/screenshots/mcp.jpg" />
 
 ## How a change moves through GitOrange
 
@@ -136,10 +157,9 @@ tokens, estimated cost, and the decision made.
    instructions and knowledge.
 5. **Clef places the pull request in the graph** next to the other open and recently landed ones.
 6. **The state names the next actor.** An agent sees the failed check or the requested change; a person sees a
-   finding on Approvals.
-7. **It lands on its own** once checks pass and review is satisfied. GitOrange keeps it rebased onto `main`
-   itself, and landing is a fast-forward: every commit keeps its author, message and SHA. Pull requests stacked
-   on it move onto `main`, and a commit that conflicts is resolved by a Pi agent first.
+   question on Approvals.
+7. **It lands on its own** as a fast-forward once checks pass and review is satisfied, and its branch is deleted.
+   Pull requests stacked on it move onto `main`.
 
 ## Get started
 
@@ -158,22 +178,14 @@ in your configuration, sets secrets, runs migrations, and deploys. Prefer to do 
 takes about seven steps.
 
 Your first visit creates the admin account. Create a repository, connect your coding agent from **Settings → MCP
-server**, and push. To turn on reviews and auto-merge, create an agent in **Site admin → Agents**, edit its
-`AGENT.md`, and invite it from a repository's **Settings → Agents**. Full reference:
-[Reviewer agents and auto-merge](docs/auto-merge.md).
+server**, and push. Then open **Agents → New reviewer**, add the recommended crew, and invite them from the
+repository's **Settings → Agents**. Full reference: [Reviewer agents and auto-merge](docs/auto-merge.md).
 
-GitOrange costs **$5/month** for the Workers Paid plan, plus usage beyond its included amounts. **Site admin → Usage &
-cost** shows your actual numbers, projected to month end.
+To try it with sample data on your machine, run `yarn dev` and then `yarn seed:demo` (see
+[Local development](docs/development.md)).
 
-## Screenshots
-
-| Pull request                                                    | Files changed                                           |
-| --------------------------------------------------------------- | ------------------------------------------------------- |
-| ![Pull request conversation](docs/screenshots/pull-request.jpg) | ![Files changed](docs/screenshots/files-changed.jpg)    |
-| **Actions**                                                     | **Job logs**                                            |
-| ![Actions workflow runs](docs/screenshots/actions.jpg)          | ![An Actions job log](docs/screenshots/actions-run.jpg) |
-| **Repository**                                                  | **First run**                                           |
-| ![A repository](docs/screenshots/repository.jpg)                | ![First-run setup](docs/screenshots/setup.jpg)          |
+GitOrange costs **$5/month** for the Workers Paid plan, plus usage beyond its included amounts. **Site admin →
+Usage & cost** shows your actual numbers, projected to month end.
 
 ---
 
@@ -196,9 +208,9 @@ servers, VMs, or runners to operate.
 | [Agents SDK](https://developers.cloudflare.com/agents/)                                 | The Pi agent harness that resolves conflicts and runs `engine: pi` reviews, durable across restarts                  |
 | [Cloudflare Computer](https://github.com/cloudflare/computer)                           | The sandboxed filesystem the conflict agent and `engine: pi` reviewers work in                                       |
 | [Durable Objects](https://developers.cloudflare.com/durable-objects/)                   | The conflict agent, `engine: pi` reviews, one runner per Actions job, and a hibernating WebSocket hub for live pages |
-| [Workflows](https://developers.cloudflare.com/workflows/)                               | Reviews, conflict resolution, stack discovery, and Actions runs, as durable steps                                    |
+| [Workflows](https://developers.cloudflare.com/workflows/)                               | Reviews, rebases and conflict resolution, stack discovery, agent lessons, and Actions runs, as durable steps         |
 | [Containers](https://developers.cloudflare.com/containers/)                             | A Linux container per Actions job                                                                                    |
-| [D1](https://developers.cloudflare.com/d1/)                                             | Users, pull requests, reviews, relationships, and state history                                                      |
+| [D1](https://developers.cloudflare.com/d1/)                                             | Users, pull requests, reviews, relationships, state history, and the audit log                                       |
 | [R2](https://developers.cloudflare.com/r2/)                                             | Git LFS objects, Actions logs, and the Actions cache, moved through pre-signed URLs                                  |
 | [Email Sending](https://developers.cloudflare.com/email-service/)                       | Invitations and email verification                                                                                   |
 | [Cron Triggers](https://developers.cloudflare.com/workers/configuration/cron-triggers/) | Actions history retention and the daily usage sync                                                                   |
@@ -208,21 +220,23 @@ See [Architecture](docs/architecture.md) for the full breakdown.
 
 ### MCP tools
 
-Agents create repositories, open and comment on pull requests, read Actions step logs, read the pull request
-graph (`gitorange_get_pull_tree`), and merge. `gitorange_list_pull_requests` with `state: "agent_followup"` is the
-work queue. Approving is for people; an app the user marks as a moderator (**Settings → MCP server → Connected
-apps**) can approve on that user's behalf, recorded "via" the app.
+Agents create repositories, open and comment on pull requests (with an optional session label and the person's
+request), read Actions step logs, read the pull request graph (`gitorange_get_pull_tree`), list and invite
+reviewer agents, and merge. `gitorange_list_pull_requests` with `state: "agent_followup"` is the work queue.
+Approving is for people; an app the user marks as a moderator (**Settings → MCP server → Connected apps**) can
+approve on that user's behalf, recorded "via" the app.
 
 ### Everything else a code host needs
 
 - **Git over HTTPS** with personal access tokens, and **Git LFS** in R2 (files up to 5 GB, transferred directly
   between `git lfs` and R2).
-- **Pull requests** with Markdown comments, commits and files-changed views, and **rebase and merge** only (a
-  fast-forward, so commits keep their SHAs and history stays linear).
+- **Pull requests** with Markdown comments, commits and files-changed views, and rebase-and-merge as a
+  fast-forward for a linear history.
 - **Personal and team repositories.** Personal repositories are private by default and can be made internal.
   Team repositories are visible to every member.
+- **An audit log** of every change to repositories, agents, decisions, and settings (**Site admin → Audit log**).
 - **Invitations** by email, single use, expiring in seven days.
-- **Syntax highlighting** for 35+ languages in light and dark mode.
+- **Syntax highlighting** for 35+ languages in every theme.
 - **Site admin settings** (instance name, invitation sender, AI models, Actions retention) without a deploy.
 - **Usage & cost**: what the instance costs on Cloudflare this month, at list price and with the plan's included
   allowances.
@@ -254,7 +268,6 @@ machines) in a Debian container with Node.js 24, git, Python, and build tools. S
 - **Git LFS and logs:** R2, with the first 10 GB-month free ([pricing](https://developers.cloudflare.com/r2/pricing/)).
 
 D1 and Email Sending usage for a small team stays within the plan.
-
 
 ## Documentation
 
