@@ -250,6 +250,14 @@ export async function decideFlag(
         status: 409,
         error: 'Someone already decided this finding',
       };
+    // The first approval stands, so a note sent with a second one would be lost: refuse it instead.
+    if (!decided && teach)
+      return {
+        ok: false,
+        status: 409,
+        error:
+          'This finding is already approved: undo the approval to teach the agent with it',
+      };
     if (decided)
       await recordAudit(
         db,

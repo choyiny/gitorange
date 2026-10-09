@@ -459,6 +459,27 @@ describe('teaching with a decision', () => {
       ).status
     ).toBe(400);
   });
+
+  it('refuses a teach note on a finding that is already approved, instead of dropping it', async () => {
+    const { t, admin, person } = await questionedPull();
+    expect((await flagCall(t, admin, person.id, 'approve', {})).status).toBe(
+      200
+    );
+    const res = await flagCall(t, admin, person.id, 'approve', {
+      teach: 'All invoices are in Canadian dollars.',
+    });
+    expect(res.status).toBe(409);
+    expect(await flagState(t, person.id)).toMatchObject({
+      teach_note: null,
+    });
+    expect((await findingAudit(t)).map((e) => e.action)).toEqual([
+      'finding.approved',
+    ]);
+    // Approving again without a note still keeps the first approval.
+    expect((await flagCall(t, admin, person.id, 'approve', {})).status).toBe(
+      200
+    );
+  });
 });
 
 describe('undoing a decision', () => {
