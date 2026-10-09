@@ -4,16 +4,28 @@ type MermaidApi = typeof import('mermaid').default;
 let mermaidLoad: Promise<MermaidApi> | null = null;
 let diagramCount = 0;
 
+/**
+ * The theme's text font, resolved. Mermaid sizes each label by measuring its text in the font it is given: "inherit"
+ * measures in a fallback font, and labels drawn in the theme's own font are then clipped.
+ */
+function themeFont(): { fontFamily: string; fontSize: string } {
+  const style = getComputedStyle(document.body);
+  return { fontFamily: style.fontFamily, fontSize: style.fontSize };
+}
+
 /** Mermaid is large, so it loads only once a page has a diagram to draw. */
 function loadMermaid(dark: boolean): Promise<MermaidApi> {
   mermaidLoad ??= import('mermaid').then((m) => m.default);
-  return mermaidLoad.then((mermaid) => {
+  // Measure only once the self-hosted fonts are in, or the widths come from the fallback font.
+  return Promise.all([mermaidLoad, document.fonts?.ready]).then(([mermaid]) => {
+    const font = themeFont();
     mermaid.initialize({
       startOnLoad: false,
       // Diagrams come from repositories, models and PR titles: no scripts, links, or raw HTML.
       securityLevel: 'strict',
       theme: dark ? 'dark' : 'default',
-      fontFamily: 'inherit',
+      fontFamily: font.fontFamily,
+      themeVariables: font,
     });
     return mermaid;
   });

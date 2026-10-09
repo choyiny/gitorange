@@ -33,9 +33,10 @@
   --bad: #b3312a;
   --bad-bg: #fdeceb;
   --bad-line: #f2c5c1;
-  --run: #0a6a75;
-  --run-bg: #e4f4f6;
-  --run-line: #b7dde2;
+  /* Sky blue, as in dark: the old teal sat too close to --ok, so "checking" and "queued" looked alike. */
+  --run: #0369a1;
+  --run-bg: #e0f2fe;
+  --run-line: #bae6fd;
   --brand-orange: #f6821f;
   --font: 'Figtree', 'Satoshi', system-ui, -apple-system, sans-serif;
   --mono: 'IBM Plex Mono', ui-monospace, 'SFMono-Regular', Menlo, monospace;
