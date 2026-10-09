@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { Link } from 'react-router-dom';
+import { Link, useLocation } from 'react-router-dom';
 import {
   AlertIcon,
   CheckCircleFillIcon,
@@ -75,6 +75,8 @@ export function AutoMergeStatus({
   onChange: () => Promise<unknown> | void;
 }) {
   const review = d.review!;
+  const { pathname } = useLocation();
+  const conversationPath = `/${repo.fullName}/pull/${d.pull.number}`;
   const { state, reasons } = review.autoMerge;
   const { busy, error, run } = useAction(onChange);
   const enabled = state !== 'disabled';
@@ -105,7 +107,13 @@ export function AutoMergeStatus({
         {pendingFlags && (
           <>
             {' '}
-            <a href={`#${REVIEW_ANCHOR}`}>Review the flags</a>
+            {pathname === conversationPath ? (
+              <a href={`#${REVIEW_ANCHOR}`}>Review the flags</a>
+            ) : (
+              <Link to={`${conversationPath}#${REVIEW_ANCHOR}`}>
+                Review the flags
+              </Link>
+            )}
           </>
         )}
       </>

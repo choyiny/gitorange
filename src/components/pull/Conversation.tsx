@@ -137,8 +137,11 @@ export function Conversation({
     setSending(andState ?? 'comment');
     setError(null);
     try {
-      if (body.trim())
+      if (body.trim()) {
         await api.comment(repo.owner.username, repo.name, pr.number, body);
+        // A failed Close or Reopen must not leave an already posted comment ready to send twice.
+        setBody('');
+      }
       if (andState)
         await api.updatePull(repo.owner.username, repo.name, pr.number, {
           state: andState,

@@ -297,13 +297,15 @@ export default function PullView() {
   const tabHref = (t: PullTab) =>
     `${base}/pull/${num}${t === 'conversation' ? '' : `/${t}`}`;
   return (
-    <div className={`pr-page ${entering}`}>
+    // Route changes start fresh; a new head also clears an open merge confirmation.
+    <div key={pr.id} className={`pr-page ${entering}`}>
       <PullHeader repo={repo} d={d} canEdit={canEdit} onSaved={refresh} />
       {open && paused && (
         <PausedBanner repo={repo} paused={paused} onDone={refresh} />
       )}
       {pr.state === 'open' ? (
         <OpenBox
+          key={d.headSha}
           repo={repo}
           d={d}
           spot={spot}

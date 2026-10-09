@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
+  canDeleteMergedBranch,
   etaText,
   fixerAttempts,
   nextStep,
@@ -486,5 +487,26 @@ describe('pullChip', () => {
       tone: 'off',
       label: 'Closed',
     });
+  });
+});
+
+describe('canDeleteMergedBranch', () => {
+  const branch = {
+    name: 'feature',
+    isProtected: false,
+    mergedNotDeleted: true,
+  };
+  it('waits for the server to confirm the merged branch is safe to delete', () => {
+    expect(canDeleteMergedBranch('feature', undefined)).toBe(false);
+    expect(canDeleteMergedBranch('feature', branch)).toBe(true);
+  });
+  it('keeps protected, reused and advanced branches, including stale data for another branch', () => {
+    expect(
+      canDeleteMergedBranch('feature', { ...branch, isProtected: true })
+    ).toBe(false);
+    expect(
+      canDeleteMergedBranch('feature', { ...branch, mergedNotDeleted: false })
+    ).toBe(false);
+    expect(canDeleteMergedBranch('other', branch)).toBe(false);
   });
 });

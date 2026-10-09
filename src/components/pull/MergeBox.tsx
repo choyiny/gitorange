@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import { useQuery } from '@tanstack/react-query';
 import { Link, useNavigate } from 'react-router-dom';
 import {
   AlertIcon,
@@ -12,6 +13,7 @@ import {
 } from '@primer/octicons-react';
 import {
   api,
+  qk,
   type MergingPaused,
   type PullDetail,
   type RepoDetail,
@@ -24,6 +26,7 @@ import {
   rebaseHeadline,
 } from '@/lib/rebaseStatus';
 import {
+  canDeleteMergedBranch,
   etaText,
   nextStep,
   openQuestion,
@@ -409,8 +412,18 @@ export function MergedBox({
   const [reverting, setReverting] = useState(false);
   const [revertError, setRevertError] = useState<string | null>(null);
   const branchThere = d.headBranchExists && !branchDeleted;
+  const branches = useQuery({
+    queryKey: qk.branches(repo.owner.username, repo.name),
+    queryFn: () => api.branches(repo.owner.username, repo.name),
+    enabled: d.canMerge && branchThere,
+  });
   const canDelete =
-    d.canMerge && branchThere && pr.headRef !== repo.defaultBranch;
+    d.canMerge &&
+    branchThere &&
+    canDeleteMergedBranch(
+      pr.headRef,
+      branches.data?.find((branch) => branch.name === pr.headRef)
+    );
   const canRevert = repo.permissions.write;
   const revert = async () => {
     setReverting(true);
@@ -477,11 +490,9 @@ export function MergedBox({
           <p className="muted">
             {branchThere ? (
               <>
-                The <code>{pr.headRef}</code> branch can be safely deleted.
-              </>
-            ) : pr.mergedAutomatically && !branchDeleted ? (
-              <>
-                The <code>{pr.headRef}</code> branch was deleted automatically.
+                The <code>{pr.headRef}</code> branch is still there.
+                {canDelete &&
+                  ' It has no newer work or open pull requests that need it, so it can be deleted.'}
               </>
             ) : (
               <>

@@ -519,8 +519,8 @@ export function PersonApprovals({
             aria-label="Approve this commit"
             title={
               outstanding
-                ? 'Approving lets this commit land past findings for a person and failed or unfinished agent reviews. It does not override an agent’s change request: that needs a new commit or a Dismiss.'
-                : 'Approve this commit. Approval does not override an agent’s change request: dismiss it, or push a fix.'
+                ? 'Approving stands over findings from unguarded agents and failed or unfinished reviews. Guarded findings still need a decision with a reason; an agent’s change request needs a new commit or a Dismiss.'
+                : 'Approve this commit. Guarded findings still need a decision with a reason; an agent’s change request needs a new commit or a Dismiss.'
             }
             onClick={() =>
               run(() =>

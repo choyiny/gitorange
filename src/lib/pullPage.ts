@@ -7,6 +7,7 @@ import type { Tone } from './agentLook';
 import { blocking, reasonText, stateLabel } from './pullState';
 import type {
   AgentRun,
+  BranchInfo,
   Pull,
   PullReview,
   PullState,
@@ -281,4 +282,18 @@ export function participants<U extends Pick<User, 'id'>>(
   const all = [pr.author, ...comments.map((c) => c.author)];
   if (pr.mergedBy) all.push(pr.mergedBy);
   return all.filter((u, i) => all.findIndex((x) => x.id === u.id) === i);
+}
+
+/** Only offer deleting a merged branch after the server confirms it has no newer work or dependants. */
+export function canDeleteMergedBranch(
+  headRef: string,
+  branch:
+    Pick<BranchInfo, 'name' | 'isProtected' | 'mergedNotDeleted'> | undefined
+): boolean {
+  return (
+    !!branch &&
+    branch.name === headRef &&
+    !branch.isProtected &&
+    branch.mergedNotDeleted
+  );
 }
