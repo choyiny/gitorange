@@ -23,6 +23,7 @@ The app, API, and git endpoint share one origin: `git clone http://localhost:808
 | Script                              | What it does                                                                         |
 | ----------------------------------- | ------------------------------------------------------------------------------------ |
 | `yarn dev`                          | Vite dev server running the Worker in `env.dev`, under a memory watchdog (below)     |
+| `yarn seed:demo`                    | Fills a running local instance with demo data (see below)                            |
 | `yarn test`                         | Vitest inside workerd against a real local D1, with an in-memory Artifacts fake      |
 | `yarn typecheck`                    | Type-checks the SPA and the Worker                                                   |
 | `yarn format` / `yarn format:check` | Prettier                                                                             |
@@ -46,6 +47,42 @@ migrations/          Generated D1 migrations
 ```
 
 API docs are served at `/api/swagger-ui` while running.
+
+## Demo data
+
+`yarn seed:demo` fills a running local instance with a project to look at: a teammate (`cho`, Cho Yin), an `invoices`
+repository with ten days of history, eight merged pull requests (three with their branches left behind), six open ones
+(one stacked on another, opened by Claude Code, Codex and by hand), the reviewer crew with a finding in each state
+(an owner question, a change request, one assigned to `cho`, one decided by GitOrange AI), and a week of test runs.
+It gives the pages of the redesign something to show, and makes a local demo possible; a page that is still being built
+shows nothing new until it lands, though the API route behind it already answers (the script prints both).
+
+```bash
+yarn db:migrate:local                          # the local database must be current
+yarn dev                                       # in one terminal; sign in once and create the first admin
+SEED_ADMIN=<admin username> SEED_PASSWORD=<their password> yarn seed:demo --url http://localhost:8080
+```
+
+A run takes about ten minutes: opening each pull request starts GitOrange's usual background AI work (stack discovery),
+and the script waits for it to settle.
+
+- **Run it from the checkout `yarn dev` runs from.** The API cannot write reviews, backdated dates or test runs, so the
+  script writes those rows into that checkout's local D1 with `wrangler d1 execute DB --local --env dev`. Before it
+  creates anything it checks that this D1 holds the same admin the server at `--url` signed in, and stops if not.
+- **Local only.** It refuses any URL whose host is not `localhost`, `127.0.0.1`, `[::1]`, `*.localhost` or `*.test`.
+- **It uses the real services in the `gitorange-dev` namespace** (Artifacts and Workers AI), as `yarn dev` does: it creates
+  the `invoices` repository and the crew's repositories, pushes the history over git, and opens and lands pull requests
+  through the API.
+- **Running it again finds the demo and stops.** `--reset` deletes the `invoices` repository (and its git storage, for
+  good) and builds it again, but only a repository that this script built: its description and first commit (or the marker
+  it writes last) must match, or it refuses. `--dry-run` builds the git history in a temporary folder and checks the SQL
+  against the migrations, touching no server.
+- `cho` gets the password in `SEED_TEAMMATE_PASSWORD`, or the local demo default at the top of `scripts/seed-demo.mjs`.
+  Nothing else is printed or stored: the admin's password is only used to sign in (and is not passed to wrangler), and the
+  git token it creates is deleted right after the last push (or on Ctrl-C). Only what the run itself creates is backdated;
+  a teammate, agents or tokens that were already there keep their dates.
+- The agents do not really run: their reviews and findings are written directly, as they would have been. Containers are
+  off locally, so the demo's test runs are written the same way.
 
 ## CI
 
