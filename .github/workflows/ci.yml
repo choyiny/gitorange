@@ -275,5 +275,7 @@ jobs:
           worker/src/__tests__/agents-profile.test.ts
           worker/src/__tests__/agents-presets.test.ts
           worker/src/__tests__/audit.test.ts
+          worker/src/__tests__/repo-stats.test.ts
+          worker/src/__tests__/agent-stats.test.ts
           worker/src/__tests__/agent-learning-surfaces.test.ts
           src/lib/
