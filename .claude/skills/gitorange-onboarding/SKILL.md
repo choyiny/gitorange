@@ -192,7 +192,46 @@ Optional, once the basics work (point them to the docs rather than doing it for 
 6. **Commit attribution:** under **avatar → Settings → Emails**, add any other address they commit with and click the verification link, so their commits link to their profile.
 7. **AI tools (MCP):** **avatar → MCP server** shows the command for their client, e.g. `claude mcp add --transport http gitorange <BASE_URL>/mcp`.
 8. **Actions:** a workflow file in `.github/workflows/` (GitHub Actions syntax) runs on pushes and pull requests; the run shows under the repository's **Actions** tab.
-9. **Reviews and auto-merge:** **Agents → New reviewer → Add the recommended crew** creates Security, Data, Speed, Features, Reliability, Privacy, and Shipping in one step; invite them in a repository's **Settings → Agents**. Each new commit is reviewed by the agents it concerns, and auto-merge is on wherever an agent is invited. Findings for a person wait on **Approvals**; **Let Claude decide** (per agent, on that page) answers an agent's findings as the user, except Security and Data, which always need a person. `.orangeignore` keeps generated files out of reviews. See `docs/auto-merge.md`.
+
+### Step 8: Reviewer agents
+
+Reviewer agents are what turn on reviews and auto-merge, so ask before finishing:
+
+> Do you want reviewer agents now? (a) the recommended crew: seven general reviewers (Security, Data, Speed,
+> Features, Reliability, Privacy, Shipping); (b) GitOrange's own agents from https://github.com/gitorangeapp (Data,
+> DevOps, Feature, Security, Speed), the ones that review GitOrange itself; (c) both; or (d) later.
+
+**(a) The recommended crew:** the user opens **Agents → New reviewer → Add the recommended crew**, which creates all
+seven in one step.
+
+**(b) Agents from github.com/gitorangeapp:** each repository there (`dataagent`, `devopsagent`, `featureagent`,
+`securityagent`, `speedagent`) holds an agent's `AGENT.md`, `avatar.png`, and `knowledge/`. Ask which ones, and
+whether to bring each one **whole** or **`AGENT.md` only**: `knowledge/` holds what the agent learned reviewing
+GitOrange's own code (its file paths and conventions), so whole suits a user working on GitOrange itself, and
+`AGENT.md` only suits every other project. Then, for each chosen agent:
+
+1. The user creates it in **Agents → New reviewer** with exactly that handle and a display name (Data Agent, DevOps
+   Agent, Feature Agent, Security Agent, Speed Agent). If the crew already created that handle (`dataagent`,
+   `securityagent`, `speedagent`), skip this: the import replaces its files.
+2. Import its files over git. This uses the credentials saved by the clone in Step 7; if git asks for a password,
+   have the user run the push themselves with `!` so the token never passes through the chat.
+
+   ```bash
+   H=featureagent    # the agent's handle
+   git clone -q --depth 1 https://github.com/gitorangeapp/$H.git /tmp/gitorange-agents/$H-src
+   git clone -q <BASE_URL>/$H/$H.git /tmp/gitorange-agents/$H
+   cp -R /tmp/gitorange-agents/$H-src/{AGENT.md,avatar.png,knowledge} /tmp/gitorange-agents/$H/   # whole
+   # AGENT.md only: cp /tmp/gitorange-agents/$H-src/{AGENT.md,avatar.png} /tmp/gitorange-agents/$H/
+   cd /tmp/gitorange-agents/$H && git add -A && git commit -qm "Import $H from github.com/gitorangeapp" && git push -q
+   ```
+
+   GitOrange re-reads `AGENT.md` after the push; the agent's profile shows its new instructions and avatar.
+
+Whichever they chose, they then invite the agents in a repository's **Settings → Agents**. Each new commit is
+reviewed by the agents it concerns, and auto-merge is on wherever an agent is invited. Findings for a person wait on
+**Approvals**; **Let Claude decide** (per agent, on that page) answers an agent's findings as the user, except
+Security and Data, which always need a person. `.orangeignore` keeps generated files out of reviews. See
+`docs/auto-merge.md`.
 
 ## Completion summary
 
@@ -210,6 +249,7 @@ Report, with real values substituted:
 - Instance name, invitation sender, and AI models can later be changed in Site admin → Settings without a deploy; the wrangler vars are only defaults
 - Usage & cost: Cloudflare analytics `<on (CF_ANALYTICS_TOKEN set) | off>`, daily sync at 02:30 UTC; Durable Object namespace IDs `<set (Step 4.5) | not set>`
 - Admin account `<username>`
+- Reviewer agents: `<the recommended crew | from github.com/gitorangeapp: <handles>, whole or AGENT.md only | none yet>`, invited in `<repositories>`
 - To update later: `git pull && yarn install && yarn db:migrate:prod && yarn deploy`. A deploy restarts running Actions jobs (each restarts from the beginning, up to 3 attempts), so prefer deploying when no CI is running.
 
 ## Common issues

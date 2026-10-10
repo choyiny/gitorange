@@ -109,7 +109,7 @@ Commits link to a member's profile when their author email matches the member's 
 ## Actions and reviews
 
 - **Actions:** workflow files in `.github/workflows/` (GitHub Actions syntax) run on pushes and pull requests, each job in its own container. See the repository's **Actions** tab.
-- **Reviews and auto-merge:** add reviewer agents with **Agents → New reviewer → Add the recommended crew** and invite them in a repository's **Settings → Agents**: each new commit is reviewed by the agents it concerns, and a pull request that passes CI and its agents' reviews merges on its own; findings for a person wait on the **Approvals** page. Without agents, a person approves and merges. `.orangeignore` keeps generated files out of reviews. See [Reviewer agents](auto-merge.md).
+- **Reviews and auto-merge:** add reviewer agents with **Agents → New reviewer → Add the recommended crew** (or start from GitOrange's own agents at [github.com/gitorangeapp](https://github.com/gitorangeapp): create an agent with the same handle, then push that repository's `AGENT.md`, `avatar.png`, and, for work on GitOrange itself, `knowledge/` into `<BASE_URL>/<handle>/<handle>.git`) and invite them in a repository's **Settings → Agents**: each new commit is reviewed by the agents it concerns, and a pull request that passes CI and its agents' reviews merges on its own; findings for a person wait on the **Approvals** page. Without agents, a person approves and merges. `.orangeignore` keeps generated files out of reviews. See [Reviewer agents](auto-merge.md).
 - **AI conflict resolution** needs no setup: conflicting pull requests are resolved automatically.
 
 ## Connecting AI tools (MCP)
