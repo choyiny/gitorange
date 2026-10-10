@@ -26,6 +26,21 @@ two agents edit the same function, one adds a configuration variable without the
 required, and a person faces forty pull requests with no idea which ones need them. GitOrange is a code host
 built for that team.
 
+## A real run, in numbers
+
+For the demo video, three coding sessions (Claude Code, Codex, and Cursor) opened three pull requests against a copy
+of GitOrange's own repository within one second of each other. Two of them rewrote the same function. GitOrange's
+records for that run:
+
+| What happened                          | Result                                                                                 |
+| -------------------------------------- | -------------------------------------------------------------------------------------- |
+| All three pull requests landed         | 10 minutes 25 seconds after they opened                                                |
+| Approvals or merges by a person        | None                                                                                   |
+| Reviewers Clef ran on the first one    | 2 of 5: Features (91%) and Security (34%); Speed, DevOps, and Data were never called   |
+| Clef deciding whether two were related | One call, 928 tokens, \$0.0002: related at 0.74, saved as a conflict with #27 first    |
+| Change requests                        | 1, fixed by the coding session that opened the pull request, after reading it over MCP |
+| Conflicts                              | 1, resolved by the Fixer, a durable Pi agent; the resolved commit kept both changes    |
+
 ## What's new here
 
 ### Your reviewers are a crew of agents
@@ -40,8 +55,9 @@ what it knows. Write your own the same way.
 
 ### Agents ask you plain questions
 
-A finding that needs a person arrives as a yes/no question an owner can answer without reading code: _"Should
-the invoice list now need a sign-in?"_ One click deeper, a developer gets the explanation, a before/after table,
+A finding that needs a person arrives as a yes/no question an owner can answer without reading code: _"Do you
+want every deployer to add the AI gateway name to their own config before this deploy, or accept the built-in
+default?"_ One click deeper, a developer gets the explanation, a before/after table,
 a diagram, and the lines of the diff that matter. Every decision and finding has its own page and URL.
 
 <img alt="A finding page: the Data Agent asks a person to decide on migration 0025 for #67, with a before/after table, a diagram of the table it changes, and the lines of the migration" src="docs/screenshots/finding.jpg" />
@@ -83,7 +99,7 @@ since it branched. The pull requests page shows the result as a board, a list, o
 | -------------------- | ---------------------------------------------------------------------------------------- | ----------------------------------------------------- |
 | **Builds on**        | #32 calls a helper that #31 adds                                                         | Stacks #32 on #31; it lands after #31                 |
 | **Must account for** | #28 adds a setup check for every configuration variable; #29 adds a variable without one | Holds #29 until a re-check says it added the check    |
-| **Conflicts**        | #40 and #41 rewrite the same function                                                    | Orders them; an agent resolves any lines that overlap |
+| **Conflicts**        | #27 and #28 both rewrite the function that labels graph nodes                            | Orders them; an agent resolves any lines that overlap |
 | **Independent**      | A docs change and an unrelated bug fix                                                   | Records the pair so it's never checked again          |
 
 <img alt="The pull request graph: #69, this README rewrite, lands on main and has accounted for #67, which changed the merge model the README describes" src="docs/screenshots/pull-graph.jpg" />
@@ -93,7 +109,8 @@ since it branched. The pull requests page shows the result as a board, a list, o
 Routing questions go to [Clef](https://developers.cloudflare.com/workers-ai/models/), a decision model on Workers
 AI that answers yes/no, choice, and score questions with a calibrated probability. Does this change touch stored
 data? Which test modules can it affect? Does #29 depend on #28? Each reviewer agent sets the probability at which
-it reviews. A larger model, GLM-5.3, writes the explanations a person or an agent reads, and decides when Clef is
+it reviews, so most changes reach only the reviewers they concern, and the larger models run only after Clef's
+answer calls for them. A larger model, GLM-5.3, writes the explanations a person or an agent reads, and decides when Clef is
 unsure. Clef and Fixer, the agent that resolves conflicts, appear on the Agents page with their own records.
 
 <img alt="Pull request #69, the README rewrite you are reading: Clef read the one-line summary of README.md, judged that none of the four reviewer agents was needed, and a person approved and merged it" src="docs/screenshots/readme-pull-request.jpg" />
