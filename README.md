@@ -26,21 +26,6 @@ two agents edit the same function, one adds a configuration variable without the
 required, and a person faces forty pull requests with no idea which ones need them. GitOrange is a code host
 built for that team.
 
-## A real run, in numbers
-
-For the demo video, three coding sessions (Claude Code, Codex, and Cursor) opened three pull requests against a copy
-of GitOrange's own repository within one second of each other. Two of them rewrote the same function. GitOrange's
-records for that run:
-
-| What happened                          | Result                                                                                 |
-| -------------------------------------- | -------------------------------------------------------------------------------------- |
-| All three pull requests landed         | 10 minutes 25 seconds after they opened                                                |
-| Approvals or merges by a person        | None                                                                                   |
-| Reviewers Clef ran on the first one    | 2 of 5: Features (91%) and Security (34%); Speed, DevOps, and Data were never called   |
-| Clef deciding whether two were related | One call, 928 tokens, \$0.0002: related at 0.74, saved as a conflict with #27 first    |
-| Change requests                        | 1, fixed by the coding session that opened the pull request, after reading it over MCP |
-| Conflicts                              | 1, resolved by the Fixer, a durable Pi agent; the resolved commit kept both changes    |
-
 ## What's new here
 
 ### Your reviewers are a crew of agents
