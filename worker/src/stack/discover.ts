@@ -3,6 +3,7 @@ import type { DrizzleDB } from '../db/middleware';
 import {
   prClassifications,
   prEdges,
+  type EdgeKind,
   pullRequests,
   type PullRequest,
   type Repository,
@@ -27,6 +28,8 @@ import {
 import { landTargetIs, landTargetOf } from '../lib/land-target';
 import { maybeAutoMerge } from '../review/auto-merge';
 import { executeReconcile } from './reconcile';
+import { acyclicVerdict } from './acyclic';
+import { holdsWhole, lineageOf, ownBase, type Lineage } from './lineage';
 
 export type StackParams = { pullRequestId: string };
 
@@ -99,12 +102,16 @@ export async function changesFor(
   return git.diffTrees(from?.treeHash ?? null, to.treeHash);
 }
 
-/** One-liners from the PR's latest review at `head`; plain paths when it has none. */
+/**
+ * One-liners from the PR's latest review at `head`; plain paths when it has none. `own`: only these paths (its
+ * changes measured past the open pull requests it holds; the review summarized every file over the target).
+ */
 export async function summariesFor(
   db: DrizzleDB,
   pullRequestId: string,
   head: string,
-  changes: FileChange[]
+  changes: FileChange[],
+  own?: Set<string>
 ): Promise<string> {
   const review = await db
     .select({ files: prClassifications.files })
@@ -117,7 +124,10 @@ export async function summariesFor(
     )
     .orderBy(desc(prClassifications.createdAt))
     .get();
-  if (review?.files?.length) return summaryLines(review.files);
+  if (review?.files?.length)
+    return summaryLines(
+      own ? review.files.filter((f) => own.has(f.path)) : review.files
+    );
   return changes.map((c) => `- ${c.path}`).join('\n');
 }
 
@@ -128,8 +138,11 @@ type Side = PrSide & {
   /** The commit its changes are measured from: the target tip, or a landed PR's merge parent. */
   target: string;
 };
-/** A candidate also carries the files it shares with the PR being stacked (capped). */
-type Candidate = Side & { shared: string[] };
+/**
+ * A candidate also carries the files it shares with the PR being stacked (capped), and which side's branch holds the
+ * other's commits whole, by git (`me`: the PR being stacked holds the candidate's; null: neither, or unknown).
+ */
+type Candidate = Side & { shared: string[]; holds: 'me' | 'other' | null };
 
 /** Runs discovery for one PR against every candidate (MERGE_RESOLUTION Workflow). */
 export async function executeStacking(
@@ -160,39 +173,39 @@ export async function executeStacking(
     ]);
     if (!target || !head) return null;
     const policy = stackingTuning(deps.tuning);
+    // `base`: where its own changes start (the target, past the open pull requests it holds, or a landed PR's
+    // merge parent); `trimmed`: base is past the target, so the review's one-liners are filtered to its own files.
     const side = async (
       p: PullRequest,
       h: string,
       base: string,
-      landed: boolean
+      landed: boolean,
+      trimmed = false
     ): Promise<Side & { paths: string[] }> => {
       const changes = await changesFor(git, base, h);
+      const paths = changes.map((c) => c.path);
       return {
         id: p.id,
         number: p.number,
         title: p.title,
         description: p.body.slice(0, MAX_DESCRIPTION),
         summaries: capLines(
-          await summariesFor(db, p.id, h, changes),
+          await summariesFor(
+            db,
+            p.id,
+            h,
+            changes,
+            trimmed ? new Set(paths) : undefined
+          ),
           MAX_SUMMARIES
         ),
         landed,
         head: h,
         headRef: p.headRef,
         target: base,
-        paths: changes.map((c) => c.path),
+        paths,
       };
     };
-    const { paths: myPaths, ...me } = await side(pr, head, target, false);
-    const mine = new Set(myPaths);
-    // Full path lists stay in this step; only the shared ones go into its result.
-    const candidate = ({
-      paths,
-      ...s
-    }: Side & { paths: string[] }): Candidate => ({
-      ...s,
-      shared: paths.filter((p) => mine.has(p)).slice(0, MAX_SHARED),
-    });
 
     // Open PRs into the same target, newest first; beyond max_open only those sharing a file.
     const others = await db
@@ -208,6 +221,49 @@ export async function executeStacking(
       .orderBy(desc(pullRequests.number))
       .all();
     const refs = await git.refs();
+    // Each open PR's own commits over the target, by identity (rebased copies included): who holds whom is git's
+    // to say, and a PR's changes are measured past the open PRs it holds whole, so a child is never judged on its
+    // parent's changes (nor siblings on the parent they share).
+    const lineages = new Map<string, Lineage>();
+    for (const o of others) {
+      const h = o.id === pr.id ? head : refs.get(`refs/heads/${o.headRef}`);
+      if (h) lineages.set(o.id, await lineageOf(git, target, h));
+    }
+    if (!lineages.has(pr.id))
+      lineages.set(pr.id, await lineageOf(git, target, head));
+    const baseOf = async (id: string) => {
+      const x = lineages.get(id)!;
+      const owned = new Set<string>();
+      for (const [z, l] of lineages)
+        if (z !== id && (await holdsWhole(git, x, l)))
+          for (const i of l.ids) owned.add(i);
+      return ownBase(x, owned);
+    };
+    const myLineage = lineages.get(pr.id)!;
+    const myBase = await baseOf(pr.id);
+    const { paths: myPaths, ...me } = await side(
+      pr,
+      head,
+      myBase ?? target,
+      false,
+      !!myBase
+    );
+    const mine = new Set(myPaths);
+    // Full path lists stay in this step; only the shared ones go into its result.
+    const candidate = (
+      { paths, ...s }: Side & { paths: string[] },
+      holds: Candidate['holds']
+    ): Candidate => ({
+      ...s,
+      shared: paths.filter((p) => mine.has(p)).slice(0, MAX_SHARED),
+      holds,
+    });
+    const holder = async (theirs: Lineage): Promise<Candidate['holds']> =>
+      (await holdsWhole(git, myLineage, theirs))
+        ? 'me'
+        : (await holdsWhole(git, theirs, myLineage))
+          ? 'other'
+          : null;
     const candidates: Candidate[] = [];
     let triaged = 0;
     // Every push to the target re-runs every open PR's stack run, so a push costs O(N²) diffTrees across
@@ -216,7 +272,11 @@ export async function executeStacking(
       if (o.id === pr.id) continue;
       const h = refs.get(`refs/heads/${o.headRef}`);
       if (!h) continue;
-      const s = candidate(await side(o, h, target, false));
+      const base = await baseOf(o.id);
+      const s = candidate(
+        await side(o, h, base ?? target, false, !!base),
+        await holder(lineages.get(o.id)!)
+      );
       const shares = s.shared.length > 0;
       if (triaged < policy.max_open - 1 || shares) candidates.push(s);
       triaged++;
@@ -241,7 +301,14 @@ export async function executeStacking(
       // before rebase merging, the squash commit's first parent to its pinned head).
       const shas = await pullShas(git, l);
       if (!shas) return;
-      candidates.push(candidate(await side(l, shas.head, shas.base, true)));
+      // Holding rebased copies of a landed PR's commits: it builds on it (a landed PR never builds on an open one).
+      const holds =
+        (await holder(await lineageOf(git, shas.base, shas.head))) === 'me'
+          ? 'me'
+          : null;
+      candidates.push(
+        candidate(await side(l, shas.head, shas.base, true), holds)
+      );
     };
     for (const l of landed) {
       if (!l.mergeCommitSha || !l.mergedAt) continue;
@@ -330,6 +397,14 @@ export async function executeStacking(
         : [job.me, other];
     const pairOf = (x: string, y: string) =>
       and(eq(prEdges.prAId, x), eq(prEdges.prBId, y), eq(prEdges.slot, 'pair'));
+    // Git's verdict: the side whose commits the other's branch holds whole is the prerequisite.
+    const prereqSide =
+      other.holds === 'me' ? other : other.holds ? job.me : null;
+    const gitPre: 'a' | 'b' | null = prereqSide
+      ? prereqSide.id === a.id
+        ? 'a'
+        : 'b'
+      : null;
     const claim = await step.do(
       `claim:${other.id}`,
       async (): Promise<Claim> => {
@@ -362,7 +437,9 @@ export async function executeStacking(
           row.aHead === a.head &&
           row.bHead === b.head &&
           row.stage !== 'failed' &&
-          !dead
+          !dead &&
+          // A verdict the models made where git now decides is re-decided.
+          (!gitPre || row.decidedBy === 'git')
         )
           return { mode: 'skip' };
         // Only the dependent moved since it was told to account for the prerequisite: re-check, don't re-decide.
@@ -372,6 +449,8 @@ export async function executeStacking(
           (row.stage === 'done' || row.stage === 'recheck') &&
           row.kind === 'must_account_for' &&
           row.prerequisite &&
+          // Never the other way round from git (a parent never accounts for its child).
+          (!gitPre || row.prerequisite === gitPre) &&
           (row.prerequisite === 'a'
             ? row.aHead === a.head
             : row.bHead === b.head)
@@ -417,6 +496,7 @@ export async function executeStacking(
           accountedForAt: null,
           accountedHead: null,
           errorMessage: null,
+          decidedBy: null,
           updatedAt: now,
         };
         await db
@@ -542,6 +622,40 @@ export async function executeStacking(
       await recheck(pre, dep, claim.reason, claim.instructions);
       continue;
     }
+    const keepAcyclic = (
+      kind: EdgeKind,
+      prerequisite: 'a' | 'b' | null,
+      git: boolean
+    ) =>
+      acyclicVerdict(db, {
+        repositoryId: job.repo.id,
+        landTarget: job.landTarget,
+        a,
+        b,
+        kind,
+        prerequisite,
+        git,
+      });
+
+    // One branch holds the other's commits (or rebased copies of them): it builds on it. No model is asked.
+    if (gitPre) {
+      await step.do(`git:${other.id}`, async () => {
+        const { pre, dep } = sides(gitPre);
+        const v = await keepAcyclic('builds_on', gitPre, true);
+        await save({
+          stage: 'done',
+          kind: v.kind,
+          prerequisite: v.prerequisite,
+          decidedBy: 'git',
+          files: [],
+          reason:
+            v.note ??
+            `#${dep.number}'s branch holds every commit of #${pre.number}${pre.landed ? '' : ' (or a rebased copy of it)'}, so it builds on it.`,
+        });
+        return true;
+      });
+      continue;
+    }
 
     try {
       // Textual check: only possible between two open heads that share a file.
@@ -549,7 +663,9 @@ export async function executeStacking(
       const conflicts = await step.do(`conflicts:${other.id}`, async () => {
         if (a.landed || !shared.length) return [] as string[];
         const plan = await git.planMerge(a.head, b.head);
-        return plan.upToDate ? [] : plan.conflicts;
+        // Only files both change themselves: a conflict that comes with a PR one of them holds is that PR's.
+        const own = new Set(shared);
+        return plan.upToDate ? [] : plan.conflicts.filter((f) => own.has(f));
       });
       // Clef decides, over the one-liners: related? which kind? which side first?
       const answers = await step.do(`decide:${other.id}`, MODEL_RETRIES, () =>
@@ -600,17 +716,26 @@ export async function executeStacking(
           })
       );
       // Clef's confident decision stands whatever the explanation says; a conflict always counts.
-      let kind = decided?.kind ?? relation.kind;
-      let prerequisite = decided?.prerequisite ?? relation.prerequisite;
-      if (kind === 'independent' && conflicts.length) kind = 'conflicts';
-      if (kind === 'conflicts' && !prerequisite) prerequisite = 'a';
-      await step.do(`save:${other.id}`, async () => {
+      let decidedKind = decided?.kind ?? relation.kind;
+      let decidedPre = decided?.prerequisite ?? relation.prerequisite;
+      if (decidedKind === 'independent' && conflicts.length)
+        decidedKind = 'conflicts';
+      if (decidedKind === 'conflicts' && !decidedPre) decidedPre = 'a';
+      // Never a cycle: a verdict that would close one is turned around (a conflict) or left independent.
+      const verdict = await step.do(`save:${other.id}`, async () => {
+        const v = await keepAcyclic(
+          decidedKind,
+          decidedKind === 'independent' ? null : decidedPre,
+          false
+        );
+        const kind = v.kind;
+        const prerequisite = kind === 'independent' ? null : v.prerequisite;
         const owned = await save({
           stage: 'done',
           kind,
-          prerequisite: kind === 'independent' ? null : prerequisite,
+          prerequisite,
           files: focus,
-          reason: relation.reason,
+          reason: v.note ? `${v.note} ${relation.reason}` : relation.reason,
           instructions:
             kind === 'must_account_for' ? relation.instructions : null,
         });
@@ -624,8 +749,9 @@ export async function executeStacking(
           const { pre, dep } = sides(prerequisite);
           await announceMust(pre, dep, relation.reason, relation.instructions);
         }
-        return true;
+        return { kind, prerequisite };
       });
+      const { kind, prerequisite } = verdict;
       // Accounted for before both heads moved, and still must account for: re-check now rather than wait.
       if (
         kind === 'must_account_for' &&

@@ -129,6 +129,7 @@ jobs:
           worker/src/__tests__/stack-tree.test.ts
           worker/src/__tests__/land-target.test.ts
           worker/src/__tests__/stacking-rebase.test.ts
+          worker/src/__tests__/stacking-git.test.ts
 
   test-review:
     name: Test (review and merge)
@@ -268,6 +269,7 @@ jobs:
           worker/src/__tests__/usage.test.ts
           worker/src/__tests__/insights.test.ts
           worker/src/__tests__/ai-gateway.test.ts
+          worker/src/__tests__/ai-rate-limit.test.ts
           worker/src/__tests__/mcp.test.ts
           worker/src/__tests__/mcp-moderator.test.ts
           worker/src/__tests__/mcp-agents.test.ts

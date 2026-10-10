@@ -728,6 +728,9 @@ export const prEdges = sqliteTable(
     // No foreign key: resolved with the ghost-user fallback like other user ids; nothing deletes users.
     dismissedById: text('dismissed_by_id'),
     errorMessage: text('error_message'),
+    // pair: who decided the verdict. git: one branch holds the other's commits (or rebased copies of them), so it
+    // builds on it whatever a model would say; breaking a cycle never changes a git verdict. Null: the models.
+    decidedBy: text('decided_by', { enum: ['git'] }),
     createdAt: integer('created_at', { mode: 'timestamp' }).notNull(),
     updatedAt: integer('updated_at', { mode: 'timestamp' }).notNull(),
   },

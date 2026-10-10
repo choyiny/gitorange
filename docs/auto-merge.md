@@ -278,9 +278,14 @@ It's always on, whenever AI is configured, with built-in tuning: a pull request 
 
 **How a pair is checked.** Where agents review the repository, a `stack` run starts when a pull request's review finishes (or fails); elsewhere, when the pull request is opened. In both cases it also starts when the conflict sweep sees a branch move. It pairs the pull request with the other open pull requests into the same target (newest first) and with pull requests that landed there in the last 30 days and aren't in its history, plus any landed pull request it still has to account for (whatever its age, and even once its history contains it). For each pair:
 
+0. Git first. If one branch holds every commit of the other (the same commits, or rebased copies: same author, author time and message, and the same patch), it builds on it. That is recorded without asking a model, and the opposite direction is impossible.
 1. A textual check merges the two heads and notes which files conflict.
 2. Clef decides over the one-line summaries from the review (file paths when there are none, or no review): are they related, which kind, and which goes first.
 3. For related pairs, GLM-5.3 reads the diffs and writes the reason and, where needed, instructions for the author. It also decides the kind and direction, but only when Clef was unsure.
+
+The models only see what each pull request adds itself: when a branch holds another open pull request whole (a child holds its parent), its one-liners, diffs and conflicts are measured past that pull request's commits. A child is never judged on its parent's changes, and two siblings are never judged on the parent they share.
+
+**No cycles.** Before a pair is saved, GitOrange checks it against the other open pull requests' relationships. If it would close a cycle, a conflict is turned around (a conflict only needs some order), else another conflict on the cycle is turned around, else the models' verdict is left independent with a note saying which cycle it would have closed. A git verdict always stands: the models' relationships on its cycle give way instead.
 
 A pair is saved only for the commits the run started from, so a push mid-run can't leave a stale answer. A pair that can't be checked shows as "Couldn't check against #N"; the retry button is in that pull request's **Stack** section (the Graph view doesn't show it). A pair still being checked 30 minutes after its run claimed it belongs to a run that died: the next run checks it again, and the retry button resets it.
 
@@ -308,7 +313,7 @@ After discovery, a `reconcile` run (also started when a pull request closes or l
 - must account for another pull request, open or landed, and hasn't yet;
 - is stacked on an open pull request (it lands after its parent), or waits on one that has to land first.
 
-Auto-merge treats unaccounted must-account-for as blocked and the other two as waiting, and also waits while discovery is still checking the pull request's head (the "still checking" hold applies to auto-merge only; the merge button doesn't wait for it). Pull requests in a dependency cycle don't make each other wait or stack on each other; the cycle itself is a reason to ask a person (`human_review`). An unaccounted must-account-for still blocks.
+Auto-merge treats unaccounted must-account-for as blocked and the other two as waiting, and also waits while discovery is still checking the pull request's head (the "still checking" hold applies to auto-merge only; the merge button doesn't wait for it). Landing never carries another open pull request's commits. A branch holding commits (or rebased copies) of another open pull request into the same target is refused with a reason ("It carries a commit of #N, which hasn't landed"), whatever the tree says: one it holds whole must land first, and where two share only some commits the older one goes first. A child is never refused for its parent's sake the other way round. Discovery no longer records cycles (above); pull requests in a dependency cycle recorded before that don't make each other wait or stack on each other; the cycle itself is a reason to ask a person (`human_review`). An unaccounted must-account-for still blocks.
 
 **Unstack and Dismiss.** A person with merge permission can, on the pull request page (web only; there are no MCP tools, so agents can't):
 

@@ -29,6 +29,7 @@ import { settleStates } from '../pulls/settle';
 import { landTargetOf } from '../lib/land-target';
 import { findRepoById, gitFor } from '../lib/repos';
 import { getSetting } from '../lib/settings';
+import { isRateLimited } from '../lib/ai-retry';
 import { resolutionConfigured, type StepRunner } from '../merge/resolution';
 import { noteDecision } from '../agent-runs/context';
 import { shortError } from '../agent-runs/record';
@@ -90,11 +91,27 @@ export const MAX_MORE_PATH_BYTES = 512 * 1024;
 export const REVIEW_STALE_MS = 2 * 3600_000;
 export const REVIEW_STOPPED = 'The review stopped unexpectedly. Try again.';
 
-/** One agent's review: a long prompt, so a long timeout; retried twice, then the reviewer fails. */
+/** One agent's review: a long prompt, so a long timeout; retried three times (30, 60, 120 s apart). */
 export const AGENT_REVIEW_RETRIES: WorkflowStepConfig = {
-  retries: { limit: 2, delay: '10 seconds', backoff: 'exponential' },
+  retries: { limit: 3, delay: '30 seconds', backoff: 'exponential' },
   timeout: '10 minutes',
 };
+
+/**
+ * A review whose step still failed only because Workers AI was rate limiting waits this long (plus up to a quarter
+ * more, by reviewer) and runs again, round by round; only after the last round is the reviewer marked failed.
+ */
+export const RATE_LIMIT_WAITS_MS = [120_000, 300_000, 600_000];
+export const RATE_LIMITED =
+  'The review model was rate limited (Workers AI) for too long. Try again.';
+
+/** A stable spread in [0, 1) per reviewer and round, so a replayed sleep keeps its length. */
+function spread(key: string): number {
+  let h = 0x811c9dc5;
+  for (let i = 0; i < key.length; i++)
+    h = Math.imul(h ^ key.charCodeAt(i), 0x01000193) >>> 0;
+  return h / 2 ** 32;
+}
 
 export type InvitedAgent = {
   agentId: string;
@@ -427,11 +444,26 @@ export async function reviewStep(
   const { handle, reviewerId } = ctx.reviewer;
   let started: PiStarted | undefined;
   try {
-    const outcome = await step.do(
-      `review:${handle}`,
-      AGENT_REVIEW_RETRIES,
-      () => runAgentReview(deps, ctx)
-    );
+    let outcome: ReviewOutcome;
+    // Rate limited after every retry: wait (durably) and run it again; anything else fails the reviewer.
+    for (let round = 0; ; round++) {
+      try {
+        outcome = await step.do(
+          round ? `review-again-${round}:${handle}` : `review:${handle}`,
+          AGENT_REVIEW_RETRIES,
+          () => runAgentReview(deps, ctx)
+        );
+        break;
+      } catch (e) {
+        if (!isRateLimited(e)) throw e;
+        if (round >= RATE_LIMIT_WAITS_MS.length) throw new Error(RATE_LIMITED);
+        const wait = RATE_LIMIT_WAITS_MS[round];
+        await step.sleep(
+          `rate-limited-${round + 1}:${handle}`,
+          Math.round(wait * (1 + spread(`${reviewerId}:${round}`) / 4))
+        );
+      }
+    }
     if (outcome.started) {
       started = outcome.started;
       // Started, but the binding was removed since: nothing can check or finish the review here.
@@ -453,7 +485,9 @@ export async function reviewStep(
     const message = shortError(e);
     // The model's failures arrive already worded; anything else (git, D1, the DO) says the review failed.
     const error =
-      message.startsWith(MODEL_FAILED) || message === PI_GONE
+      message.startsWith(MODEL_FAILED) ||
+      message === PI_GONE ||
+      message === RATE_LIMITED
         ? message
         : `The review failed: ${message}`;
     await step.do(`review-failed:${handle}`, async () => {

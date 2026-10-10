@@ -62,6 +62,13 @@ const INDEXED: Record<string, string> = {
 const ABOUT_AGENT: Record<string, string> = {
   review: 'Review by',
   'review-failed': 'Record failed review by',
+  // A review rate limited after its retries: a durable wait, then the review again (review/head.ts).
+  ...Object.fromEntries(
+    [1, 2, 3].flatMap((n) => [
+      [`rate-limited-${n}`, `Wait out rate limit (${n}) for`],
+      [`review-again-${n}`, `Review again (${n}) by`],
+    ])
+  ),
 };
 
 /** The pull request id a step name refers to, if any. */

@@ -13,6 +13,7 @@ import {
   usageFromResponse,
 } from '../usage/record';
 import type { ClassifierAnswer } from '../db/app.schema';
+import { withRateLimitRetry } from '../lib/ai-retry';
 
 export const classifierModel = (name: 'clef' | 'clef-flash') =>
   `@cf/cloudflare/${name}`;
@@ -140,10 +141,13 @@ function aiRunner(
   let target: ReturnType<typeof classificationTarget> | undefined;
   return async (model, input, feature) => {
     const gateway = aiGateway(env, feature, tags);
-    const out = (await env.AI.run(
-      model as never,
-      input as never,
-      (gateway ? { gateway } : undefined) as never
+    // Rate limits are waited out here, with jitter, before the step's own retries are spent.
+    const out = (await withRateLimitRetry(() =>
+      env.AI.run(
+        model as never,
+        input as never,
+        (gateway ? { gateway } : undefined) as never
+      )
     )) as unknown;
     const id = context.classificationId;
     target ??= id ? classificationTarget(env, id) : Promise.resolve(null);

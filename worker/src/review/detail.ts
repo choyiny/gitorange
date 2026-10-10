@@ -13,8 +13,12 @@ const MAX_INVESTIGATE_FILE = 24 * 1024;
 /** Files summarized at once. */
 export const SUMMARY_BATCH = 8;
 
+/**
+ * A model step: 15, 30, 60 and 120 s apart, so the retries outlast Workers AI's per-minute rate limit (the call
+ * itself also waits out rate limits with jitter: lib/ai-retry.ts).
+ */
 export const MODEL_RETRIES: WorkflowStepConfig = {
-  retries: { limit: 3, delay: '5 seconds', backoff: 'exponential' },
+  retries: { limit: 4, delay: '15 seconds', backoff: 'exponential' },
   timeout: '5 minutes',
 };
 

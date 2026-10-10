@@ -1,0 +1,1 @@
+ALTER TABLE `pr_edges` ADD `decided_by` text;

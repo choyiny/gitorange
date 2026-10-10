@@ -33,6 +33,7 @@ import { protectedBy } from '../lib/protected-branches';
 import { stackGate } from '../stack/gate';
 import { onPullClosed } from '../stack/retarget';
 import { refreshAgentConfig } from '../agents/refresh';
+import { holdsWhole, lineageOf, sharedWith } from '../stack/lineage';
 
 export const pullRef = (n: number) => `refs/pull/${n}/head`;
 
@@ -130,6 +131,15 @@ export async function landPull(opts: LandOpts): Promise<LandResult> {
       status: 409,
       reason: 'stack',
       error: `${gate.blocks.map((b) => b.message.replace(/[.\s]+$/, '')).join('. ')}. A maintainer can dismiss a dependency on the pull request page.`,
+    };
+  // Never move the target past another open pull request's unlanded commits, whatever the stack tree says.
+  const carried = await carriedPull(git, db, pr, target, headSha);
+  if (carried)
+    return {
+      ok: false,
+      status: 409,
+      reason: 'stack',
+      error: `It carries ${carried.count === 1 ? 'a commit' : `${carried.count} commits`} of #${carried.number}, which hasn't landed: landing it would land them too. Land #${carried.number} first, or rebase this branch without them.`,
     };
   // Checks, then review, for the commit that lands; a person's approval of it satisfies review.
   const checks = await checksAt(db, pr.repositoryId, headSha);
@@ -276,6 +286,60 @@ export async function landPull(opts: LandOpts): Promise<LandResult> {
   if (target === opts.repo.defaultBranch)
     opts.after(refreshAgentConfig(env, db, opts.repo.id));
   return { ok: true, sha: landHead, headSha };
+}
+
+/**
+ * Another open pull request into the same target whose own commits (or rebased copies of them) this head carries,
+ * so landing it would land them too: one this head holds whole (its parent), or one it shares some commits with that
+ * was opened first (they branched from the same work, which belongs to the older one). Never one that holds this
+ * head whole (its child). Null when there is none, or git can't tell.
+ */
+export async function carriedPull(
+  git: GitService,
+  db: DrizzleDB,
+  pr: PullRequest,
+  target: string,
+  headSha: string
+): Promise<{ number: number; count: number } | null> {
+  try {
+    const refs = await git.refs();
+    const tip = refs.get(`refs/heads/${target}`);
+    if (!tip) return null;
+    const others = await db
+      .select({
+        id: pullRequests.id,
+        number: pullRequests.number,
+        headRef: pullRequests.headRef,
+      })
+      .from(pullRequests)
+      .where(
+        and(
+          eq(pullRequests.repositoryId, pr.repositoryId),
+          eq(pullRequests.state, 'open'),
+          ne(pullRequests.id, pr.id),
+          landTargetIs(target)
+        )
+      )
+      .all();
+    if (!others.length) return null;
+    const mine = await lineageOf(git, tip, headSha);
+    if (!mine.ids.length) return null;
+    for (const o of others.sort((x, y) => x.number - y.number)) {
+      const h = refs.get(`refs/heads/${o.headRef}`);
+      if (!h) continue;
+      const theirs = await lineageOf(git, tip, h);
+      const count = (await sharedWith(git, mine, theirs)).size;
+      if (!count) continue;
+      // Its child (it holds all of this head, or the same commits): landing this one first is the right order.
+      if (count === new Set(mine.ids).size) continue;
+      if ((await holdsWhole(git, mine, theirs)) || o.number < pr.number)
+        return { number: o.number, count };
+    }
+    return null;
+  } catch (e) {
+    console.warn('[merge] carried-commits check failed', pr.id, e);
+    return null;
+  }
 }
 
 /**

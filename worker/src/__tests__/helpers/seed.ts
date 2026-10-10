@@ -53,7 +53,8 @@ export async function commitPaths(
   branch: string,
   files: Record<string, string>,
   message: string,
-  opts: { moveRef?: boolean } = {}
+  /** timestamp: a fixed author time (a rebased copy keeps its original's). */
+  opts: { moveRef?: boolean; timestamp?: number } = {}
 ) {
   type Dir = { files: Map<string, string>; dirs: Map<string, Dir> };
   const root: Dir = { files: new Map(), dirs: new Map() };
@@ -83,7 +84,15 @@ export async function commitPaths(
   const commit = await makeCommit({
     tree: await write(root),
     parents: parent ? [parent] : [],
-    author: { name: 'Dev', email: 'dev@example.com', timestamp: clock++ },
+    author: {
+      name: 'Dev',
+      email: 'dev@example.com',
+      timestamp: opts.timestamp ?? clock++,
+    },
+    committer:
+      opts.timestamp === undefined
+        ? undefined
+        : { name: 'Dev', email: 'dev@example.com', timestamp: clock++ },
     message,
   });
   repo.add(commit);

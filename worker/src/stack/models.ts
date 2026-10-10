@@ -7,6 +7,7 @@ import {
   type ClefQuestion,
 } from '../review/models';
 import { recordAiUsage, usageFromResponse } from '../usage/record';
+import { withRateLimitRetry } from '../lib/ai-retry';
 
 /** One side of a pair, as the models see it. */
 export type PrSide = {
@@ -323,10 +324,13 @@ export function workersAiStackModels(
     const gateway = aiGateway(env, feature, {
       pull_request: ctx.pullRequestId ?? '',
     });
-    const out = (await env.AI.run(
-      model as never,
-      input as never,
-      (gateway ? { gateway } : undefined) as never
+    // Rate limits are waited out here, with jitter, before the step's own retries are spent.
+    const out = (await withRateLimitRetry(() =>
+      env.AI.run(
+        model as never,
+        input as never,
+        (gateway ? { gateway } : undefined) as never
+      )
     )) as unknown;
     await recordAiUsage(env, {
       feature,

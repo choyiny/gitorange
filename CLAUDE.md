@@ -75,7 +75,8 @@ Drizzle/D1 and better-auth. Git storage is **Cloudflare Artifacts**: one Artifac
   `trigger.ask` (`pr_reviewers`, requested iff p ≥ above; unsure = requested) → each requested agent reviews
   (`engine: pass`: one GLM-5.3 call) at its repository's default-branch SHA (`agent_sha`; `AGENT.md` + `knowledge/`
   ≤ 20 files / 64 KB) → approve or findings (`pr_review_flags.kind` `needs_person` | `change_requested`).
-  `engine: pi`: `AgentReviewer` DO (`review/agent-reviewer.ts`, binding `AGENT_REVIEWER`; one per row attempt
+  Workers AI calls wait out rate limits with jitter (`lib/ai-retry.ts`); a review step still rate limited sleeps and runs
+  again before the reviewer fails. `engine: pi`: `AgentReviewer` DO (`review/agent-reviewer.ts`, binding `AGENT_REVIEWER`; one per row attempt
   `<id>:<created_at ms>`) checks out the head (`review/checkout.ts`) and runs Pi with read-only tools; the Workflow
   starts it in `review:<handle>`, then `waitForEvent` + `pi:<handle>:<n>` checks (`review/pi.ts`), recording through
   `recordReview` (`review/outcome.ts`, fenced on status and `created_at`). Limits are Site admin settings
@@ -140,14 +141,16 @@ Drizzle/D1 and better-auth. Git storage is **Cloudflare Artifacts**: one Artifac
   `runActionsRetention` (`worker/src/actions/retention.ts`).
 - Stacking (`worker/src/stack/`): always on when AI is configured, with `STACKING_DEFAULTS` (`stack/defaults.ts`). A `stack` run on `MERGE_RESOLUTION` (after the review finishes — or on PR open
   where no agent is invited — and from the sweep) pairs a PR with open PRs into the same target and
-  recently landed ones: textual check (`planMerge(headA, headB)`), Clef decides over the review's one-liners (paths without one)
+  recently landed ones: git first (`stack/lineage.ts`: a branch holding the other's commits or rebased copies builds on it,
+  `decided_by = 'git'`, no model; sides measured past the open PRs they hold), textual check (`planMerge(headA, headB)`), Clef decides over the review's one-liners (paths without one)
   (`STACK_QUESTIONS`, `routeDecision`), the reasoning model explains related pairs from diffs (and decides when Clef
-  is unsure) → one `pr_edges` row per pair. `buildTree` (pure) derives parents, waits-on, must-account-for, cycles.
+  is unsure) → one `pr_edges` row per pair, never closing a cycle (`acyclicVerdict`, `stack/acyclic.ts`). `buildTree` (pure) derives parents, waits-on, must-account-for, cycles.
   Tests drive `executeStacking` with fake `StackModels`.
   Milestone 2: `pull_requests.land_target` (nullable; null means `base_ref`) is where a PR lands (always read via
   `landTargetOf`/`landTargetIs`, written on create and every retarget; readers of "where this lands" use it,
   diffs use `base_ref`). `executeReconcile` (`stack/reconcile.ts`) prunes/linearizes (`pr_edges.slot = 'order'`,
-  kind `ordered_after`) and retargets `base_ref` (metadata only, CAS); `stackGate` blocks `landPull`. Tests drive
+  kind `ordered_after`) and retargets `base_ref` (metadata only, CAS); `stackGate` blocks `landPull`, which also refuses a head carrying another
+  open PR's commits (`carriedPull`). Tests drive
   `executeReconcile` with fake `StackModels` (`order`, `recheck`).
 - Artifacts has no local emulator: `yarn dev` runs `env.dev`, which uses the remote service in the
   `gitorange-dev` namespace. Tests use `wrangler.test.jsonc` (no remote bindings) plus an in-memory

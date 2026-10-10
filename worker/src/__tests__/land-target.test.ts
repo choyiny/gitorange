@@ -268,10 +268,22 @@ describe('readers of the land target', () => {
     const parentTip = s.repo.refs.get('refs/heads/parent');
     const mainTip = s.repo.refs.get('refs/heads/main')!;
     await passChecks(s);
-    const res = await call(s.t, '/api/repos/octocat/app/pulls/2/merge', {
-      cookie: s.admin,
-      json: { approve: true },
-    });
+    const merge = () =>
+      call(s.t, '/api/repos/octocat/app/pulls/2/merge', {
+        cookie: s.admin,
+        json: { approve: true },
+      });
+    // While #1 is open, landing #2 would carry #1's commit onto main.
+    const refused = await merge();
+    expect(refused.status).toBe(409);
+    expect(((await refused.json()) as { error: string }).error).toMatch(
+      /carries a commit of #1/
+    );
+    // #1 closed (its branch stays #2's base): #2 lands into main, never into its base branch.
+    await s.t.env.DB.prepare(
+      "UPDATE pull_requests SET state = 'closed' WHERE number = 1"
+    ).run();
+    const res = await merge();
     expect(res.status).toBe(200);
     expect(s.repo.refs.get('refs/heads/parent')).toBe(parentTip);
     const childHead = s.repo.refs.get('refs/heads/child')!;

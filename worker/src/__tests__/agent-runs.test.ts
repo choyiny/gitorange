@@ -375,8 +375,8 @@ describe('agent runs: recording', () => {
     const reviewStep = steps.find((s) => s.name === 'review:secagent')!;
     expect(reviewStep.status).toBe('failed');
     expect(reviewStep.error).toBe('The review model failed: model down');
-    // AGENT_REVIEW_RETRIES: the first attempt and 2 retries.
-    expect(reviewStep.attempts).toBe(3);
+    // AGENT_REVIEW_RETRIES: the first attempt and 3 retries.
+    expect(reviewStep.attempts).toBe(4);
   });
 
   it('marks the run failed and rethrows when the Workflow body throws', async () => {

@@ -197,6 +197,13 @@
       "when": 1791515068177,
       "tag": "0027_crew_redesign",
       "breakpoints": true
+    },
+    {
+      "idx": 28,
+      "version": "6",
+      "when": 1791597500170,
+      "tag": "0028_magenta_captain_cross",
+      "breakpoints": true
     }
   ]
 }
