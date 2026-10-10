@@ -53,7 +53,7 @@ Fill in:
 - `vars.FROM_EMAIL` — an address on your Email Sending domain, e.g. `noreply@example.com`.
 - `vars.R2_ACCOUNT_ID` — your account ID again (pre-signed LFS URLs point at `https://<account>.r2.cloudflarestorage.com`).
 - `routes` — uncomment and set `pattern` to your hostname if you're using a custom domain.
-- `vars.D1_DATABASE_ID` — the same `database_id` again, so **Site admin → Usage & cost** reads this database's analytics. The other usage variables (`WORKER_NAME`, the bucket, namespace, and Workflow names) already match the names above. After the first deploy, fill in `JOB_RUNNER_NAMESPACE_ID`, `MERGE_RESOLVER_NAMESPACE_ID`, `AGENT_REVIEWER_NAMESPACE_ID`, and `LIVE_NAMESPACE_ID` from the dashboard's **Durable Objects** page (each class's namespace ID). Until then, Durable Object usage shows as "not configured".
+- `vars.D1_DATABASE_ID` — the same `database_id` again, so **Site admin → Usage & cost** reads this database's analytics. The other usage variables (`WORKER_NAME`, the bucket, namespace, and Workflow names) already match the names above. After the first deploy, run `node scripts/do-namespaces.mjs --write` to fill in `JOB_RUNNER_NAMESPACE_ID`, `MERGE_RESOLVER_NAMESPACE_ID`, `AGENT_REVIEWER_NAMESPACE_ID`, and `LIVE_NAMESPACE_ID` (it uses wrangler's login), then deploy again. Until then, Durable Object usage shows as "not configured".
 
 Keep `triggers.crons` as shipped: a daily job deletes Actions runs past their retention (set in **Site admin → Settings**, 90 days by default). `APP_NAME`, `FROM_EMAIL`, and the model variables are defaults that a site admin can change later in **Site admin → Settings** without a deploy.
 
@@ -109,7 +109,7 @@ Commits link to a member's profile when their author email matches the member's 
 ## Actions and reviews
 
 - **Actions:** workflow files in `.github/workflows/` (GitHub Actions syntax) run on pushes and pull requests, each job in its own container. See the repository's **Actions** tab.
-- **Reviews and auto-merge:** create reviewer agents in **Site admin → Agents** and invite them in a repository's **Settings → Agents**: each new commit is reviewed by the agents it concerns, and a pull request that passes CI and its agents' reviews merges on its own; findings for a person wait on the **Approvals** page. Without agents, a person approves and merges. `.orangeignore` keeps generated files out of reviews. See [Reviewer agents](auto-merge.md).
+- **Reviews and auto-merge:** add reviewer agents with **Agents → New reviewer → Add the recommended crew** and invite them in a repository's **Settings → Agents**: each new commit is reviewed by the agents it concerns, and a pull request that passes CI and its agents' reviews merges on its own; findings for a person wait on the **Approvals** page. Without agents, a person approves and merges. `.orangeignore` keeps generated files out of reviews. See [Reviewer agents](auto-merge.md).
 - **AI conflict resolution** needs no setup: conflicting pull requests are resolved automatically.
 
 ## Connecting AI tools (MCP)

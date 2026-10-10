@@ -122,7 +122,7 @@ Fill in the top level (production):
 - `vars.BASE_URL`, `vars.FROM_EMAIL`
 - `vars.R2_ACCOUNT_ID` — the same account ID (keep `LFS_BUCKET_NAME` as `gitorange-lfs` unless they named the bucket differently)
 - Leave the AI defaults (`RESOLVER_MODEL`, `SUMMARY_MODEL`, `REVIEW_MODEL`, `AI_GATEWAY: "default"`) unless the user asks; `AI_GATEWAY: "off"` calls Workers AI without a gateway.
-- `vars.D1_DATABASE_ID` — the same `database_id`, so Site admin → Usage & cost reads this database's analytics. Keep `WORKER_NAME`, `ACTIONS_LOGS_BUCKET_NAME`, `ARTIFACTS_NAMESPACE`, `ACTIONS_WORKFLOW_NAME`, and `MERGE_RESOLUTION_WORKFLOW_NAME` as shipped unless they renamed those resources. Leave the three `*_NAMESPACE_ID` vars empty for now (Step 5.5).
+- `vars.D1_DATABASE_ID` — the same `database_id`, so Site admin → Usage & cost reads this database's analytics. Keep `WORKER_NAME`, `ACTIONS_LOGS_BUCKET_NAME`, `ARTIFACTS_NAMESPACE`, `ACTIONS_WORKFLOW_NAME`, and `MERGE_RESOLUTION_WORKFLOW_NAME` as shipped unless they renamed those resources. Leave the four `*_NAMESPACE_ID` vars empty for now: Step 4.5 fills them in.
 
 Also replace the `FROM_EMAIL` and `R2_ACCOUNT_ID` placeholders in `env.dev.vars` so local development works later.
 
@@ -134,6 +134,20 @@ Do not rename bindings — the code looks them up by name: `DB`, `ARTIFACTS`, `E
 yarn db:migrate:prod
 yarn deploy
 ```
+
+### Step 4.5: Durable Object namespace IDs
+
+The deploy created the Durable Object namespaces. Fill in their IDs (Site admin → Usage & cost uses them) with
+wrangler's own login, so there is no token to create:
+
+```bash
+node scripts/do-namespaces.mjs --write
+yarn deploy
+```
+
+The script writes `JOB_RUNNER_NAMESPACE_ID`, `MERGE_RESOLVER_NAMESPACE_ID`, `AGENT_REVIEWER_NAMESPACE_ID`, and
+`LIVE_NAMESPACE_ID` into the top-level vars; the deploy applies them. If it reports a class as not found, the first
+deploy didn't finish: run `yarn deploy` and the script again.
 
 ### Step 5: Secret
 
@@ -150,19 +164,15 @@ If they created the R2 token in Step 2.5, have the user set both values themselv
 ! yarn wrangler secret put R2_SECRET_ACCESS_KEY
 ```
 
-### Step 5.5: Usage & cost (optional)
+### Step 5.5: Usage & cost analytics token (recommended)
 
-Site admin → **Usage & cost** shows what this deployment costs on Cloudflare. Without anything more it shows what GitOrange records itself (Actions runner time, Workers AI calls, emails). For Cloudflare's own analytics, filtered to this deployment's resources and pulled by a daily cron:
+Site admin → **Usage & cost** shows what this deployment costs on Cloudflare. Without a token it shows what GitOrange records itself (Actions runner time, Workers AI calls, emails). For Cloudflare's own analytics, filtered to this deployment's resources (the vars from Steps 3 and 4.5) and pulled by a daily cron, ask the user to create an account API token: https://dash.cloudflare.com/?to=/:account/api-tokens → **Create Token → Custom token**, with the single permission **Account → Account Analytics → Read**, scoped to this account. Then have them set it themselves (never paste it into the chat):
 
-1. Ask the user to create an account API token: https://dash.cloudflare.com/?to=/:account/api-tokens → **Create Token → Custom token**, with the single permission **Account → Account Analytics → Read**, scoped to this account. Then have them set it themselves (never paste it into the chat):
+```
+! yarn wrangler secret put CF_ANALYTICS_TOKEN
+```
 
-   ```
-   ! yarn wrangler secret put CF_ANALYTICS_TOKEN
-   ```
-
-2. For Durable Object usage, ask them to open https://dash.cloudflare.com/?to=/:account/workers/durable-objects, select each of `JobRunner`, `MergeResolver`, `AgentReviewer`, and `LiveHub`, and read its namespace ID from the page. Put the IDs in `vars.JOB_RUNNER_NAMESPACE_ID`, `vars.MERGE_RESOLVER_NAMESPACE_ID`, `vars.AGENT_REVIEWER_NAMESPACE_ID`, and `vars.LIVE_NAMESPACE_ID`, then run `yarn deploy` again.
-
-Skipping this is fine: the page labels what isn't set up, and nothing else depends on it.
+If they'd rather skip it, the page labels what isn't set up, and nothing else depends on it.
 
 ### Step 6: Fix `BASE_URL` for workers.dev (workers.dev only)
 
@@ -182,7 +192,7 @@ Optional, once the basics work (point them to the docs rather than doing it for 
 6. **Commit attribution:** under **avatar → Settings → Emails**, add any other address they commit with and click the verification link, so their commits link to their profile.
 7. **AI tools (MCP):** **avatar → MCP server** shows the command for their client, e.g. `claude mcp add --transport http gitorange <BASE_URL>/mcp`.
 8. **Actions:** a workflow file in `.github/workflows/` (GitHub Actions syntax) runs on pushes and pull requests; the run shows under the repository's **Actions** tab.
-9. **Reviews and auto-merge:** create reviewer agents in **Site admin → Agents** and invite them in a repository's **Settings → Agents**; each new commit is reviewed by the agents it concerns, and auto-merge is on wherever an agent is invited. `.orangeignore` keeps generated files out of reviews. See `docs/auto-merge.md`.
+9. **Reviews and auto-merge:** **Agents → New reviewer → Add the recommended crew** creates Security, Data, Speed, Features, Reliability, Privacy, and Shipping in one step; invite them in a repository's **Settings → Agents**. Each new commit is reviewed by the agents it concerns, and auto-merge is on wherever an agent is invited. Findings for a person wait on **Approvals**; **Let Claude decide** (per agent, on that page) answers an agent's findings as the user, except Security and Data, which always need a person. `.orangeignore` keeps generated files out of reviews. See `docs/auto-merge.md`.
 
 ## Completion summary
 
@@ -198,7 +208,7 @@ Report, with real values substituted:
 - Live updates: `LiveHub` Durable Object (binding `LIVE`)
 - Daily Cron Trigger (`triggers.crons`, kept as shipped): deletes Actions runs past their retention (Site admin → Settings, 90 days by default)
 - Instance name, invitation sender, and AI models can later be changed in Site admin → Settings without a deploy; the wrangler vars are only defaults
-- Usage & cost: Cloudflare analytics `<on (CF_ANALYTICS_TOKEN set) | off>`, daily sync at 02:30 UTC; Durable Object namespace IDs `<set | not set yet>`
+- Usage & cost: Cloudflare analytics `<on (CF_ANALYTICS_TOKEN set) | off>`, daily sync at 02:30 UTC; Durable Object namespace IDs `<set (Step 4.5) | not set>`
 - Admin account `<username>`
 - To update later: `git pull && yarn install && yarn db:migrate:prod && yarn deploy`. A deploy restarts running Actions jobs (each restarts from the beginning, up to 3 attempts), so prefer deploying when no CI is running.
 

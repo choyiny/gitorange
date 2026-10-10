@@ -49,18 +49,18 @@ Variables marked **Default only** are defaults: **Site admin → Settings** over
 
 Site admin → **Usage & cost** shows what this deployment uses on Cloudflare and what it would cost. GitOrange records Actions runner time, Workers AI calls, and emails itself. Everything else comes from Cloudflare's GraphQL Analytics API, which a daily cron (`triggers.crons`: `30 2 * * *`, 02:30 UTC) pulls into D1. Every query is filtered to the resources named below, so other things on the account never show up as GitOrange's. Leave a variable empty to skip that metric; it then shows as "not configured".
 
-| Variable                         | Example                      | Purpose                                                                                                             |
-| -------------------------------- | ---------------------------- | ------------------------------------------------------------------------------------------------------------------- |
-| `WORKER_NAME`                    | `gitorange`                  | This Worker's script name (the top-level `name`), for Workers requests and CPU time                                 |
-| `D1_DATABASE_ID`                 | `xxxxxxxx-xxxx-…`            | The `DB` database's `database_id`, for rows read and written and storage                                            |
-| `ACTIONS_LOGS_BUCKET_NAME`       | `gitorange-actions-logs`     | The `ACTIONS_LOGS` bucket's name. With `LFS_BUCKET_NAME` and `ACTIONS_CACHE_BUCKET_NAME`, the R2 buckets to measure |
-| `ARTIFACTS_NAMESPACE`            | `gitorange`                  | The `artifacts[].namespace`, for Artifacts operations                                                               |
-| `ACTIONS_WORKFLOW_NAME`          | `gitorange-actions-run`      | The `ACTIONS_RUN` Workflow's `name`                                                                                 |
-| `MERGE_RESOLUTION_WORKFLOW_NAME` | `gitorange-merge-resolution` | The `MERGE_RESOLUTION` Workflow's `name`                                                                            |
-| `JOB_RUNNER_NAMESPACE_ID`        | `0123…cdef`                  | Durable Object namespace ID of `JobRunner`: dashboard → Durable Objects → the class; the ID is on its page          |
-| `MERGE_RESOLVER_NAMESPACE_ID`    | `0123…cdef`                  | Same, for `MergeResolver`                                                                                           |
-| `AGENT_REVIEWER_NAMESPACE_ID`    | `0123…cdef`                  | Same, for `AgentReviewer`                                                                                           |
-| `LIVE_NAMESPACE_ID`              | `0123…cdef`                  | Same, for `LiveHub`                                                                                                 |
+| Variable                         | Example                      | Purpose                                                                                                               |
+| -------------------------------- | ---------------------------- | --------------------------------------------------------------------------------------------------------------------- |
+| `WORKER_NAME`                    | `gitorange`                  | This Worker's script name (the top-level `name`), for Workers requests and CPU time                                   |
+| `D1_DATABASE_ID`                 | `xxxxxxxx-xxxx-…`            | The `DB` database's `database_id`, for rows read and written and storage                                              |
+| `ACTIONS_LOGS_BUCKET_NAME`       | `gitorange-actions-logs`     | The `ACTIONS_LOGS` bucket's name. With `LFS_BUCKET_NAME` and `ACTIONS_CACHE_BUCKET_NAME`, the R2 buckets to measure   |
+| `ARTIFACTS_NAMESPACE`            | `gitorange`                  | The `artifacts[].namespace`, for Artifacts operations                                                                 |
+| `ACTIONS_WORKFLOW_NAME`          | `gitorange-actions-run`      | The `ACTIONS_RUN` Workflow's `name`                                                                                   |
+| `MERGE_RESOLUTION_WORKFLOW_NAME` | `gitorange-merge-resolution` | The `MERGE_RESOLUTION` Workflow's `name`                                                                              |
+| `JOB_RUNNER_NAMESPACE_ID`        | `0123…cdef`                  | Durable Object namespace ID of `JobRunner`: `node scripts/do-namespaces.mjs --write` fills in all four after a deploy |
+| `MERGE_RESOLVER_NAMESPACE_ID`    | `0123…cdef`                  | Same, for `MergeResolver`                                                                                             |
+| `AGENT_REVIEWER_NAMESPACE_ID`    | `0123…cdef`                  | Same, for `AgentReviewer`                                                                                             |
+| `LIVE_NAMESPACE_ID`              | `0123…cdef`                  | Same, for `LiveHub`                                                                                                   |
 
 `R2_ACCOUNT_ID` is the account the queries read, and `AI_GATEWAY` names the gateway whose request count is shown (for the whole gateway, which other apps or a dev instance may share, so it is never added to GitOrange's totals).
 
