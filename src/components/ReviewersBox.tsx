@@ -1,4 +1,4 @@
-import { useState, type CSSProperties } from 'react';
+import { useRef, useState, type CSSProperties } from 'react';
 import { withVia } from '@/lib/via';
 import { Link } from 'react-router-dom';
 import {
@@ -480,10 +480,15 @@ export function PersonApprovals({
             },
           ]
         : d.approvals.filter((a) => a.user.id !== me.id);
+  // A second click before the page re-renders must not send the decision again.
+  const sending = useRef(false);
   const decide = async (approve: boolean, call: () => Promise<unknown>) => {
+    if (sending.current) return;
+    sending.current = true;
     setLocal(approve);
     await run(call);
     setLocal(null);
+    sending.current = false;
   };
   const outstanding = d.review?.verdict?.reasons.some((r) =>
     [

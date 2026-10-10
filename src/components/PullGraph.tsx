@@ -200,7 +200,11 @@ function TargetGraph({
           const go = () => navigate(`${base}/pull/${n}`);
           el.setAttribute('role', 'link');
           el.setAttribute('tabindex', '0');
-          el.setAttribute('aria-label', `Pull request #${n}`);
+          // The state and its reasons, which sighted mouse users get as hover text, for keyboard and screen readers.
+          el.setAttribute(
+            'aria-label',
+            tip ? tip.replace(/\n/g, '. ') : `Pull request #${n}`
+          );
           (el as SVGElement).style.cursor = 'pointer';
           el.addEventListener('click', go);
           el.addEventListener('keydown', (e) => {

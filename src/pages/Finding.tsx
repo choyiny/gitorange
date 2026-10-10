@@ -1,4 +1,4 @@
-import { useState, type CSSProperties, type ReactNode } from 'react';
+import { useRef, useState, type CSSProperties, type ReactNode } from 'react';
 import { Link, useParams } from 'react-router-dom';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import {
@@ -461,13 +461,16 @@ function useAnswer(f: FindingData) {
   const n = f.pull.number;
   const [pending, setPending] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const inFlight = useRef(false);
   const act = async (
     key: string,
     fn: () => Promise<unknown>,
     done: { toast: string; undo?: () => Promise<unknown> },
     opts: { sendingNote?: boolean; show?: Shown } = {}
   ) => {
-    if (pending) return false;
+    // One answer at a time: a decision shows at once, so a second click before re-render must not send it again.
+    if (pending || inFlight.current) return false;
+    inFlight.current = true;
     const queryKey = qk.approvalFlag(f.id);
     const before = qc.getQueryData<FindingData>(queryKey);
     const undoToast = () => {
@@ -522,6 +525,7 @@ function useAnswer(f: FindingData) {
       // Also after a refusal (409: the branch moved): the page shows the new state.
       await refresh(owner, repo);
       setPending(null);
+      inFlight.current = false;
     }
   };
   return { owner, repo, n, pending, error, setError, act };

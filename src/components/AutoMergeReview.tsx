@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useRef, useState } from 'react';
 import { Link, useLocation } from 'react-router-dom';
 import {
   AlertIcon,
@@ -217,9 +217,19 @@ export function Flag({
   const changes = approver ? null : changesRequester;
   const decided = !!approver;
   const panelId = `finding-${f.id}-panel`;
+  // One decision at a time: the page shows it at once, so a second click before it re-renders must not send it
+  // again. A refused one frees the finding for another try.
+  const sending = useRef(false);
+  const send = (request: Promise<boolean> | void) => {
+    sending.current = true;
+    void Promise.resolve(request).then((ok) => {
+      if (ok === false) sending.current = false;
+    });
+  };
   const decide = (decision: FlagDecision) => {
+    if (sending.current) return;
     setPanel(null);
-    void onApprove(decision);
+    send(onApprove(decision));
   };
   const tone = decided ? 'done' : changes || change ? 'asked' : 'needs';
   return (
@@ -342,8 +352,9 @@ export function Flag({
           pending={false}
           error={error}
           onSubmit={(note, teach) => {
+            if (sending.current) return;
             setPanel(null);
-            void onRequestChanges(note, teach);
+            send(onRequestChanges(note, teach));
           }}
           onCancel={() => setPanel(null)}
         />
