@@ -554,7 +554,7 @@ describe('Actions restarts after interruptions', () => {
     expect(h.requests).toHaveLength(0);
     const { run, jobs } = await runDetail(s.t, s.admin, 1);
     expect(run.errorMessage).toBe(
-      'Job "build" could not start its runner: No container capacity'
+      'Job "test" could not start its runner: No container capacity'
     );
     expect(jobs[0].steps[0].conclusion).toBe('failure');
     expect(await stepLog(s, jobs[0].id, 1)).toBe(
