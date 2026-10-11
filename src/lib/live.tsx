@@ -29,6 +29,7 @@ export function LiveUpdates({ children }: { children: ReactNode }) {
     let closed = false;
     let attempt = 0;
     let connectedBefore = false;
+    let heard = 0;
     let retry: ReturnType<typeof setTimeout> | undefined;
     let keepalive: ReturnType<typeof setInterval> | undefined;
     let flush: ReturnType<typeof setTimeout> | undefined;
@@ -61,11 +62,22 @@ export function LiveUpdates({ children }: { children: ReactNode }) {
           schedule('approvals');
         }
         connectedBefore = true;
+        heard = Date.now();
         keepalive = setInterval(() => {
-          if (ws?.readyState === WebSocket.OPEN) ws.send('ping');
+          if (ws?.readyState !== WebSocket.OPEN) return;
+          // A socket that went quiet without closing (sleep, network change) never gets another ping: replace it.
+          if (Date.now() - heard > 2 * KEEPALIVE_MS + 5_000) {
+            ws.onclose = null;
+            ws.close();
+            clearInterval(keepalive);
+            connect();
+            return;
+          }
+          ws.send('ping');
         }, KEEPALIVE_MS);
       };
       ws.onmessage = (e) => {
+        heard = Date.now();
         if (e.data === 'pong') return;
         try {
           const msg = JSON.parse(String(e.data)) as { type?: string };
