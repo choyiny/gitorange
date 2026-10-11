@@ -1,6 +1,14 @@
 import { and, eq } from 'drizzle-orm';
 import type { DrizzleDB } from '../db/middleware';
-import { prReviewers, type PullRequest } from '../db/app.schema';
+import {
+  prApprovals,
+  prReviewers,
+  pullRequests,
+  type PullRequest,
+} from '../db/app.schema';
+import type { RefUpdate } from '../actions/trigger';
+import type { GitService } from '../git/service';
+import { ZERO_SHA } from '../git/remote';
 import { d1Of } from '../pulls/events';
 import { headReviewFor, headReviewId } from './keys';
 
@@ -72,4 +80,55 @@ export async function carryReview(
   );
   await d1.batch(statements);
   return moveReview;
+}
+
+/**
+ * A push that changes no files (an empty "re-run checks" commit) keeps people's approvals: where a pushed branch's
+ * new tip has the same tree as its old one, the open pull requests from it have their approvals re-keyed to the new
+ * head (as a clean rebase does). A pull request nobody approved costs one indexed lookup, no git reads. Returns the
+ * pull requests whose approvals moved.
+ */
+export async function carryApprovalsOnSameTree(
+  db: DrizzleDB,
+  git: GitService,
+  repositoryId: string,
+  updates: RefUpdate[]
+): Promise<string[]> {
+  const moved: string[] = [];
+  for (const u of updates) {
+    if (!u.ref.startsWith('refs/heads/')) continue;
+    if (u.old === ZERO_SHA || u.new === ZERO_SHA) continue;
+    const approved = await db
+      .select({ id: pullRequests.id })
+      .from(pullRequests)
+      .innerJoin(prApprovals, eq(prApprovals.pullRequestId, pullRequests.id))
+      .where(
+        and(
+          eq(pullRequests.repositoryId, repositoryId),
+          eq(pullRequests.state, 'open'),
+          eq(pullRequests.headRef, u.ref.slice('refs/heads/'.length)),
+          eq(prApprovals.headSha, u.old)
+        )
+      )
+      .groupBy(pullRequests.id)
+      .all();
+    if (!approved.length) continue;
+    const [before, after] = await Promise.all([
+      git.commit(u.old),
+      git.commit(u.new),
+    ]);
+    if (!before || !after || before.treeHash !== after.treeHash) continue;
+    const d1 = d1Of(db);
+    await d1.batch(
+      approved.map((p) =>
+        d1
+          .prepare(
+            'UPDATE OR IGNORE pr_approvals SET head_sha = ? WHERE pull_request_id = ? AND head_sha = ?'
+          )
+          .bind(u.new, p.id, u.old)
+      )
+    );
+    moved.push(...approved.map((p) => p.id));
+  }
+  return moved;
 }

@@ -2,7 +2,9 @@ import { describe, expect, it } from 'vitest';
 import { drizzle } from 'drizzle-orm/d1';
 import { schema } from '../db/schema';
 import type { AgentReview } from '../review/contract';
-import { carryReview } from '../review/carry';
+import { carryApprovalsOnSameTree, carryReview } from '../review/carry';
+import { gitFor } from '../lib/repos';
+import type { Repository } from '../db/app.schema';
 import { call, type TestEnv } from './helpers/app';
 import { commitPaths } from './helpers/seed';
 import {
@@ -355,5 +357,55 @@ describe('review carry-over', () => {
     expect(await findings(t)).toEqual([
       expect.objectContaining({ id: flag.id }),
     ]);
+  });
+});
+
+describe('approvals over a commit that changes no files', () => {
+  const FILES = { 'src/auth.ts': 'export const t = 1;\n' };
+
+  async function pushed(files: Record<string, string>) {
+    const { t, admin, repo } = await appRepo();
+    const { head } = await openPull(t, admin, repo, FILES);
+    await t.env.DB.prepare(
+      'UPDATE pull_requests SET auto_merge_disabled_at = 1'
+    ).run();
+    const res = await call(t, '/api/repos/octocat/app/pulls/1/approval', {
+      cookie: admin,
+      method: 'POST',
+    });
+    expect(res.status).toBe(200);
+    const next = await commitPaths(repo, 'feature', files, 'Re-run checks');
+    const row = (await t.env.DB.prepare(
+      "SELECT * FROM repositories WHERE name = 'app'"
+    ).first<Record<string, unknown>>())!;
+    const db = drizzle(t.env.DB, { schema });
+    const carry = () =>
+      carryApprovalsOnSameTree(
+        db,
+        gitFor(t.env, {
+          id: row.id,
+          artifactsName: row.artifacts_name,
+        } as Repository),
+        row.id as string,
+        [{ ref: 'refs/heads/feature', old: head, new: next }]
+      );
+    return { t, head, next, carry };
+  }
+
+  it('carries a person’s approval to a new head with the same tree, once', async () => {
+    const { t, next, carry } = await pushed({ ...BASE, ...FILES });
+    expect(await carry()).toHaveLength(1);
+    expect(await heads(t, 'pr_approvals')).toEqual([next]);
+    expect(await carry()).toEqual([]);
+    expect(await count(t, 'pr_approvals')).toBe(1);
+  });
+
+  it('leaves the approval on the old head when the tree changed', async () => {
+    const { t, head, carry } = await pushed({
+      ...BASE,
+      'src/auth.ts': 'export const t = 2;\n',
+    });
+    expect(await carry()).toEqual([]);
+    expect(await heads(t, 'pr_approvals')).toEqual([head]);
   });
 });

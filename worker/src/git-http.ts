@@ -22,6 +22,7 @@ import {
 import { hashToken } from './lib/tokens';
 import { actionsConfigured, diffRefs, onRefsUpdated } from './actions/trigger';
 import { startSweep } from './merge/auto';
+import { carryApprovalsOnSameTree } from './review/carry';
 import { resolutionConfigured } from './merge/resolution';
 
 const GIT_PATH =
@@ -248,6 +249,13 @@ async function afterPush(
   if (refsBefore && refsAfter) {
     const updates = diffRefs(refsBefore, refsAfter);
     await onRefsUpdated(env, db, repo, fullName, updates, actorId);
+    // Before the sweep and the state settling below: they read approvals of the new head.
+    await carryApprovalsOnSameTree(
+      db,
+      gitFor(env, repo),
+      repoId,
+      updates
+    ).catch((e) => console.error('[git] could not carry approvals', repoId, e));
     await startSweep(env, repo, updates);
   }
   await publishChange(env, repoId, { approvals: true });
