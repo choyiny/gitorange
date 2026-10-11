@@ -30,6 +30,7 @@ import {
 import { users } from '../db/auth.schema';
 import type { DrizzleDB } from '../db/middleware';
 import { aiGateway } from '../lib/ai-gateway';
+import { withRateLimitRetry, type RateLimitRetry } from '../lib/ai-retry';
 import { auditEventsWhere, recordAudit, type AuditEvent } from '../lib/audit';
 import {
   findRepoById,
@@ -167,7 +168,8 @@ function chatText(out: unknown): string {
 export function workersAiDelegateModel(
   env: CloudflareBindings,
   modelId: string,
-  ctx: { repositoryId: string; pullRequestId: string }
+  ctx: { repositoryId: string; pullRequestId: string },
+  retry?: RateLimitRetry
 ): DelegateModel {
   return {
     id: modelId,
@@ -175,25 +177,30 @@ export function workersAiDelegateModel(
       const gateway = aiGateway(env, 'review-delegate', {
         pull_request: ctx.pullRequestId,
       });
-      const out = (await env.AI.run(
-        modelId as never,
-        {
-          messages: [
-            { role: 'system', content: delegateSystemPrompt() },
-            { role: 'user', content: delegateUserPrompt(input) },
-          ],
-          response_format: {
-            type: 'json_schema',
-            json_schema: {
-              name: 'decision',
-              strict: true,
-              schema: DELEGATE_SCHEMA,
-            },
-          },
-          reasoning_effort: 'low',
-          max_completion_tokens: 2000,
-        } as never,
-        (gateway ? { gateway } : undefined) as never
+      // Rate limits are waited out here, with jitter, instead of leaving the finding for the person.
+      const out = (await withRateLimitRetry(
+        () =>
+          env.AI.run(
+            modelId as never,
+            {
+              messages: [
+                { role: 'system', content: delegateSystemPrompt() },
+                { role: 'user', content: delegateUserPrompt(input) },
+              ],
+              response_format: {
+                type: 'json_schema',
+                json_schema: {
+                  name: 'decision',
+                  strict: true,
+                  schema: DELEGATE_SCHEMA,
+                },
+              },
+              reasoning_effort: 'low',
+              max_completion_tokens: 2000,
+            } as never,
+            (gateway ? { gateway } : undefined) as never
+          ),
+        retry
       )) as unknown;
       await recordAiUsage(env, {
         feature: 'review-delegate',

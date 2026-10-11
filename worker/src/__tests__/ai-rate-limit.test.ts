@@ -2,6 +2,11 @@
 // never marked failed.
 import { describe, expect, it } from 'vitest';
 import { isRateLimited, withRateLimitRetry } from '../lib/ai-retry';
+import {
+  parseDelegateAnswer,
+  workersAiDelegateModel,
+  type DelegateInput,
+} from '../review/delegate';
 import { MODEL_RETRIES } from '../review/detail';
 import { appRepo, agentModels, AGENT_MD } from './helpers/reviews';
 import {
@@ -131,5 +136,55 @@ describe('a rate-limited agent review', () => {
     const [row] = await reviewers(t);
     expect(row.status).toBe('failed');
     expect(String(row.error)).toMatch(/rate limit/i);
+  });
+});
+
+describe('a rate-limited Let Claude decide call', () => {
+  const answer = {
+    choices: [
+      {
+        message: {
+          content: JSON.stringify({ decision: 'approve', reason: 'Fine.' }),
+        },
+      },
+    ],
+  };
+  const input: DelegateInput = {
+    person: { login: 'ann', name: 'Ann' },
+    agent: { handle: 'secagent', name: 'Sec', bio: '' },
+    finding: { title: 'T', question: null, detail: null, paths: [] },
+    pull: { repository: 'o/r', number: 1, title: 'P', description: '' },
+  };
+  const modelWith = async (run: () => Promise<unknown>) => {
+    const { t } = await appRepo();
+    const env = { ...t.env, AI: { run } } as unknown as CloudflareBindings;
+    const slept: number[] = [];
+    const model = workersAiDelegateModel(
+      env,
+      'm',
+      { repositoryId: 'r', pullRequestId: 'p' },
+      { sleep: async (ms) => void slept.push(ms), random: () => 0.5 }
+    );
+    return { model, slept };
+  };
+
+  it('waits and tries again instead of failing', async () => {
+    let calls = 0;
+    const { model, slept } = await modelWith(async () => {
+      if (++calls <= 2) throw new Error(RATE_LIMITED);
+      return answer;
+    });
+    expect(parseDelegateAnswer(await model.decide(input))).toMatchObject({
+      decision: 'approve',
+    });
+    expect(calls).toBe(3);
+    expect(slept).toHaveLength(2);
+  });
+
+  it('still throws once the limit outlasts every wait', async () => {
+    const { model } = await modelWith(async () => {
+      throw new Error(RATE_LIMITED);
+    });
+    await expect(model.decide(input)).rejects.toThrow(/3021/);
   });
 });
