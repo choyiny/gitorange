@@ -11,6 +11,7 @@ import {
 import { findRepo, gitFor, permissionsFor } from '../lib/repos';
 import { usersById } from '../lib/users';
 import { addComment, openPull, pullShas } from '../lib/pulls';
+import { actionsConfigured, rerun } from '../actions/trigger';
 import { landPull } from '../merge/land';
 import { rebaseTips, rebaseView, retryRebase } from '../merge/rebase';
 import { settleStates } from '../pulls/settle';
@@ -863,6 +864,92 @@ const retryRebaseTool: ToolModule = {
   },
 };
 
+const rerunChecksTool: ToolModule = {
+  definition: {
+    name: 'gitorange_rerun_checks',
+    title: 'Re-run failed checks',
+    description:
+      "Re-run a pull request's failed Actions runs at its current head (the check_failed reasons in " +
+      'gitorange_get_pull_request), for example after a failure that had nothing to do with your change (the runner ' +
+      'could not start, a network error). It starts a new run of each workflow whose latest run at the head failed. ' +
+      "Use it instead of pushing an empty commit, which resets a person's approval. Read the logs with " +
+      'gitorange_get_run_logs first: a failure your change caused needs a fix pushed instead. Follow it with ' +
+      'gitorange_get_pull_request. Needs push access.',
+    annotations: {
+      readOnlyHint: false,
+      destructiveHint: false,
+      title: 'Re-run failed checks',
+    },
+    inputSchema: {
+      type: 'object',
+      properties: { repository: repositoryProp, number: numberProp },
+      required: ['repository', 'number'],
+    },
+  },
+  handler: async (args, ctx) => {
+    const { repo, git, fullName, perms } = await repoFor(ctx, args);
+    // The same check as the re-run route.
+    if (!perms.write)
+      throw new McpToolError(
+        `You don't have permission to re-run checks in ${fullName}.`
+      );
+    if (!actionsConfigured(ctx.env))
+      throw new McpToolError('Actions is not set up on this server.');
+    const pr = await pullFor(ctx, repo.id, fullName, prNumber(args));
+    if (pr.state !== 'open')
+      throw new McpToolError(`#${pr.number} is not open.`);
+    const shas = await pullShas(git, pr);
+    if (!shas) throw new McpToolError(`#${pr.number} has no head to check.`);
+    const runs = await ctx.db
+      .select()
+      .from(workflowRuns)
+      .where(
+        and(
+          eq(workflowRuns.repositoryId, repo.id),
+          eq(workflowRuns.headSha, shas.head)
+        )
+      )
+      .orderBy(desc(workflowRuns.runNumber))
+      .all();
+    // A workflow's latest run decides: a later success or a run in progress means nothing to re-run.
+    const latest = new Map<string, (typeof runs)[number]>();
+    for (const run of runs)
+      if (!latest.has(run.workflowPath)) latest.set(run.workflowPath, run);
+    const failed = [...latest.values()].filter(
+      (r) => r.status === 'completed' && r.conclusion === 'failure'
+    );
+    if (!failed.length)
+      throw new McpToolError(
+        `#${pr.number} has no failed run at ${shas.head.slice(0, 7)} to re-run.`
+      );
+    const started: { name: string; from_run: number; run_number: number }[] =
+      [];
+    for (const run of failed) {
+      const id = await rerun(ctx.env, ctx.db, repo, fullName, run, ctx.user.id);
+      const created = await ctx.db
+        .select({ runNumber: workflowRuns.runNumber })
+        .from(workflowRuns)
+        .where(eq(workflowRuns.id, id))
+        .get();
+      started.push({
+        name: run.name,
+        from_run: run.runNumber,
+        run_number: created!.runNumber,
+      });
+    }
+    ctx.after(publishChange(ctx.env, repo.id));
+    ctx.after(settleStates(ctx.env, ctx.db, repo.id));
+    return {
+      content: [
+        json({
+          rerun: started,
+          note: `Follow them with gitorange_get_pull_request. ${pullUrl(ctx, fullName, pr.number)}`,
+        }),
+      ],
+    };
+  },
+};
+
 /** Tail of a log, so one failing step doesn't flood the conversation. */
 const MAX_LOG_LINES = 300;
 const MAX_LOG_CHARS = 40_000;
@@ -1106,6 +1193,7 @@ export const PULL_TOOLS: ToolModule[] = [
   commentPullRequest,
   mergePullRequest,
   retryRebaseTool,
+  rerunChecksTool,
   requestChangesOnReviewFlag,
   getRunLogs,
 ];

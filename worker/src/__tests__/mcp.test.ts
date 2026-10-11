@@ -201,6 +201,7 @@ describe('MCP server', () => {
       ['gitorange_comment_pull_request', false],
       ['gitorange_merge_pull_request', false],
       ['gitorange_retry_rebase', false],
+      ['gitorange_rerun_checks', false],
       ['gitorange_request_changes_on_review_flag', false],
       ['gitorange_get_run_logs', true],
       ['gitorange_list_agents', true],
@@ -367,7 +368,7 @@ describe('MCP server', () => {
     const res = await call(t, '/api/mcp', { cookie: admin });
     const body = (await res.json()) as { serverUrl: string; tools: unknown[] };
     expect(body.serverUrl).toBe(`${ORIGIN}/mcp`);
-    expect(body.tools).toHaveLength(19);
+    expect(body.tools).toHaveLength(20);
     expect((await call(t, '/api/mcp')).status).toBe(401);
   });
 });
@@ -1263,5 +1264,61 @@ describe('stacking tools', () => {
     ]);
     expect(two.parent).toMatchObject({ number: 1, accounted: false });
     expect(two.parent).not.toHaveProperty('for_pr');
+  });
+});
+
+describe('MCP re-run checks', () => {
+  it("re-runs a pull request's failed runs at its head without a new commit", async () => {
+    const t = makeEnv({ actions: true });
+    const admin = await bootstrapAdmin(t);
+    const { access_token } = await connect(t, admin);
+    await tool(t, access_token, 'gitorange_create_repository', {
+      name: 'app',
+      visibility: 'internal',
+    });
+    const repo = [...t.fake.repos.values()][0];
+    const main = await commitPaths(repo, 'main', { 'a.txt': 'a\n' }, 'base');
+    repo.refs.set('refs/heads/feature', main);
+    const head = await commitPaths(repo, 'feature', { 'a.txt': 'A\n' }, 'A');
+    await tool(t, access_token, 'gitorange_create_pull_request', {
+      repository: 'octocat/app',
+      head: 'feature',
+      title: 'A',
+    });
+    const none = await tool(t, access_token, 'gitorange_rerun_checks', {
+      repository: 'octocat/app',
+      number: 1,
+    });
+    expect(none.isError).toBe(true);
+
+    const repoId = (await t.env.DB.prepare(
+      'SELECT id FROM repositories'
+    ).first<{ id: string }>())!.id;
+    const run = (id: string, n: number, path: string, conclusion: string) =>
+      t.env.DB.prepare(
+        `INSERT INTO workflow_runs (id, repository_id, run_number, workflow_path, name, event, ref, head_sha, display_title, status, conclusion, created_at)
+         VALUES (?, ?, ?, ?, ?, 'pull_request', 'refs/pull/1/head', ?, 'x', 'completed', ?, 0)`
+      ).bind(id, repoId, n, path, path, head, conclusion);
+    await t.env.DB.batch([
+      run('r1', 1, '.github/workflows/ci.yml', 'failure'),
+      // Failed once, then passed: nothing to re-run.
+      run('r2', 2, '.github/workflows/lint.yml', 'failure'),
+      run('r3', 3, '.github/workflows/lint.yml', 'success'),
+    ]);
+
+    const res = await tool(t, access_token, 'gitorange_rerun_checks', {
+      repository: 'octocat/app',
+      number: 1,
+    });
+    expect(res.isError).toBeFalsy();
+    expect(JSON.parse(res.content[0].text).rerun).toEqual([
+      { name: '.github/workflows/ci.yml', from_run: 1, run_number: 4 },
+    ]);
+    const runs = await t.env.DB.prepare(
+      'SELECT run_number, head_sha FROM workflow_runs ORDER BY run_number'
+    ).all<{ run_number: number; head_sha: string }>();
+    expect(runs.results.map((r) => r.run_number)).toEqual([1, 2, 3, 4]);
+    expect(runs.results[3].head_sha).toBe(head);
+    expect(repo.refs.get('refs/heads/feature')).toBe(head);
   });
 });

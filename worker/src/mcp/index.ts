@@ -153,7 +153,9 @@ mcpRouter.post('/', async (c) => {
             (isModerator
               ? ''
               : 'Only a person can approve a review finding. ') +
-            'Fix the change requests agents raise (follow_ups) by pushing. Requesting changes on a finding and similar tools act as the signed-in ' +
+            'Fix the change requests agents raise (follow_ups) by pushing. When a check_failed reason is not ' +
+            'caused by your change (read gitorange_get_run_logs), re-run it with gitorange_rerun_checks instead of ' +
+            "pushing an empty commit, which resets a person's approval. Requesting changes on a finding and similar tools act as the signed-in " +
             'user, so only use them when the user explicitly asks, and never to work around a finding. ' +
             'Never ask the user to paste a personal access token into the conversation; have them run ' +
             'git commands that need one themselves.' +
