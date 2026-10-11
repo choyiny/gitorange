@@ -92,10 +92,13 @@ const label = (...lines: string[]) =>
  */
 export const ICON_SLOT = 'MM';
 
-/** A PR node's text: its whole title, then room for `icons` icons (none: the title alone). */
+/** A PR node's text: its whole title, who opened it, then room for `icons` icons (none: no such line). */
 function nodeLabel(n: TipNode, icons: number): string {
   const title = `#${n.number} ${n.title}`;
-  return icons > 0 ? label(title, ICON_SLOT.repeat(icons)) : label(title);
+  const by = `by @${n.author.username}`;
+  return icons > 0
+    ? label(title, by, ICON_SLOT.repeat(icons))
+    : label(title, by);
 }
 
 const CLASS: Record<PullStateName, string> = {

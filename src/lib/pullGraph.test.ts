@@ -76,7 +76,7 @@ describe('pullGraph', () => {
     expect(g.source).toMatch(/flowchart TD/);
     expect(g.source).toContain('land["main"]');
     expect(edges(g.source)).toEqual(['pr1 --> land', 'pr2 --> land']);
-    expect(g.source).toContain('pr1["#35;1 PR 1"]');
+    expect(g.source).toContain('pr1["#35;1 PR 1<br/>by @u"]');
   });
 
   it('turns off HTML labels', () => {
@@ -237,7 +237,7 @@ describe('pullGraph', () => {
     expect(label.split('<br/>')[0]).toBe(`#35;1 ${'a'.repeat(100)}`);
   });
 
-  it('keeps the status off the node: the title, then room for the icons the page draws', () => {
+  it('keeps the status off the node: the title, the author, then room for the icons the page draws', () => {
     const [g] = pullGraph(
       tree({
         branch: 'main',
@@ -261,8 +261,8 @@ describe('pullGraph', () => {
           .match(new RegExp(`pr${n}\\["([^"]*)"\\]`))![1]
           .replace(/#(\d+);/g, '&#$1;')
       ).split('<br/>');
-    expect(lines(1)).toEqual(['#1 PR 1', ICON_SLOT.repeat(3)]);
-    expect(lines(2)).toEqual(['#2 PR 2']);
+    expect(lines(1)).toEqual(['#1 PR 1', 'by @u', ICON_SLOT.repeat(3)]);
+    expect(lines(2)).toEqual(['#2 PR 2', 'by @u']);
     // The state and its reasons are still in the hover text.
     expect(g.tips.pr1).toContain('@secagent flagged 2 findings for a person');
   });
