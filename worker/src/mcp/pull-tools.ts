@@ -474,7 +474,15 @@ const getPullRequest: ToolModule = {
         }),
       null
     );
-    const rebasing = v?.status === 'resolving' || unread.length > 0;
+    // Said only of a rebase that is running; a failed read is reported as that, whatever the cause.
+    const notes = [
+      v?.status === 'resolving'
+        ? 'GitOrange is rebasing this pull request.'
+        : null,
+      unread.length
+        ? `Part of this pull request could not be read (${unread.join(', ')}); call again in a minute.`
+        : null,
+    ].filter(Boolean);
 
     // GitOrange rebased the branch to its current head: the agent's clone is stale until it rebases onto it.
     const last = shas
@@ -535,10 +543,7 @@ const getPullRequest: ToolModule = {
             message: c.message.split('\n')[0],
           })),
           merge,
-          note:
-            pr.state === 'open' && rebasing
-              ? `GitOrange is rebasing this pull request${unread.length ? `, so part of it could not be read (${unread.join(', ')})` : ''}; call again in a minute.`
-              : null,
+          note: pr.state === 'open' && notes.length ? notes.join(' ') : null,
           rebased,
           checks: runs.map((r) => ({
             workflow: r.name,

@@ -491,7 +491,7 @@ describe('MCP pull request tools', () => {
     expect((await get()).rebased).toBeNull();
   });
 
-  it('still answers while the head moves mid-read, with a note that a rebase is in progress', async () => {
+  it('still answers while the head moves mid-read, with a note on what could not be read', async () => {
     const { t, token, repo } = await repoWithBranch();
     await tool(t, token, 'gitorange_create_pull_request', {
       repository: 'octocat/app',
@@ -515,8 +515,10 @@ describe('MCP pull request tools', () => {
       number: 1,
       title: 'Add a',
       state: 'open',
-      note: expect.stringContaining('GitOrange is rebasing this pull request'),
+      note: expect.stringContaining('could not be read'),
     });
+    // No rebase is running, so it isn't blamed.
+    expect(JSON.parse(res.content[0].text).note).not.toContain('rebasing');
     repo.handle = handle;
     const after = JSON.parse(
       (
