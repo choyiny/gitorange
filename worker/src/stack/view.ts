@@ -152,7 +152,9 @@ export async function stackTreeView(
       );
       const landedNumbers = new Set(
         [...tree.values()].flatMap((n) =>
-          n.mustAccountFor.filter((d) => d.landed).map((d) => d.number)
+          [...n.mustAccountFor, ...n.landedRelations]
+            .filter((d) => d.landed)
+            .map((d) => d.number)
         )
       );
       // Checking: no pair row involves this PR at its current head yet, though other open PRs with a

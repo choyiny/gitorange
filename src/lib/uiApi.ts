@@ -250,6 +250,7 @@ export type StackNode = {
   children: number[];
   waitsOn: StackDependency[];
   mustAccountFor: StackDependency[];
+  landedRelations: StackDependency[];
   cycleWith: number[];
   unchecked: number[];
   /** Other PRs a check against is still running. */

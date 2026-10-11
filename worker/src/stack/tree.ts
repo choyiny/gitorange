@@ -41,6 +41,8 @@ export type TreeNode = {
   waitsOn: Dependency[];
   /** PRs (open or landed) this one must change for, with instructions. */
   mustAccountFor: Dependency[];
+  /** Landed PRs this one builds on, conflicts with or was ordered after: shown in the graph, never gating. */
+  landedRelations: Dependency[];
   /** PRs this one depends on in a circle; none of those edges count. */
   cycleWith: number[];
   /** PRs a check against failed. */
@@ -122,6 +124,7 @@ export function buildTree(
         children: [],
         waitsOn: [],
         mustAccountFor: [],
+        landedRelations: [],
         cycleWith: [],
         unchecked: [],
         pending: [],
@@ -165,7 +168,11 @@ export function buildTree(
       if (e.slot !== 'order' && e.errorMessage && !d.accounted)
         nodes.get(dep)!.unchecked.push(pre);
     }
-    if (d.landed) continue;
+    if (d.landed) {
+      if (d.kind !== 'must_account_for')
+        nodes.get(dep)!.landedRelations.push(d);
+      continue;
+    }
     deps.set(dep, [...(deps.get(dep) ?? []), d]);
   }
   const graph = new Map<number, number[]>(

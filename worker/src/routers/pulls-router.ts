@@ -500,6 +500,8 @@ const stackNodeSchema = z.object({
   children: z.array(z.number()),
   waitsOn: z.array(dependencySchema),
   mustAccountFor: z.array(dependencySchema),
+  /** Landed PRs related by builds_on, conflicts or ordered_after: display only, never gating. */
+  landedRelations: z.array(dependencySchema),
   cycleWith: z.array(z.number()),
   unchecked: z.array(z.number()),
   /** Other PRs a check against is still running. */

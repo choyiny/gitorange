@@ -372,6 +372,31 @@ describe('buildTree', () => {
     expect(t.get(3)!.waitsOn).toEqual([]);
   });
 
+  it('keeps landed builds_on, conflicts and ordered_after for display only', () => {
+    const t = buildTree(
+      [4, 5, 6],
+      [
+        edge(1, 4, 'builds_on'),
+        edge(2, 5, 'conflicts'),
+        edge(3, 6, 'ordered_after'),
+      ]
+    );
+    expect(t.get(4)!.landedRelations).toMatchObject([
+      { number: 1, kind: 'builds_on', landed: true },
+    ]);
+    expect(t.get(5)!.landedRelations).toMatchObject([
+      { number: 2, kind: 'conflicts', landed: true },
+    ]);
+    expect(t.get(6)!.landedRelations).toMatchObject([
+      { number: 3, kind: 'ordered_after', landed: true },
+    ]);
+    for (const n of [4, 5, 6]) {
+      expect(t.get(n)!.parent).toBeNull();
+      expect(t.get(n)!.waitsOn).toEqual([]);
+      expect(t.get(n)!.mustAccountFor).toEqual([]);
+    }
+  });
+
   it('breaks cycles and reports them', () => {
     const t = buildTree(
       [1, 2, 3],

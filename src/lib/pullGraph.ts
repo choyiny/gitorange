@@ -75,6 +75,7 @@ export function nodeTooltip(n: TipNode): string {
   if (n.parent) dep(n.parent, 'parent');
   for (const d of n.waitsOn) dep(d, 'wait');
   for (const d of n.mustAccountFor) dep(d, 'account');
+  for (const d of n.landedRelations) dep(d, 'wait');
   for (const p of n.pending) lines.push(`checking #${p}…`);
   for (const u of n.unchecked) lines.push(`couldn't check against #${u}`);
   if (n.checking) lines.push('checking…');
@@ -195,6 +196,11 @@ export function pullGraph(
         if (drawn.has(d.number) || (!d.landed && d.accounted)) continue;
         drawn.add(d.number);
         add(from, edgeFor(d, 'account'), idOf(d));
+      }
+      for (const d of n.landedRelations) {
+        if (drawn.has(d.number)) continue;
+        drawn.add(d.number);
+        add(from, edgeFor(d, 'wait'), idOf(d));
       }
     }
     const classes = [

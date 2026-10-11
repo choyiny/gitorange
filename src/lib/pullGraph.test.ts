@@ -32,6 +32,7 @@ const node = (number: number, extra: Partial<Node> = {}): Node => ({
   children: [],
   waitsOn: [],
   mustAccountFor: [],
+  landedRelations: [],
   cycleWith: [],
   unchecked: [],
   pending: [],
@@ -354,6 +355,33 @@ describe('nodeTooltip', () => {
     expect(
       nodeTooltip(node(1, { title: '<script>alert(1)</script>' }))
     ).toMatch(/^#1 <script>alert\(1\)<\/script>\n/);
+  });
+
+  it('draws landed builds_on, conflicts and ordered_after to the merged node', () => {
+    const [g] = pullGraph(
+      tree({
+        branch: 'main',
+        nodes: [
+          node(4, { landedRelations: [dep(1, 'builds_on', { landed: true })] }),
+          node(5, { landedRelations: [dep(2, 'conflicts', { landed: true })] }),
+          node(6, {
+            landedRelations: [dep(3, 'ordered_after', { landed: true })],
+          }),
+        ],
+        landed: [
+          { number: 1, title: 'One' },
+          { number: 2, title: 'Two' },
+          { number: 3, title: 'Three' },
+        ],
+      })
+    );
+    const es = edges(g.source);
+    expect(es).toContain('pr4 -.->|waits on| m1');
+    expect(es).toContain('pr5 -.->|waits on| m2');
+    expect(es).toContain('pr6 -.->|lands after| m3');
+    expect(g.source).toContain('m1["#35;1 One (merged)"]');
+    expect(g.tips.m2).toBe('#2 Two (merged)');
+    expect(g.tips.pr4).toContain('waits on #1');
   });
 
   it('is exposed per node id, merged ones marked', () => {
