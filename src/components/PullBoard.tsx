@@ -1,5 +1,5 @@
 import { Link } from 'react-router-dom';
-import { useQuery } from '@tanstack/react-query';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
 import {
   CheckIcon,
   ClockIcon,
@@ -9,6 +9,7 @@ import {
   GitPullRequestIcon,
   PauseIcon,
   PersonIcon,
+  PlayIcon,
   SyncIcon,
   type Icon,
 } from '@primer/octicons-react';
@@ -28,6 +29,7 @@ import {
   type BoardCard,
   type LaneId,
 } from '@/lib/pullBoard';
+import { useAction } from '@/components/AutoMergeReview';
 import { ChecksBadge, useCommitStatuses } from '@/components/Checks';
 import { CoderChip } from '@/components/CoderChip';
 import { AiResolutionBadge } from '@/components/PullBadges';
@@ -36,6 +38,7 @@ import { ReviewerAvatars } from '@/components/ReviewerAvatars';
 import { QueryError } from '@/components/actions/states';
 import { Banner } from '@/components/ui/Banner';
 import { EmptyState } from '@/components/ui/EmptyState';
+import { PendingButton } from '@/components/ui/PendingButton';
 
 /** How many merges the "Merged recently" lane shows. */
 const MERGED_LANE = 5;
@@ -234,6 +237,36 @@ function MergedLane({
   );
 }
 
+/** Pause or resume merging for the repository; shown to people who can push, whether or not a pull request is open. */
+function PauseControl({ repo, resume }: { repo: RepoDetail; resume: boolean }) {
+  const qc = useQueryClient();
+  const o = repo.owner.username;
+  const { busy, error, run } = useAction(() =>
+    Promise.all([
+      qc.invalidateQueries({ queryKey: qk.queue(o, repo.name) }),
+      qc.invalidateQueries({ queryKey: ['repo', o, repo.name, 'pulls'] }),
+    ])
+  );
+  return (
+    <PendingButton
+      className="small"
+      pending={busy}
+      pendingLabel={resume ? 'Resuming…' : 'Pausing…'}
+      error={error}
+      onClick={() =>
+        run(() =>
+          resume
+            ? api.resumeMerging(o, repo.name)
+            : api.pauseMerging(o, repo.name)
+        )
+      }
+    >
+      {resume ? <PlayIcon size={14} /> : <PauseIcon size={14} />}
+      {resume ? 'Resume merging' : 'Pause merging'}
+    </PendingButton>
+  );
+}
+
 /** Open pull requests in lanes by whose move it is, then the ones that merged lately. */
 export function PullBoard({ repo }: { repo: RepoDetail }) {
   const o = repo.owner.username;
@@ -283,8 +316,20 @@ export function PullBoard({ repo }: { repo: RepoDetail }) {
 
   return (
     <>
+      {repo.permissions.write && !paused && (
+        <div className="pulls-bar">
+          <PauseControl repo={repo} resume={false} />
+        </div>
+      )}
       {paused && (
-        <Banner icon={<PauseIcon size={16} />}>
+        <Banner
+          icon={<PauseIcon size={16} />}
+          action={
+            repo.permissions.write ? (
+              <PauseControl repo={repo} resume />
+            ) : undefined
+          }
+        >
           Merging is paused
           {pause
             ? ` by ${pause.by.name || pause.by.login}, ${timeAgo(new Date(pause.at))}`
