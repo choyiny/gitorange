@@ -10,6 +10,7 @@ import {
   type Pull,
   type RepoDetail,
 } from '@/lib/uiApi';
+import { WATCH_REFETCH_MS } from '@/lib/live';
 import {
   decodeEntities,
   ICON_SLOT,
@@ -273,11 +274,13 @@ export function PullGraph({ repo }: { repo: RepoDetail }) {
   const q = useQuery({
     queryKey: qk.pullTree(o, repo.name),
     queryFn: () => api.pullTree(o, repo.name),
+    refetchInterval: WATCH_REFETCH_MS,
   });
   // The list's own data (the same queries, so the cache is shared): reviewers and AI resolution, then checks.
   const open = useQuery({
     queryKey: qk.pulls(o, repo.name, 'open'),
     queryFn: () => api.pulls(o, repo.name, 'open'),
+    refetchInterval: WATCH_REFETCH_MS,
   });
   const statuses = useCommitStatuses(
     repo,

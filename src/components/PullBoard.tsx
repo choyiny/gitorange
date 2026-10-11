@@ -20,6 +20,7 @@ import {
   type Pull,
   type RepoDetail,
 } from '@/lib/uiApi';
+import { WATCH_REFETCH_MS } from '@/lib/live';
 import { timeAgo } from '@/lib/format';
 import { pullsHref } from '@/lib/pullsView';
 import {
@@ -274,16 +275,19 @@ export function PullBoard({ repo }: { repo: RepoDetail }) {
   const open = useQuery({
     queryKey: qk.pulls(o, repo.name, 'open'),
     queryFn: () => api.pulls(o, repo.name, 'open'),
+    refetchInterval: WATCH_REFETCH_MS,
   });
   // Blockers, landing order and estimates. The board still works from each pull request's own state without it.
   const queue = useQuery({
     queryKey: qk.queue(o, repo.name),
     queryFn: () => api.queue(o, repo.name),
+    refetchInterval: WATCH_REFETCH_MS,
   });
   // Only the newest few merges, newest first: the closed list is as long as the repository's history.
   const merged = useQuery({
     queryKey: qk.pulls(o, repo.name, 'merged', MERGED_LANE),
     queryFn: () => api.pulls(o, repo.name, 'merged', { limit: MERGED_LANE }),
+    refetchInterval: WATCH_REFETCH_MS,
   });
   const pulls = open.data?.pulls;
   const statuses = useCommitStatuses(

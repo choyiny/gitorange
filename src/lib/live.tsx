@@ -12,6 +12,13 @@ import { useCurrentUser } from './auth';
 const LiveRepoContext = createContext<(repo: string | null) => void>(() => {});
 
 const KEEPALIVE_MS = 30_000;
+/**
+ * How often pages that watch work move (the Pulls board and graph) refetch on their own while visible, so a ping that
+ * was missed or answered by a lagging read never leaves them wrong for long. Hidden tabs don't poll.
+ */
+export const WATCH_REFETCH_MS = 20_000;
+/** The second refetch after a ping (see `schedule`). */
+const SETTLE_MS = 3_000;
 const MAX_BACKOFF_MS = 30_000;
 
 /**
@@ -33,6 +40,7 @@ export function LiveUpdates({ children }: { children: ReactNode }) {
     let retry: ReturnType<typeof setTimeout> | undefined;
     let keepalive: ReturnType<typeof setInterval> | undefined;
     let flush: ReturnType<typeof setTimeout> | undefined;
+    let settle: ReturnType<typeof setTimeout> | undefined;
     const pending = new Set<string>();
 
     // Bursts (an Actions run finishing several steps) collapse into one refetch.
@@ -42,7 +50,15 @@ export function LiveUpdates({ children }: { children: ReactNode }) {
       flush = setTimeout(() => {
         if (pending.has('repo') && repo) {
           const [owner, name] = repo.split('/');
-          void qc.invalidateQueries({ queryKey: ['repo', owner, name] });
+          const key = ['repo', owner, name];
+          void qc.invalidateQueries({ queryKey: key });
+          // Once more a moment later: a read made right after the write can come from a replica that hasn't caught
+          // up, and the page would keep that answer until the next ping.
+          clearTimeout(settle);
+          settle = setTimeout(
+            () => void qc.invalidateQueries({ queryKey: key }),
+            SETTLE_MS
+          );
         }
         if (pending.has('approvals'))
           void qc.invalidateQueries({ queryKey: ['approvals'] });
@@ -100,6 +116,7 @@ export function LiveUpdates({ children }: { children: ReactNode }) {
       closed = true;
       clearTimeout(retry);
       clearTimeout(flush);
+      clearTimeout(settle);
       clearInterval(keepalive);
       ws?.close();
     };
