@@ -162,6 +162,7 @@ export async function pullStates(
   const tipOf = async (branch: string) =>
     refs.get(`refs/heads/${branch}`) ??
     (allRefs ??= await git.refs()).get(`refs/heads/${branch}`);
+  const asked = new Set(tips.map((t) => t.pr.number));
   for (const t of tree.targets) {
     for (const n of t.nodes) branchOf.set(n.number, n.headRef);
     const byNumber = new Map(t.nodes.map((n) => [n.number, n]));
@@ -182,7 +183,8 @@ export async function pullStates(
       needsRebase.set(n.number, needs);
       return needs;
     };
-    for (const n of t.nodes) await visit(n);
+    // Only the asked PRs (and, through `visit`, their parents): each answer is a merge-base walk over git.
+    for (const n of t.nodes) if (asked.has(n.number)) await visit(n);
   }
 
   for (const { pr, base, head } of tips) {

@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import {
   decideState,
   reasonState,
@@ -620,6 +620,47 @@ describe('pullStates', () => {
       await pullStates(s.db, git, s.repoId, prs, { reviewConfigured: false })
     ).get(prs[0].id);
     expect(off).toEqual({ state: 'ready', reasons: [] });
+  });
+
+  it("reads git only for the asked PR's stack chain, not for every PR in the target", async () => {
+    const s = await statesRepo();
+    for (const b of ['one', 'two', 'three', 'four', 'five'])
+      await s.open(b, { [`${b}.txt`]: `${b}\n` });
+    const prs = (await s.db.query.pullRequests.findMany({
+      orderBy: (p, { asc }) => [asc(p.number)],
+    })) as PullRequest[];
+    // A chain: each builds on the one before it.
+    for (const [i, pr] of prs.slice(1).entries())
+      await s.t.env.DB.prepare(
+        `INSERT INTO pr_edges (id, repository_id, land_target, pr_a_id, pr_b_id, a_head, b_head, stage, kind, prerequisite, reason, created_at, updated_at)
+         VALUES (?, ?, 'main', ?, ?, ?, ?, 'done', 'builds_on', 'a', 'Builds on it.', 0, 0)`
+      )
+        .bind(
+          `e${i}`,
+          s.repoId,
+          prs[i].id,
+          pr.id,
+          s.head(prs[i].headRef),
+          s.head(pr.headRef)
+        )
+        .run();
+    const found = await findRepoById(s.db, s.repoId);
+    const git = gitFor(s.t.env, found!.repo);
+    const walks = vi.spyOn(git, 'mergeBase');
+    const time = async (asked: PullRequest[]) => {
+      walks.mockClear();
+      const at = performance.now();
+      await pullStates(s.db, git, s.repoId, asked);
+      return {
+        walks: walks.mock.calls.length,
+        ms: Math.round(performance.now() - at),
+      };
+    };
+    // The root builds on nothing, so asking for it walks nothing (before: one walk per stacked PR).
+    const root = await time([prs[0]]);
+    const all = await time(prs);
+    console.log('[timing] pullStates for #1 only', root, 'for all five', all);
+    expect(root.walks).toBe(0);
   });
 
   it('has no state for a PR whose branch is gone, nor for closed PRs', async () => {
