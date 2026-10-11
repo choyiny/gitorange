@@ -9,6 +9,7 @@ import {
 import { ArtifactsRepoClient } from '../git/remote';
 import { GitService } from '../git/service';
 import { aiGateway } from '../lib/ai-gateway';
+import { withRateLimitRetry, type RateLimitRetry } from '../lib/ai-retry';
 import { ignoreMatcher } from '../review/ignore';
 import {
   classifierModel,
@@ -401,10 +402,14 @@ export async function relevanceContext(
   return rc;
 }
 
-/** Clef on Workers AI through AI Gateway; usage recorded under `ci-relevance`. */
+/**
+ * Clef on Workers AI through AI Gateway; usage recorded under `ci-relevance`. A rate-limited call
+ * waits and retries (`retry` is for tests); if it still fails the decision runs everything.
+ */
 export function workersAiRelevance(
   env: CloudflareBindings,
-  target: { repositoryId: string; pullRequestId: string | null }
+  target: { repositoryId: string; pullRequestId: string | null },
+  retry?: RateLimitRetry
 ): RelevanceModel {
   return {
     async decide(state, questions) {
@@ -414,10 +419,14 @@ export function workersAiRelevance(
         'ci-relevance',
         target.pullRequestId ? { pull_request: target.pullRequestId } : {}
       );
-      const out = (await env.AI.run(
-        model as never,
-        { model: 'clef', state, questions } as never,
-        (gateway ? { gateway } : undefined) as never
+      const out = (await withRateLimitRetry(
+        () =>
+          env.AI.run(
+            model as never,
+            { model: 'clef', state, questions } as never,
+            (gateway ? { gateway } : undefined) as never
+          ),
+        retry
       )) as { answers?: Record<string, ClefAnswer> };
       await recordAiUsage(env, {
         feature: 'ci-relevance',

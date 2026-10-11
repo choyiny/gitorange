@@ -677,6 +677,51 @@ describe('gitorange/relevance on Workers AI', () => {
     });
   });
 
+  it('waits out a rate limit and asks again; still limited, it throws (run everything)', async () => {
+    const s = await setup();
+    const target = { repositoryId: (await repoRow(s)).id, pullRequestId: null };
+    const waits: number[] = [];
+    const retry = {
+      sleep: async (ms: number) => void waits.push(ms),
+      random: () => 0.5,
+    };
+    let calls = 0;
+    const limited = () => {
+      calls++;
+      throw new Error(
+        'AiError: 3021: rate limiting: inference request per min rate reached'
+      );
+    };
+    const env = (run: () => unknown) =>
+      ({
+        ...s.t.env,
+        AI: { run: async () => run() },
+      }) as unknown as CloudflareBindings;
+
+    const answers = await workersAiRelevance(
+      env(() =>
+        calls < 2
+          ? limited()
+          : { answers: { workflow: { type: 'noul', noul: 0.7 } } }
+      ),
+      target,
+      retry
+    ).decide({}, {});
+    expect(answers).toEqual({ workflow: { type: 'noul', value: 0.7 } });
+    expect(waits).toHaveLength(2);
+
+    calls = 0;
+    waits.length = 0;
+    await expect(
+      workersAiRelevance(env(limited), target, {
+        ...retry,
+        budgetMs: 10_000,
+      }).decide({}, {})
+    ).rejects.toThrow('3021');
+    expect(calls).toBeGreaterThan(1);
+    expect(waits.length).toBe(calls - 1);
+  });
+
   it('throws when Clef returns no answers (the decision then runs everything)', async () => {
     const s = await setup();
     const env = {
