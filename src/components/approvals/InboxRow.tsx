@@ -30,6 +30,7 @@ import { decidedByText } from '@/lib/claudeLog';
 import { timeAgo } from '@/lib/format';
 import type { AgentStatus } from '@/lib/agentLook';
 import { AgentAvatar } from '@/components/AgentAvatar';
+import { CoderChip } from '@/components/CoderChip';
 import { PendingButton } from '@/components/ui/PendingButton';
 import { ChangesPanel, DismissPanel, PanelError } from './Panels';
 import { ClaudeTile } from './ClaudePanel';
@@ -113,7 +114,14 @@ function Meta({ who, row }: { who: ReactNode; row: InboxRow }) {
         </Link>{' '}
         <Link className="ap-title" to={rowHref(row)}>
           {row.pull.title}
-        </Link>
+        </Link>{' '}
+        <CoderChip
+          createdVia={row.pull.createdVia}
+          sessionLabel={row.pull.sessionLabel}
+          sessionId={row.pull.sessionId}
+          base={`/${row.repo}`}
+          person={row.pull.author?.name || row.pull.author?.username}
+        />
       </p>
       <span className="ap-wait" title={`Updated ${row.pull.updatedAt}`}>
         <ClockIcon size={13} />

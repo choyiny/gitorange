@@ -294,12 +294,23 @@ describe('Approvals items', () => {
       items: {
         needsApproval: boolean;
         agents: unknown[];
-        pull: { headSha: string | null };
+        pull: {
+          headSha: string | null;
+          createdVia: string | null;
+          sessionLabel: string | null;
+          sessionId: string;
+        };
       }[];
       count: number;
     };
     expect(res.items).toMatchObject([{ needsApproval: true, agents: [] }]);
     expect(res.items[0].pull.headSha).toMatch(/^[0-9a-f]{40}$/);
+    // Opened by hand: no app or label, but the author's session to link to.
+    expect(res.items[0].pull).toMatchObject({
+      createdVia: null,
+      sessionLabel: null,
+    });
+    expect(res.items[0].pull.sessionId).toEqual(expect.any(String));
     expect(res.count).toBe(1);
     await call(t, '/api/repos/octocat/app/pulls/1/approval', {
       cookie: admin,

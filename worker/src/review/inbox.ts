@@ -18,6 +18,7 @@ import { latestStates } from '../pulls/events';
 import type { PullState } from '../pulls/state';
 import { findReposByIds, gitFor, permissionsForMany } from '../lib/repos';
 import { personRefs } from '../lib/person-ref';
+import { pullSessionIds } from '../lib/sessions';
 import { usersById, type PublicUser } from '../lib/users';
 import { chunks } from '../stack/view';
 import type { SessionUser } from '../variables';
@@ -474,6 +475,7 @@ export async function approvalsFor(
       .where(and(inArray(agents.userId, part), eq(agents.guarded, true)))
       .all())
       guarded.add(a.id);
+  const sessionIds = await pullSessionIds(page.map((i) => i.pr));
   const out = [];
   for (const i of page) {
     const r = repos.get(i.pr.repositoryId)!;
@@ -485,6 +487,9 @@ export async function approvalsFor(
         author: people.get(i.pr.authorId) ?? null,
         updatedAt: i.pr.updatedAt.toISOString(),
         headSha: i.headSha,
+        createdVia: i.pr.createdVia,
+        sessionLabel: i.pr.sessionLabel,
+        sessionId: sessionIds.get(i.pr.id)!,
       },
       reviewFailed: i.reviewFailed,
       resolutionFailed: i.resolutionFailed,

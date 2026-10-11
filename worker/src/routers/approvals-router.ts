@@ -30,6 +30,10 @@ const itemSchema = z.object({
     updatedAt: z.string(),
     /** The head commit its review (and what you'd approve) is of; null before any review. */
     headSha: z.string().nullable(),
+    /** The coding app that opened it over MCP (null: by hand), its session label, and the session's id. */
+    createdVia: z.string().nullable(),
+    sessionLabel: z.string().nullable(),
+    sessionId: z.string(),
   }),
   /** The latest review failed; a person can retry it or merge by hand. */
   reviewFailed: z.string().nullable(),

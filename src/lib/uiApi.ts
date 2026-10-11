@@ -392,6 +392,9 @@ export type ApprovalItem = {
     updatedAt: string;
     /** The head commit the page shows; what Approve approves. Null when its branch is gone. */
     headSha: string | null;
+    createdVia: string | null;
+    sessionLabel: string | null;
+    sessionId: string;
   };
   reviewFailed: string | null;
   resolutionFailed: string | null;
