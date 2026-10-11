@@ -134,12 +134,15 @@ export function Rail({
   const menuRef = useRef(menu);
   menuRef.current = menu;
 
-  const openPeek = () => {
+  // Focus opens at once; the pointer has to rest on the rail first, so passing over it doesn't flash it open.
+  const openPeek = (delay = 0) => {
     clearTimeout(timer.current);
-    if (!pinned && !narrow) setPeek(true);
+    if (pinned || narrow) return;
+    if (delay) timer.current = setTimeout(() => setPeek(true), delay);
+    else setPeek(true);
   };
   // Closes shortly after the pointer and focus have both left (and the instance menu is shut).
-  const closePeek = () => {
+  const closePeek = (delay = 220) => {
     clearTimeout(timer.current);
     timer.current = setTimeout(() => {
       const nav = navRef.current;
@@ -150,7 +153,7 @@ export function Rail({
       )
         return;
       setPeek(false);
-    }, 220);
+    }, delay);
   };
   useEffect(() => () => clearTimeout(timer.current), []);
   useEffect(() => {
@@ -174,9 +177,9 @@ export function Rail({
       ref={navRef}
       className={className}
       aria-label={appName}
-      onPointerEnter={openPeek}
-      onPointerLeave={closePeek}
-      onFocus={openPeek}
+      onPointerEnter={() => openPeek(300)}
+      onPointerLeave={() => closePeek(0)}
+      onFocus={() => openPeek()}
       onBlur={(e) => {
         if (!navRef.current?.contains(e.relatedTarget as Node | null))
           closePeek();
