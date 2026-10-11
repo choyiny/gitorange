@@ -266,6 +266,7 @@ jobs:
           worker/src/__tests__/commit-emails.test.ts
           worker/src/__tests__/smoke.test.ts
           worker/src/__tests__/live.test.ts
+          worker/src/__tests__/live-open.test.ts
           worker/src/__tests__/usage.test.ts
           worker/src/__tests__/insights.test.ts
           worker/src/__tests__/ai-gateway.test.ts
