@@ -491,6 +491,44 @@ describe('MCP pull request tools', () => {
     expect((await get()).rebased).toBeNull();
   });
 
+  it('still answers while the head moves mid-read, with a note that a rebase is in progress', async () => {
+    const { t, token, repo } = await repoWithBranch();
+    await tool(t, token, 'gitorange_create_pull_request', {
+      repository: 'octocat/app',
+      head: 'feature',
+      title: 'Add a',
+    });
+    // The head moved under the read: reading the branch's history fails.
+    const handle = repo.handle.bind(repo);
+    repo.handle = () => ({
+      ...handle(),
+      log: async () => {
+        throw new Error('INTERNAL_ERROR: ref moved');
+      },
+    });
+    const res = await tool(t, token, 'gitorange_get_pull_request', {
+      repository: 'octocat/app',
+      number: 1,
+    });
+    expect(res.isError).toBeFalsy();
+    expect(JSON.parse(res.content[0].text)).toMatchObject({
+      number: 1,
+      title: 'Add a',
+      state: 'open',
+      note: expect.stringContaining('GitOrange is rebasing this pull request'),
+    });
+    repo.handle = handle;
+    const after = JSON.parse(
+      (
+        await tool(t, token, 'gitorange_get_pull_request', {
+          repository: 'octocat/app',
+          number: 1,
+        })
+      ).content[0].text
+    );
+    expect(after.note).toBeNull();
+  });
+
   it('a merge that rebased first tells the agent how to keep its unpushed commits', async () => {
     const { t, admin, token, repo } = await repoWithBranch();
     await tool(t, token, 'gitorange_create_pull_request', {

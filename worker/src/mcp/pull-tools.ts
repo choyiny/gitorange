@@ -320,6 +320,25 @@ const getPullTree: ToolModule = {
 export const rebasedNote = (branch: string, from: string, to: string) =>
   `GitOrange rebased this branch (${from.slice(0, 7)} → ${to.slice(0, 7)}); run \`git fetch && git rebase --onto origin/${branch} ${from}\` before you push again (it keeps your unpushed commits).`;
 
+/**
+ * A git read that may fail while GitOrange rebases the branch (its head ref moves under the read): the fallback, and
+ * the failure noted so the answer says part of it could not be read.
+ */
+async function readable<T>(
+  unread: string[],
+  what: string,
+  read: () => Promise<T>,
+  fallback: T
+): Promise<T> {
+  try {
+    return await read();
+  } catch (e) {
+    console.error('[mcp] pull request read failed', what, e);
+    unread.push(what);
+    return fallback;
+  }
+}
+
 const getPullRequest: ToolModule = {
   definition: {
     name: 'gitorange_get_pull_request',
@@ -355,14 +374,29 @@ const getPullRequest: ToolModule = {
   handler: async (args, ctx) => {
     const { repo, git, fullName, perms } = await repoFor(ctx, args);
     const pr = await pullFor(ctx, repo.id, fullName, prNumber(args));
-    const shas = await pullShas(git, pr);
+    // Every git read below can fail while the branch is being rebased: answer with what could be read.
+    const unread: string[] = [];
+    const shas = await readable(unread, 'head', () => pullShas(git, pr), null);
     // Merging is measured against the land target; base_ref may be a parent PR's branch while stacked.
-    const target = pr.state === 'open' ? await landShas(git, pr) : null;
+    const target =
+      pr.state === 'open'
+        ? await readable(unread, 'target', () => landShas(git, pr), null)
+        : null;
 
     let merge: Record<string, unknown> | null = null;
-    const tips = pr.state === 'open' ? await rebaseTips(git, pr) : null;
-    if (tips) {
-      const v = await rebaseView(ctx.env, ctx.db, git, pr, tips);
+    const tips =
+      pr.state === 'open'
+        ? await readable(unread, 'rebase', () => rebaseTips(git, pr), null)
+        : null;
+    const v = tips
+      ? await readable(
+          unread,
+          'rebase status',
+          () => rebaseView(ctx.env, ctx.db, git, pr, tips),
+          null
+        )
+      : null;
+    if (v) {
       merge = {
         nothing_to_merge: v.status === 'nothing_to_merge',
         // GitOrange rebases a branch that is behind; landing does too.
@@ -393,7 +427,12 @@ const getPullRequest: ToolModule = {
           .all()
       : [];
 
-    const review = await reviewersView(ctx.env, ctx.db, git, pr, shas);
+    const review = await readable(
+      unread,
+      'reviewers',
+      () => reviewersView(ctx.env, ctx.db, git, pr, shas),
+      null
+    );
     const comments = await ctx.db
       .select()
       .from(pullRequestComments)
@@ -406,7 +445,14 @@ const getPullRequest: ToolModule = {
       pr.mergedById ?? '',
       ...comments.map((x) => x.authorId),
     ]);
-    const commits = shas ? await git.commitsBetween(shas.base, shas.head) : [];
+    const commits = shas
+      ? await readable(
+          unread,
+          'commits',
+          () => git.commitsBetween(shas.base, shas.head),
+          []
+        )
+      : [];
     // The target's tree, read once: this PR's node, other PRs' branches, and its state.
     const found = await stackTargetFor(ctx.db, git, pr).catch((e) => {
       console.error('[mcp] stack view failed', pr.id, e);
@@ -417,11 +463,18 @@ const getPullRequest: ToolModule = {
       found?.view.targets
         .find((t) => t.branch === landTargetOf(pr))
         ?.nodes.find((x) => x.number === n)?.headRef ?? null;
-    const pullState = await pullStateFor(ctx.db, git, pr, {
-      shas: target,
-      reviewConfigured: reviewConfigured(ctx.env),
-      tree: found?.view,
-    });
+    const pullState = await readable(
+      unread,
+      'pull_state',
+      () =>
+        pullStateFor(ctx.db, git, pr, {
+          shas: target,
+          reviewConfigured: reviewConfigured(ctx.env),
+          tree: found?.view,
+        }),
+      null
+    );
+    const rebasing = v?.status === 'resolving' || unread.length > 0;
 
     // GitOrange rebased the branch to its current head: the agent's clone is stale until it rebases onto it.
     const last = shas
@@ -482,6 +535,10 @@ const getPullRequest: ToolModule = {
             message: c.message.split('\n')[0],
           })),
           merge,
+          note:
+            pr.state === 'open' && rebasing
+              ? `GitOrange is rebasing this pull request${unread.length ? `, so part of it could not be read (${unread.join(', ')})` : ''}; call again in a minute.`
+              : null,
           rebased,
           checks: runs.map((r) => ({
             workflow: r.name,
