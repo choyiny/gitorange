@@ -545,6 +545,40 @@ describe('Actions restarts after interruptions', () => {
     );
   });
 
+  it('records a failed container start in the Set up job log and the run error', async () => {
+    const s = await setup();
+    await pushFiles(s, 'main', { '.github/workflows/ci.yml': CI });
+    const [queued] = (await runs(s.t, s.admin)).runs;
+    const h = harness(s.t, () => ({}), { failBoot: 'No container capacity' });
+    expect(await h.run(queued.id)).toBe('failure');
+    expect(h.requests).toHaveLength(0);
+    const { run, jobs } = await runDetail(s.t, s.admin, 1);
+    expect(run.errorMessage).toBe(
+      'Job "build" could not start its runner: No container capacity'
+    );
+    expect(jobs[0].steps[0].conclusion).toBe('failure');
+    expect(await stepLog(s, jobs[0].id, 1)).toBe(
+      'Could not start the runner: No container capacity'
+    );
+  });
+
+  it('records why Set up job failed as a whole when it logged nothing', async () => {
+    const s = await setup();
+    await pushFiles(s, 'main', { '.github/workflows/ci.yml': CI });
+    const [queued] = (await runs(s.t, s.admin)).runs;
+    const h = harness(s.t, () => ({}), {
+      failSetup: 'Execution timed out after 600000ms',
+    });
+    expect(await h.run(queued.id)).toBe('failure');
+    expect(h.requests).toHaveLength(0);
+    const { run, jobs } = await runDetail(s.t, s.admin, 1);
+    expect(run.errorMessage).toContain('Execution timed out after 600000ms');
+    expect(jobs[0].steps[0].conclusion).toBe('failure');
+    expect(await stepLog(s, jobs[0].id, 1)).toBe(
+      'Could not start the runner: Execution timed out after 600000ms'
+    );
+  });
+
   it('does not restart a job whose run was cancelled', async () => {
     const s = await setup();
     await pushFiles(s, 'main', { '.github/workflows/ci.yml': CI });

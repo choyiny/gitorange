@@ -166,6 +166,10 @@ export function harness(
   opts: {
     loseEvents?: boolean;
     retrySteps?: boolean;
+    /** Makes every job's Set up job step fail as a whole, like a Workflow step timeout. */
+    failSetup?: string;
+    /** Makes the container fail to start with this message. */
+    failBoot?: string;
     relevance?: RelevanceModelFor;
   } = {}
 ) {
@@ -178,6 +182,8 @@ export function harness(
   const step = {
     do: async (name: string, a: unknown, b?: unknown) => {
       stepNames.push(name);
+      if (opts.failSetup && name.endsWith(':setup'))
+        throw new Error(opts.failSetup);
       const fn = (b ?? a) as () => Promise<unknown>;
       const retries = opts.retrySteps
         ? ((b ? (a as { retries?: { limit?: number } }) : {}).retries?.limit ??
@@ -206,6 +212,7 @@ export function harness(
   } as unknown as StepRunner;
   const runner = (jobId: string): JobRunnerApi => ({
     boot: async () => {
+      if (opts.failBoot) throw new Error(opts.failBoot);
       boots.push(jobId);
       alive.add(jobId);
       peak = Math.max(peak, alive.size);

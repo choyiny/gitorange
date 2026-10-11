@@ -193,6 +193,8 @@ interface JobOutcome {
   key: string;
   result: Conclusion;
   outputs: Record<string, string>;
+  /** Why the job could not start its runner, for the run's error. */
+  error?: string;
 }
 
 interface StepState {
@@ -298,8 +300,9 @@ export async function executeRun(
     : all.includes('cancelled')
       ? 'cancelled'
       : 'success';
+  const error = [...outcomes.values()].flat().find((o) => o.error)?.error;
   await step.do('finish-run', async () => {
-    await finishRun(db, runId, conclusion, null);
+    await finishRun(db, runId, conclusion, error ?? null);
     return true;
   });
   // Passing checks may unblock auto-merge of a PR at this commit.
@@ -587,7 +590,7 @@ async function runJob(
       '',
     ].join('\n');
   }
-  const { steps, caches, jobStatus } = attemptState;
+  const { steps, caches, jobStatus, setupError } = attemptState;
 
   // ── Post steps: save caches (GitHub runs them in reverse, on success only) ──
   for (const [k, i] of posts.entries()) {
@@ -713,7 +716,14 @@ async function runJob(
         completedAt: now,
       })
       .where(eq(workflowJobs.id, job.id));
-    return { key: def.key, result, outputs } satisfies JobOutcome;
+    return {
+      key: def.key,
+      result,
+      outputs,
+      ...(setupError && {
+        error: `Job "${def.key}" could not start its runner: ${setupError}`,
+      }),
+    } satisfies JobOutcome;
   });
 }
 
@@ -722,6 +732,8 @@ interface AttemptState {
   steps: Record<string, Value>;
   /** What each caching step restored, for its post step. */
   caches: Map<number, CacheState>;
+  /** Why Set up job failed, when the runner never started. */
+  setupError?: string;
   /** The step whose runner went away, when this attempt should be restarted. */
   interrupted?: { number: number; name: string; message: string };
 }
@@ -766,56 +778,86 @@ async function runAttempt(
       .catch((err) =>
         console.warn('[actions] could not mark slot started', job.id, err)
       );
-  const setup = await step.do(
-    `${name}:setup`,
-    {
-      retries: { limit: 2, delay: '10 seconds', backoff: 'constant' },
-      timeout: '10 minutes',
-    },
-    async () => {
-      const now = new Date();
-      await db
-        .update(workflowJobs)
-        .set({ status: 'in_progress', startedAt: now })
-        .where(eq(workflowJobs.id, job.id));
-      await setStep(db, job.id, 1, { status: 'in_progress', startedAt: now });
-      let log: string;
-      let ok = true;
-      try {
-        const size = instanceTypeFor(job.runsOn);
-        // Usage & cost: the container is billed from boot until destroy.
-        await runnerStarted(db, {
-          id: `${job.id}:${/:attempt:(\d+)$/.exec(name)?.[1] ?? '1'}`,
-          jobId: job.id,
-          repositoryId: ctx.repoId,
-          instanceType: size,
-          deadlineAt: new Date(Date.now() + jobTimeoutMs + 10 * 60_000),
+  const setupResult = await step
+    .do(
+      `${name}:setup`,
+      {
+        retries: { limit: 2, delay: '10 seconds', backoff: 'constant' },
+        timeout: '10 minutes',
+      },
+      async () => {
+        const now = new Date();
+        await db
+          .update(workflowJobs)
+          .set({ status: 'in_progress', startedAt: now })
+          .where(eq(workflowJobs.id, job.id));
+        await setStep(db, job.id, 1, { status: 'in_progress', startedAt: now });
+        let log: string;
+        let ok = true;
+        let error: string | undefined;
+        try {
+          const size = instanceTypeFor(job.runsOn);
+          // Usage & cost: the container is billed from boot until destroy.
+          await runnerStarted(db, {
+            id: `${job.id}:${/:attempt:(\d+)$/.exec(name)?.[1] ?? '1'}`,
+            jobId: job.id,
+            repositoryId: ctx.repoId,
+            instanceType: size,
+            deadlineAt: new Date(Date.now() + jobTimeoutMs + 10 * 60_000),
+          });
+          const { ms } = await runner.boot(size, jobTimeoutMs);
+          log = [
+            ...(restartNote ? [restartNote] : []),
+            `Runner: GitOrange Actions (${size})`,
+            `Labels: ${job.runsOn}`,
+            `Image: Debian (trixie) with Node.js, git, and build tools`,
+            `Started in ${(ms / 1000).toFixed(1)}s`,
+          ].join('\n');
+        } catch (e) {
+          ok = false;
+          error = e instanceof Error ? e.message : String(e);
+          log = `${restartNote ?? ''}Could not start the runner: ${error}`;
+        }
+        await putLog(env, ctx, job.id, 1, log);
+        await setStep(db, job.id, 1, {
+          status: 'completed',
+          conclusion: ok ? 'success' : 'failure',
+          completedAt: new Date(),
+          logR2Key: logKey(ctx.repoId, ctx.runId, job.id, 1),
         });
-        const { ms } = await runner.boot(size, jobTimeoutMs);
-        log = [
-          ...(restartNote ? [restartNote] : []),
-          `Runner: GitOrange Actions (${size})`,
-          `Labels: ${job.runsOn}`,
-          `Image: Debian (trixie) with Node.js, git, and build tools`,
-          `Started in ${(ms / 1000).toFixed(1)}s`,
-        ].join('\n');
-      } catch (e) {
-        ok = false;
-        log = `${restartNote ?? ''}Could not start the runner: ${e instanceof Error ? e.message : String(e)}`;
+        return { ok, error };
       }
-      await putLog(env, ctx, job.id, 1, log);
+    )
+    .catch((e: unknown) => ({
+      // The step itself failed (it timed out, or the database or log store was unavailable):
+      // nothing was logged, so the next step records why.
+      ok: false,
+      error: e instanceof Error ? e.message : String(e),
+      unlogged: true,
+    }));
+  // A run replayed from before this step returned an object recorded a bare boolean.
+  const setup: { ok: boolean; error?: string; unlogged?: boolean } =
+    typeof setupResult === 'boolean' ? { ok: setupResult } : setupResult;
+  if (setup.unlogged)
+    await step.do(`${name}:setup:failed`, async () => {
+      await putLog(
+        env,
+        ctx,
+        job.id,
+        1,
+        `${restartNote ?? ''}Could not start the runner: ${setup.error}`
+      );
       await setStep(db, job.id, 1, {
         status: 'completed',
-        conclusion: ok ? 'success' : 'failure',
+        conclusion: 'failure',
         completedAt: new Date(),
         logR2Key: logKey(ctx.repoId, ctx.runId, job.id, 1),
       });
-      return ok;
-    }
-  );
+      return true;
+    });
 
-  let jobStatus: JobStatus = setup ? 'success' : 'failure';
-  let runnerGone: string | null = null;
+  let jobStatus: JobStatus = setup.ok ? 'success' : 'failure';
+  let runnerGone: string | null = setup.ok ? null : 'The runner did not start.';
   const steps: Record<string, Value> = {};
   let envAdds: Record<string, string> = {};
   let pathAdds: string[] = [];
@@ -996,7 +1038,7 @@ async function runAttempt(
     pathAdds = [...result.pathAdds, ...pathAdds];
     if (conclusion === 'failure') jobStatus = 'failure';
   }
-  return { jobStatus, steps, caches };
+  return { jobStatus, steps, caches, setupError: setup.error };
 }
 
 function safeTruthy(expr: string, ctx: Record<string, Value>) {
