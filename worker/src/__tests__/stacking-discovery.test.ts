@@ -5,7 +5,11 @@ import { schema } from '../db/schema';
 import type { StepRunner } from '../merge/resolution';
 import { startSweep } from '../merge/auto';
 import type { Repository } from '../db/app.schema';
-import { executeStacking, type StackParams } from '../stack/discover';
+import {
+  executeStacking,
+  GIT_READ_RETRIES,
+  type StackParams,
+} from '../stack/discover';
 import { executeReconcile } from '../stack/reconcile';
 import { recordEvent } from '../pulls/events';
 import type { Relation } from '../stack/models';
@@ -223,6 +227,37 @@ describe('stacking discovery', () => {
     expect(await edges(t)).toMatchObject([
       { a: 1, b: 2, kind: 'must_account_for', prerequisite: 'a' },
     ]);
+  });
+
+  it('loads with a retry budget that outlasts a several-minute Artifacts outage', async () => {
+    const { t, open } = await repoWithAgent();
+    const db = drizzle(t.env.DB, { schema });
+    const { models } = stackModels();
+    await open('one', { 'a.txt': 'a\n' }, 'One');
+    await open('two', { 'b.txt': 'b\n' }, 'Two');
+    const id = (await t.env.DB.prepare(
+      'SELECT id FROM pull_requests WHERE number = 1'
+    ).first<{ id: string }>())!.id;
+    const configs = new Map<string, unknown>();
+    const recording = {
+      do: async (name: string, a: unknown, b?: unknown) => {
+        if (b) configs.set(name, a);
+        return ((b ?? a) as () => Promise<unknown>)();
+      },
+    } as unknown as StepRunner;
+    await executeStacking(
+      { env: t.env, db, step: recording, models },
+      { pullRequestId: id }
+    );
+    expect(configs.get('load')).toBe(GIT_READ_RETRIES);
+    // Exponential from 15 s: the waits before each retry add up to well past a five-minute outage.
+    const { limit, delay } = GIT_READ_RETRIES.retries!;
+    const total = Array.from({ length: limit }, (_, i) => 15 * 2 ** i).reduce(
+      (x, y) => x + y,
+      0
+    );
+    expect(delay).toBe('15 seconds');
+    expect(total).toBeGreaterThan(15 * 60);
   });
 
   it('never lets a run that loaded before a landing undo the landed orientation', async () => {

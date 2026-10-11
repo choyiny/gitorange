@@ -14,6 +14,7 @@ import { recordEvent } from '../pulls/events';
 import { findRepoById, gitFor } from '../lib/repos';
 import { pullShas } from '../lib/pulls';
 import type { StepRunner } from '../merge/resolution';
+import type { WorkflowStepConfig } from 'cloudflare:workers';
 import { reviewConfigured } from '../review/head';
 import { headReviewFor, hasInvitedAgents } from '../review/keys';
 import { diffsFor, MODEL_RETRIES, summaryLines } from '../review/detail';
@@ -144,6 +145,17 @@ type Side = PrSide & {
  */
 type Candidate = Side & { shared: string[]; holds: 'me' | 'other' | null };
 
+/**
+ * The git reads that start a stack run. Artifacts has answered 503 for over five minutes (Workflows' default retries
+ * span about five), which failed the run before it claimed any pair, and nothing started another until the target
+ * moved: the pull request stayed "checking how it relates" indefinitely. Waiting out a longer outage is cheap here.
+ * 15 s doubling, 7 retries: about 32 minutes in all.
+ */
+export const GIT_READ_RETRIES: WorkflowStepConfig = {
+  retries: { limit: 7, delay: '15 seconds', backoff: 'exponential' },
+  timeout: '2 minutes',
+};
+
 /** Runs discovery for one PR against every candidate (MERGE_RESOLUTION Workflow). */
 export async function executeStacking(
   deps: {
@@ -157,7 +169,7 @@ export async function executeStacking(
   params: StackParams
 ): Promise<void> {
   const { env, db, models } = deps;
-  const job = await deps.step.do('load', async () => {
+  const job = await deps.step.do('load', GIT_READ_RETRIES, async () => {
     const pr = await db
       .select()
       .from(pullRequests)
