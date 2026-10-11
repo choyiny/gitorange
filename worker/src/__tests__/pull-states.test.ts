@@ -45,6 +45,7 @@ const node = (over: Partial<TreeNode> = {}): TreeNode => ({
   children: [],
   waitsOn: [],
   mustAccountFor: [],
+  landedRelations: [],
   cycleWith: [],
   unchecked: [],
   pending: [],
