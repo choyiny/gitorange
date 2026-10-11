@@ -209,7 +209,10 @@ migrations/meta/
 Anyone who can push can **pause merging** on a repository (`POST /api/repos/{owner}/{repo}/merging/pause`, with an
 optional reason; `DELETE` resumes). While it is paused nothing lands — not the merge button, the MCP merge tool or
 auto-merge (`409`, `reason: "paused"`) — and every open pull request shows `merging_paused`. Resuming tries
-auto-merge on every open pull request at once. Both are recorded in the audit log. The merge queue
+auto-merge on every open pull request at once. Both are recorded in the audit log. In the app, **Pause merging** is
+a button above the Pulls board (it reads **Resume merging** while paused), and each open pull request shows a paused
+banner with a **Resume merging** button. Pausing is deliberately a person's control: agents have no MCP tool to pause
+or resume, and an agent that finds `merging_paused` waits. The merge queue
 (`GET …/queue`) lists, per land target, the open pull requests in the order they are expected to land, what holds
 each back, and a rough estimate of when it lands (the median of recent pull request Actions runs plus the median of
 recent reviews).

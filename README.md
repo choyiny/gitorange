@@ -251,6 +251,7 @@ approve on that user's behalf, recorded "via" the app.
   fast-forward for a linear history.
 - **Personal and team repositories.** Personal repositories are private by default and can be made internal.
   Team repositories are visible to every member.
+- **Pause merging** from the Pulls board when a deploy or an incident needs landings held; only people can pause or resume.
 - **An audit log** of every change to repositories, agents, decisions, and settings (**Site admin → Audit log**).
 - **Invitations** by email, single use, expiring in seven days.
 - **Syntax highlighting** for 35+ languages in every theme.
