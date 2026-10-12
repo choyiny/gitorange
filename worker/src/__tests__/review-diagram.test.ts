@@ -1,7 +1,14 @@
 import { describe, expect, it } from 'vitest';
 import { diagramSource, type DiagramSpec } from '../review/diagram';
 
-const empty = { entities: [], relations: [], nodes: [], edges: [] };
+const empty = {
+  entities: [],
+  relations: [],
+  nodes: [],
+  edges: [],
+  participants: [],
+  messages: [],
+};
 
 /** Inputs that broke model-written Mermaid: markers, punctuation, braces, quotes, odd names. */
 export const AWKWARD: DiagramSpec[] = [
@@ -101,5 +108,59 @@ describe('review diagrams from data', () => {
       })
     ).toBeNull();
     expect(diagramSource({ kind: 'er', entities: 'nope' })).toBeNull();
+    expect(
+      diagramSource({
+        kind: 'sequence',
+        ...empty,
+        participants: [{ id: 'a', label: 'Agent', change: '' }],
+      })
+    ).toBeNull();
+  });
+
+  it('writes a sequence diagram: participants in order, calls and replies, new calls marked', () => {
+    const seq = diagramSource({
+      kind: 'sequence',
+      ...empty,
+      participants: [
+        { id: 'agent', label: 'Coding agent', change: '' },
+        { id: 'mcp', label: 'POST /mcp; tools', change: '' },
+        { id: 'oauth', label: 'OAuth: consent', change: 'new' },
+      ],
+      messages: [
+        {
+          from: 'agent',
+          to: 'mcp',
+          label: 'tools/call #1: approve',
+          reply: false,
+          change: '',
+        },
+        {
+          from: 'mcp',
+          to: 'oauth',
+          label: 'is this app a moderator?',
+          reply: false,
+          change: 'new',
+        },
+        { from: 'oauth', to: 'mcp', label: 'yes', reply: true, change: 'new' },
+        {
+          from: 'mcp',
+          to: 'nowhere',
+          label: 'dropped',
+          reply: false,
+          change: '',
+        },
+      ],
+    });
+    expect(seq).toBe(
+      [
+        'sequenceDiagram',
+        '  participant p0 as Coding agent',
+        '  participant p1 as POST /mcp  tools',
+        '  participant p2 as OAuth: consent (new)',
+        '  p0->>p1: tools/call  1: approve',
+        '  p1->>p2: is this app a moderator? (new)',
+        '  p2-->>p1: yes (new)',
+      ].join('\n')
+    );
   });
 });

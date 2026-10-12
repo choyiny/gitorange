@@ -1,10 +1,10 @@
 /**
- * Review diagrams as data: the model describes entities or a flow, and Mermaid source is written
- * here, so quoting and syntax are always valid.
+ * Review diagrams as data: the model describes entities, a flow, or a sequence of calls, and Mermaid source is
+ * written here, so quoting and syntax are always valid.
  */
 
 export type DiagramSpec = {
-  kind: 'er' | 'flow';
+  kind: 'er' | 'flow' | 'sequence';
   entities: {
     name: string;
     attributes: {
@@ -22,6 +22,15 @@ export type DiagramSpec = {
   }[];
   nodes: { id: string; label: string; change: 'new' | 'changed' | '' }[];
   edges: { from: string; to: string; label: string }[];
+  /** kind "sequence": who takes part, in order, and the calls between them. */
+  participants: { id: string; label: string; change: 'new' | 'changed' | '' }[];
+  messages: {
+    from: string;
+    to: string;
+    label: string;
+    reply: boolean;
+    change: 'new' | 'changed' | '';
+  }[];
 };
 
 const attribute = {
@@ -40,9 +49,17 @@ const attribute = {
 export const DIAGRAM_SCHEMA = {
   type: 'object',
   additionalProperties: false,
-  required: ['kind', 'entities', 'relations', 'nodes', 'edges'],
+  required: [
+    'kind',
+    'entities',
+    'relations',
+    'nodes',
+    'edges',
+    'participants',
+    'messages',
+  ],
   properties: {
-    kind: { type: 'string', enum: ['er', 'flow'] },
+    kind: { type: 'string', enum: ['er', 'flow', 'sequence'] },
     entities: {
       type: 'array',
       maxItems: 8,
@@ -99,6 +116,36 @@ export const DIAGRAM_SCHEMA = {
           from: { type: 'string' },
           to: { type: 'string' },
           label: { type: 'string', maxLength: 40 },
+        },
+      },
+    },
+    participants: {
+      type: 'array',
+      maxItems: 7,
+      items: {
+        type: 'object',
+        additionalProperties: false,
+        required: ['id', 'label', 'change'],
+        properties: {
+          id: { type: 'string', maxLength: 30 },
+          label: { type: 'string', maxLength: 40 },
+          change: { type: 'string', enum: ['new', 'changed', ''] },
+        },
+      },
+    },
+    messages: {
+      type: 'array',
+      maxItems: 16,
+      items: {
+        type: 'object',
+        additionalProperties: false,
+        required: ['from', 'to', 'label', 'reply', 'change'],
+        properties: {
+          from: { type: 'string' },
+          to: { type: 'string' },
+          label: { type: 'string', maxLength: 50 },
+          reply: { type: 'boolean' },
+          change: { type: 'string', enum: ['new', 'changed', ''] },
         },
       },
     },
@@ -177,19 +224,64 @@ function flowSource(d: DiagramSpec): string | null {
   return d.nodes.length > 1 ? lines.join('\n') : null;
 }
 
+/** Text after a Mermaid sequence arrow: no colon tricks, no newlines. */
+function messageText(s: string): string {
+  return s.replace(/\s+/g, ' ').replace(/[;#]/g, ' ').trim() || 'calls';
+}
+
+function sequenceSource(d: DiagramSpec): string | null {
+  const ids = new Map<string, string>();
+  d.participants.forEach((p, i) => ids.set(p.id, `p${i}`));
+  const lines = ['sequenceDiagram'];
+  for (const p of d.participants) {
+    const mark =
+      p.change === 'new'
+        ? ' (new)'
+        : p.change === 'changed'
+          ? ' (changed)'
+          : '';
+    lines.push(
+      `  participant ${ids.get(p.id)} as ${messageText(p.label + mark)}`
+    );
+  }
+  let drawn = 0;
+  for (const m of d.messages) {
+    const from = ids.get(m.from);
+    const to = ids.get(m.to);
+    if (!from || !to) continue;
+    const mark =
+      m.change === 'new'
+        ? ' (new)'
+        : m.change === 'changed'
+          ? ' (changed)'
+          : '';
+    lines.push(
+      `  ${from}${m.reply ? '-->>' : '->>'}${to}: ${messageText(m.label + mark)}`
+    );
+    drawn++;
+  }
+  return d.participants.length > 1 && drawn ? lines.join('\n') : null;
+}
+
 /** Mermaid source for a model's diagram description, or null when there's nothing to draw. */
 export function diagramSource(value: unknown): string | null {
   if (!value || typeof value !== 'object') return null;
   const v = value as Partial<DiagramSpec>;
   const d: DiagramSpec = {
-    kind: v.kind === 'er' ? 'er' : 'flow',
+    kind: v.kind === 'er' || v.kind === 'sequence' ? v.kind : 'flow',
     entities: Array.isArray(v.entities) ? v.entities : [],
     relations: Array.isArray(v.relations) ? v.relations : [],
     nodes: Array.isArray(v.nodes) ? v.nodes : [],
     edges: Array.isArray(v.edges) ? v.edges : [],
+    participants: Array.isArray(v.participants) ? v.participants : [],
+    messages: Array.isArray(v.messages) ? v.messages : [],
   };
   try {
-    return d.kind === 'er' ? erSource(d) : flowSource(d);
+    return d.kind === 'er'
+      ? erSource(d)
+      : d.kind === 'sequence'
+        ? sequenceSource(d)
+        : flowSource(d);
   } catch {
     return null;
   }
