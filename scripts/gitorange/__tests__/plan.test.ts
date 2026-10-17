@@ -8,7 +8,12 @@ import {
   PlanStop,
   type Plan,
 } from '../plan.ts';
-import { newState, recordStep, type InstallState } from '../state.ts';
+import {
+  newState,
+  recordStep,
+  type InstallState,
+  type Resource,
+} from '../state.ts';
 import { fakeCloudflare } from './fakes.ts';
 
 const names = resourceNames('gitorange');
@@ -51,6 +56,15 @@ function state(): InstallState {
 
 function marker(key: string, nonce = ownershipNonce): string {
   return JSON.stringify({ installationId, ownershipNonce: nonce, key });
+}
+
+function rec(
+  key: string,
+  kind: Resource['kind'],
+  name: string,
+  id: string
+): Resource {
+  return { key, kind, name, id, ownership: 'created', state: 'ready' };
 }
 
 function tuples(plan: Plan) {
@@ -170,22 +184,89 @@ describe('computePlan', () => {
     }
   });
 
-  it('reuses a bucket recorded in the state file', () => {
+  it('stops on a recorded bucket without our marker (the marker proves ownership)', () => {
     const s = state();
-    s.resources.push({
-      key: 'actionsCache',
-      kind: 'r2',
-      name: 'gitorange-actions-cache',
-      id: 'gitorange-actions-cache',
-      ownership: 'created',
-      state: 'ready',
-    });
+    s.resources.push(
+      rec(
+        'actionsCache',
+        'r2',
+        'gitorange-actions-cache',
+        'gitorange-actions-cache'
+      )
+    );
     const o = {
       ...empty(),
       r2: ['gitorange-actions-cache'],
       r2Markers: { 'gitorange-actions-cache': null },
     };
+    expect(stopMessage(() => computePlan(desired, o, s))).toBe(
+      notOurs('gitorange-actions-cache')
+    );
+  });
+
+  it('reuses a recorded bucket whose marker matches', () => {
+    const s = state();
+    s.resources.push(
+      rec(
+        'actionsCache',
+        'r2',
+        'gitorange-actions-cache',
+        'gitorange-actions-cache'
+      )
+    );
+    const o = {
+      ...empty(),
+      r2: ['gitorange-actions-cache'],
+      r2Markers: { 'gitorange-actions-cache': marker('actionsCache') },
+    };
     expect(computePlan(desired, o, s).actions[3].action).toBe('reuse');
+  });
+
+  it('stops when a recorded worker or workflow is missing', () => {
+    for (const r of [
+      rec('worker', 'worker', 'gitorange', 'gitorange'),
+      rec(
+        'mergeWorkflow',
+        'workflow',
+        'gitorange-merge-resolution',
+        'gitorange-merge-resolution'
+      ),
+    ]) {
+      const s = state();
+      s.resources.push(r);
+      const msg = stopMessage(() => computePlan(desired, empty(), s));
+      expect(msg).toContain('recorded but missing');
+      expect(msg).toContain(r.name);
+    }
+  });
+
+  it('stops when two Workflows have our name', () => {
+    const o = {
+      ...empty(),
+      workflows: [
+        { name: 'gitorange-actions-run', scriptName: 'gitorange' },
+        { name: 'gitorange-actions-run', scriptName: 'gitorange' },
+      ],
+    };
+    const msg = stopMessage(() => computePlan(desired, o, null));
+    expect(msg).toContain('gitorange-actions-run');
+    expect(msg).toContain('Nothing was changed.');
+  });
+
+  it('throws (not a PlanStop) when the state belongs to another installation', () => {
+    for (const s of [
+      { ...state(), installationId: 'other-1a2b3c4d5e6f' },
+      { ...state(), ownershipNonce: 'x'.repeat(64) },
+    ]) {
+      let err: unknown;
+      try {
+        computePlan(desired, empty(), s);
+      } catch (e) {
+        err = e;
+      }
+      expect(err).toBeInstanceOf(Error);
+      expect(err).not.toBeInstanceOf(PlanStop);
+    }
   });
 
   it('stops on a workflow bound to another script', () => {
@@ -472,7 +553,10 @@ describe('observe', () => {
     const queried = cf.calls.filter((c) => c.method === 'queryD1');
     expect(queried.map((c) => c.args[1])).toEqual(['uuid-1']);
     // No install_state table, so no row query.
-    expect(String(queried[0].args[2])).toContain('sqlite_master');
+    expect(queried[0].args[2]).toBe(
+      "SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE '\\_cf\\_%' ESCAPE '\\' " +
+        "AND name NOT IN ('sqlite_sequence','d1_migrations')"
+    );
     const markers = cf.calls.filter((c) => c.method === 'getR2Object');
     expect(markers.map((c) => c.args.slice(1))).toEqual([
       ['gitorange-lfs', MARKER_KEY],

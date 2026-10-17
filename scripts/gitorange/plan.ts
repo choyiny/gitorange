@@ -128,14 +128,12 @@ function decide(
       throw notOurs(name);
     }
     case 'r2': {
-      const exists = observed.r2.includes(name);
-      if (recorded) {
-        if (!exists || recorded.id !== name) {
+      // Spec §6: the marker, not the recorded name, proves ownership. Apply writes the marker
+      // before it records the bucket, so a recorded bucket always has one.
+      if (!observed.r2.includes(name)) {
+        if (recorded) {
           throw recordedButMissing(name);
         }
-        return 'reuse';
-      }
-      if (!exists) {
         return 'create';
       }
       const m = parseObject(observed.r2Markers[name]);
@@ -195,6 +193,15 @@ export function computePlan(
   observed: Observed,
   state: InstallState | null
 ): Plan {
+  if (
+    state &&
+    (state.installationId !== desired.installationId ||
+      state.ownershipNonce !== desired.ownershipNonce)
+  ) {
+    throw new Error(
+      `State for ${state.installationId} does not belong to installation ${desired.installationId}`
+    );
+  }
   const actions: Action[] = ORDER.map(({ key, kind }) => {
     const recorded = state?.resources.find((r) => r.key === key);
     return {
