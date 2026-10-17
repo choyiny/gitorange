@@ -11,14 +11,18 @@ import {
   migrationsDigest,
   optionalSecrets,
   readDoNamespaceIds,
+  renderConfig,
   sameIds,
+  setupStatus,
   skippedAfter,
   summary,
   verify,
+  verifyAt,
   writeConfig,
   writeInstallRow,
   type Ctx,
   type Optional,
+  type SetupStatus,
 } from './apply-steps.ts';
 import { observe, R2_MARKER_KEY, type Observed } from './observe.ts';
 import { computePlan, formatPlan, type Desired } from './plan.ts';
@@ -63,6 +67,27 @@ const RANK: Record<Status, number> = {
   installed: 4,
 };
 
+const PHASES: Status[] = ['provisioning', 'deploying', 'verifying'];
+
+const deployedAs = (
+  s: InstallState,
+  hash: string,
+  version: string
+): InstallState => ({
+  ...s,
+  deployedConfigHash: hash,
+  deployedVersion: version,
+});
+
+/** Printed when a run fails after the code's hash went live: the code is never in the error. */
+function keepCode(ctx: Ctx, s: InstallState, code: string | null) {
+  if (code) {
+    ctx.io.print(
+      `Setup code: ${code} (keep it: the site at ${s.baseUrl}/setup needs it once it is reachable)`
+    );
+  }
+}
+
 function wrap(e: unknown, step: string, s: InstallState): Error {
   const msg = e instanceof Error ? e.message : String(e);
   return new Error(
@@ -89,12 +114,22 @@ export async function install(
     s = next;
     writeState(ctx.dir, s);
   };
-  // A resumed run may already be past a phase (e.g. killed while verifying): never move back.
+  // From failed, go straight to the phase now running (allowed). Otherwise walk forward through
+  // each phase in order; a run resumed past a phase (e.g. killed while verifying) never moves back.
   const enter = (to: Status) => {
-    if (RANK[s.status] < RANK[to] || s.status === 'failed') {
+    if (s.status === 'failed') {
       save(transition(s, to));
+      return;
+    }
+    for (const p of PHASES) {
+      if (RANK[p] > RANK[s.status] && RANK[p] <= RANK[to]) {
+        save(transition(s, p));
+      }
     }
   };
+  // Set once the hash of `code` is live: from then on a failure must still show the code.
+  let codeDeployed = false;
+  let setup: SetupStatus = {};
 
   const release = acquireLock(ctx.dir, s.installationId);
   try {
@@ -168,7 +203,8 @@ export async function install(
     // 3. wrangler.jsonc
     step = 'config';
     const version = await buildVersion(ctx);
-    save(recordStep(s, `config:${writeConfig(ctx, s, version)}`));
+    const configHash = writeConfig(ctx, s, version);
+    save(recordStep(s, `config:${configHash}`));
 
     // 4. Migrations, then the install_state row (the D1 ownership marker).
     const digest = migrationsDigest(ctx.cwd);
@@ -198,7 +234,8 @@ export async function install(
       step = 'deploy:1';
       enter('deploying');
       await deploy(ctx, secrets);
-      s = recordStep(s, 'deploy:1');
+      codeDeployed = code !== null;
+      s = recordStep(deployedAs(s, configHash, version), 'deploy:1');
       if (code) s = recordStep(s, 'setup-code:1');
       for (const key of [
         'worker',
@@ -214,7 +251,10 @@ export async function install(
       step = 'deploy:credentials';
       enter('deploying');
       await deploy(ctx, optionalSecrets(optional));
-      save({ ...s, skipped: skippedAfter(s.skipped, optional) });
+      save({
+        ...deployedAs(s, configHash, version),
+        skipped: skippedAfter(s.skipped, optional),
+      });
     }
 
     // 7. Durable Object namespace ids: one more deploy only when they changed.
@@ -223,16 +263,27 @@ export async function install(
       enter('deploying');
       const ids = await readDoNamespaceIds(ctx, s);
       if (!sameIds(ids, s.doNamespaceIds)) {
-        writeConfig(ctx, s, version, ids);
+        const hash = writeConfig(ctx, s, version, ids);
         await deploy(ctx, {});
+        s = deployedAs(s, hash, version);
       }
       save(recordStep({ ...s, doNamespaceIds: ids }, step));
+    }
+
+    // 7b. A resume whose checkout or inputs moved on since the last deploy: deploy what is
+    // generated now (no secrets file: the worker keeps its secrets).
+    const current = writeConfig(ctx, s, version);
+    if (current !== s.deployedConfigHash) {
+      step = 'deploy:config';
+      enter('deploying');
+      await deploy(ctx, {});
+      save(deployedAs(s, current, version));
     }
 
     // 8. Verify.
     step = 'verify';
     enter('verifying');
-    await verify(ctx, s);
+    setup = await verifyAt(ctx, s, s.deployedVersion ?? version);
 
     // 9. Done.
     step = 'summary';
@@ -240,11 +291,17 @@ export async function install(
   } catch (e) {
     if (s.status !== 'installed') s = transition(s, 'failed');
     writeState(ctx.dir, s);
+    if (codeDeployed) keepCode(ctx, s, code);
     throw wrap(e, step, s);
   } finally {
     release();
   }
   ctx.io.print(summary(s, code, optional));
+  if (!code && setup.setupRequired && setup.codeRequired) {
+    ctx.io.print(
+      `The first admin still needs a setup code. If you no longer have it, run: yarn gitorange install --resume --name ${s.inputs.name}`
+    );
+  }
   return s;
 }
 
@@ -259,33 +316,47 @@ export async function resumeInstalled(
   optional: Optional
 ): Promise<InstallState> {
   let s = state;
-  let step = 'r2-keys';
+  let step = 'config';
   let code: string | null = null;
+  let codeDeployed = false;
   let opt = optional;
   const release = acquireLock(ctx.dir, s.installationId);
   try {
+    assertConfigWritable(ctx);
+
+    step = 'r2-keys';
     if (opt.r2) opt = { ...opt, r2: await confirmR2Keys(ctx, s, opt.r2) };
 
     step = 'setup-status';
-    const statusUrl = `${s.baseUrl}/api/setup/status`;
-    const res = await ctx.fetchImpl(statusUrl, {
-      signal: AbortSignal.timeout(10_000),
-    });
-    if (!res.ok) throw new Error(`${statusUrl} answered HTTP ${res.status}.`);
-    const { setupRequired } = (await res.json()) as { setupRequired?: boolean };
-
+    const { setupRequired } = await setupStatus(ctx, s);
     const secrets = optionalSecrets(opt);
     if (setupRequired) {
       code = generateSetupCode();
       secrets.SETUP_CODE_HASH = setupCodeHash(code);
     }
     const changed = Object.keys(secrets).length > 0;
+
+    // Never an upgrade: wrangler.jsonc is rewritten and deployed only when it would come out
+    // exactly as the configuration already deployed.
+    step = 'config';
+    const head = await buildVersion(ctx);
+    const upToDate = renderConfig(ctx, s, head).hash === s.deployedConfigHash;
+    if (!upToDate) {
+      ctx.io.print(
+        `This checkout (${head}) differs from the deployed version (${s.deployedVersion ?? 'unknown'}). ` +
+          'Upgrades come in a later release; wrangler.jsonc was left as it is.'
+      );
+      if (changed) {
+        throw new Error(
+          `Adding credentials or a setup code needs a deploy, which from this checkout would be an upgrade. Check out ${s.deployedVersion ?? 'the deployed commit'} and run again.`
+        );
+      }
+    }
     if (changed) {
-      step = 'config';
-      assertConfigWritable(ctx);
-      writeConfig(ctx, s, await buildVersion(ctx));
+      writeConfig(ctx, s, head);
       step = 'deploy';
       await deploy(ctx, secrets);
+      codeDeployed = code !== null;
       if (code) {
         const n = s.steps.filter((x) => x.key.startsWith('setup-code:')).length;
         s = recordStep(s, `setup-code:${n + 1}`);
@@ -295,11 +366,12 @@ export async function resumeInstalled(
     }
 
     step = 'verify';
-    await verify(ctx, s);
+    await verifyAt(ctx, s, s.deployedVersion ?? head);
     ctx.io.print(changed ? summary(s, code, opt) : 'Nothing to do.');
     return s;
   } catch (e) {
     writeState(ctx.dir, s);
+    if (codeDeployed) keepCode(ctx, s, code);
     throw wrap(e, step, s);
   } finally {
     release();

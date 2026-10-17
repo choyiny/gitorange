@@ -50,6 +50,10 @@ export interface InstallState {
   skipped: string[];
   /** Durable Object namespace ids by class, stored once known. */
   doNamespaceIds: Record<string, string>;
+  /** sha256 of the wrangler.jsonc text last deployed successfully. */
+  deployedConfigHash?: string;
+  /** The `GITORANGE_VERSION` last deployed successfully: what verify expects. */
+  deployedVersion?: string;
 }
 
 export type NewStateInput = Pick<

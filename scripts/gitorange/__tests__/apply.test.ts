@@ -11,6 +11,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { install, resumeInstalled, verify, type Ctx } from '../apply.ts';
+import { renderConfig } from '../apply-steps.ts';
 import type { Io } from '../collect.ts';
 import { resourceNames } from '../names.ts';
 import { R2_MARKER_KEY } from '../observe.ts';
@@ -144,11 +145,54 @@ function installedFixture(): { s: InstallState; seed: FakeCloudflareSeed } {
   };
 }
 
+/** The installed state as last deployed at `version` from this checkout. */
+function pinned(
+  h: { ctx: Ctx },
+  s: InstallState,
+  version = VERSION
+): InstallState {
+  return {
+    ...s,
+    deployedConfigHash: renderConfig(h.ctx, s, version).hash,
+    deployedVersion: version,
+  };
+}
+
+/** What a later run sees in Cloudflare after an earlier run deployed. */
+function carryOver(
+  cf: {
+    state: {
+      d1: { uuid: string; name: string }[];
+      r2: Record<string, Record<string, string>>;
+    };
+  },
+  s: InstallState
+): FakeCloudflareSeed {
+  return {
+    d1: cf.state.d1.map(({ uuid, name }) => ({ uuid, name })),
+    r2: cf.state.r2,
+    workflows: [
+      { name: s.names.actionsWorkflow, scriptName: s.names.worker },
+      { name: s.names.mergeWorkflow, scriptName: s.names.worker },
+    ],
+    workerVars: {
+      [s.names.worker]: {
+        GITORANGE_INSTALLATION: JSON.stringify({
+          installationId: s.installationId,
+          ownershipNonce: s.ownershipNonce,
+        }),
+      },
+    },
+  };
+}
+
 type Deploy = { args: string[]; secrets: Record<string, string> | null };
 
 function harness(
   opts: {
     seed?: FakeCloudflareSeed;
+    /** What `git rev-parse` reports and the default well-known answer carries. */
+    version?: string;
     secretList?: RunResult;
     deploy?: RunResult;
     wellKnown?: () => Response | Promise<Response>;
@@ -162,7 +206,7 @@ function harness(
   const deploys: Deploy[] = [];
   const ok = (stdout = ''): RunResult => ({ code: 0, stdout, stderr: '' });
   const runner = fakeRunner({
-    'git rev-parse': () => ok(`${VERSION}\n`),
+    'git rev-parse': () => ok(`${opts.version ?? VERSION}\n`),
     'git status': () => ok(''),
     yarn: (args) => {
       if (args[1] === 'deploy') {
@@ -219,7 +263,7 @@ function harness(
       if (opts.wellKnown) return opts.wellKnown();
       return Response.json({
         installationId: ID,
-        version: VERSION,
+        version: opts.version ?? VERSION,
         schemaDigest: 'x',
       });
     }
@@ -575,8 +619,8 @@ describe('verify', () => {
     )) as Error;
     expect(err.message).toContain(`${BASE}/.well-known/gitorange`);
     expect(err.message).toContain('fetch failed');
-    expect(h.slept.reduce((a, b) => a + b, 0)).toBeLessThanOrEqual(60_000);
-    expect(h.slept.reduce((a, b) => a + b, 0)).toBeGreaterThanOrEqual(55_000);
+    expect(h.slept).toHaveLength(12);
+    expect(h.slept.reduce((a, b) => a + b, 0)).toBe(60_000);
   });
 
   it('retries a wrong version, then fails with the last body', async () => {
@@ -592,7 +636,7 @@ describe('verify', () => {
       (e: Error) => e
     )) as Error;
     expect(err.message).toContain('old');
-    expect(h.slept.length).toBe(11);
+    expect(h.slept.length).toBe(12);
   });
 
   it('fails when setup is open without a code', async () => {
@@ -617,7 +661,7 @@ describe('resumeInstalled', () => {
       seed,
       setupStatus: { setupRequired: false, codeRequired: false },
     });
-    const out = await resumeInstalled(h.ctx, s, {});
+    const out = await resumeInstalled(h.ctx, pinned(h, s), {});
     expect(h.cf.calls.filter((c) => /^(create|put)/.test(c.method))).toEqual(
       []
     );
@@ -632,7 +676,7 @@ describe('resumeInstalled', () => {
       seed,
       setupStatus: { setupRequired: false, codeRequired: false },
     });
-    const out = await resumeInstalled(h.ctx, s, {
+    const out = await resumeInstalled(h.ctx, pinned(h, s), {
       r2: { id: 'AKID', secret: 'SEC' },
     });
     expect(h.deploys).toHaveLength(1);
@@ -651,7 +695,7 @@ describe('resumeInstalled', () => {
       seed,
       setupStatus: { setupRequired: true, codeRequired: true },
     });
-    const out = await resumeInstalled(open.ctx, s, {});
+    const out = await resumeInstalled(open.ctx, pinned(open, s), {});
     expect(open.deploys).toHaveLength(1);
     expect(Object.keys(open.deploys[0].secrets!)).toEqual(['SETUP_CODE_HASH']);
     const code = /Setup code: (\S+)/.exec(open.printed.join('\n'))?.[1];
@@ -662,7 +706,7 @@ describe('resumeInstalled', () => {
       seed,
       setupStatus: { setupRequired: false, codeRequired: false },
     });
-    await resumeInstalled(closed.ctx, s, {});
+    await resumeInstalled(closed.ctx, pinned(closed, s), {});
     expect(closed.deploys).toHaveLength(0);
     expect(closed.printed.join('\n')).not.toContain('Setup code:');
   });
@@ -675,8 +719,96 @@ describe('resumeInstalled', () => {
       deploy: { code: 1, stdout: '', stderr: 'nope' },
     });
     await expect(
-      resumeInstalled(h.ctx, s, { analytics: 'TOKEN' })
+      resumeInstalled(h.ctx, pinned(h, s), { analytics: 'TOKEN' })
     ).rejects.toThrow(/Step deploy failed/);
     expect(readState(dir, ID)?.status).toBe('installed');
+  });
+
+  it('after HEAD moved: Nothing to do, no deploy, verifies the recorded version', async () => {
+    const { s, seed } = installedFixture();
+    const h = harness({
+      seed,
+      version: 'fedcba654321',
+      // The instance still runs the recorded version.
+      wellKnown: () =>
+        Response.json({
+          installationId: ID,
+          version: VERSION,
+          schemaDigest: 'x',
+        }),
+      setupStatus: { setupRequired: false, codeRequired: false },
+    });
+    const at = pinned(h, s, VERSION);
+    await resumeInstalled(h.ctx, at, {});
+    expect(h.deploys).toHaveLength(0);
+    expect(existsSync(join(cwd, 'wrangler.jsonc'))).toBe(false);
+    const out = h.printed.join('\n');
+    expect(out).toContain('Nothing to do.');
+    expect(out).toContain('Upgrades come in a later release');
+  });
+
+  it('checks for a hand-written wrangler.jsonc first', async () => {
+    writeFileSync(join(cwd, 'wrangler.jsonc'), '{ "name": "mine" }\n');
+    const { s, seed } = installedFixture();
+    const h = harness({ seed });
+    await expect(resumeInstalled(h.ctx, s, {})).rejects.toThrow(
+      /was not generated by yarn gitorange install/
+    );
+    expect(h.fetched).toEqual([]);
+  });
+});
+
+describe('install resumed after a failed verify', () => {
+  async function failVerify() {
+    const first = harness({
+      wellKnown: () => {
+        throw new TypeError('fetch failed');
+      },
+    });
+    const err = (await install(first.ctx, {
+      state: freshState(),
+      ...noOptional,
+    }).catch((e: Error) => e)) as Error;
+    return { first, err, saved: readState(dir, ID)! };
+  }
+
+  it('ends installed, and keeps the setup code visible on the failure', async () => {
+    const { first, err, saved } = await failVerify();
+    expect(err.message).toContain('Step verify failed');
+    expect(saved.status).toBe('failed');
+    const code = /Setup code: (\S+)/.exec(first.printed.join('\n'))?.[1];
+    expect(code).toBeTruthy();
+    expect(setupCodeHash(code!)).toBe(
+      first.deploys[0].secrets!.SETUP_CODE_HASH
+    );
+    expect(err.message).not.toContain(code!);
+    expect(readFileSync(join(dir, `${ID}.json`), 'utf8')).not.toContain(code!);
+
+    const again = harness({ seed: carryOver(first.cf, saved) });
+    const out = await install(again.ctx, { state: saved, ...noOptional });
+    expect(out.status).toBe('installed');
+    expect(again.deploys).toHaveLength(0);
+    expect(again.count('createD1') + again.count('createR2')).toBe(0);
+    const printed = again.printed.join('\n');
+    expect(printed).not.toContain('Setup code:');
+    expect(printed).toContain(
+      'The first admin still needs a setup code. If you no longer have it, run: yarn gitorange install --resume --name acme'
+    );
+  });
+
+  it('redeploys once when HEAD moved, then verifies the new version', async () => {
+    const { first, saved } = await failVerify();
+    const again = harness({
+      seed: carryOver(first.cf, saved),
+      version: 'fedcba654321',
+    });
+    const out = await install(again.ctx, { state: saved, ...noOptional });
+    expect(again.deploys).toHaveLength(1);
+    expect(again.deploys[0].secrets).toBeNull();
+    expect(out.deployedVersion).toBe('fedcba654321');
+    expect(out.status).toBe('installed');
+    expect(readFileSync(join(cwd, 'wrangler.jsonc'), 'utf8')).toContain(
+      '"GITORANGE_VERSION": "fedcba654321"'
+    );
   });
 });

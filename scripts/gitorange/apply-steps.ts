@@ -104,6 +104,25 @@ export function assertConfigWritable(ctx: Ctx): void {
   if (text !== null && !isGenerated(text)) throw new ConfigConflict();
 }
 
+/** The wrangler.jsonc text for `s` at `version`, and its sha256. Writes nothing. */
+export function renderConfig(
+  ctx: Ctx,
+  s: InstallState,
+  version: string,
+  doNamespaceIds = s.doNamespaceIds
+): { text: string; hash: string } {
+  const template = readFileSync(
+    join(ctx.cwd, 'wrangler.jsonc.example'),
+    'utf8'
+  );
+  const text = generateWranglerConfig(template, s, {
+    doNamespaceIds,
+    version,
+    existing: existingConfig(ctx),
+  });
+  return { text, hash: createHash('sha256').update(text).digest('hex') };
+}
+
 /** Generates and writes wrangler.jsonc; returns the sha256 of the text. */
 export function writeConfig(
   ctx: Ctx,
@@ -111,18 +130,9 @@ export function writeConfig(
   version: string,
   doNamespaceIds = s.doNamespaceIds
 ): string {
-  const template = readFileSync(
-    join(ctx.cwd, 'wrangler.jsonc.example'),
-    'utf8'
-  );
-  const existing = existingConfig(ctx);
-  const text = generateWranglerConfig(template, s, {
-    doNamespaceIds,
-    version,
-    existing,
-  });
-  if (text !== existing) writeFileSync(configPath(ctx), text);
-  return createHash('sha256').update(text).digest('hex');
+  const { text, hash } = renderConfig(ctx, s, version, doNamespaceIds);
+  if (text !== existingConfig(ctx)) writeFileSync(configPath(ctx), text);
+  return hash;
 }
 
 /** sha256 over the sorted migrations/*.sql names and contents. */
@@ -284,18 +294,34 @@ export async function confirmR2Keys(
   return again;
 }
 
-const VERIFY_TRIES = 12;
+// 13 tries 5 s apart: 60 s of waiting while a custom domain's certificate is issued.
+const VERIFY_TRIES = 13;
 const VERIFY_INTERVAL_MS = 5000;
 
 const summarize = (text: string) =>
   text.length > 200 ? `${text.slice(0, 200)}…` : text;
 
+export type SetupStatus = { setupRequired?: boolean; codeRequired?: boolean };
+
+export async function setupStatus(
+  ctx: Ctx,
+  s: InstallState
+): Promise<SetupStatus> {
+  const url = `${s.baseUrl}/api/setup/status`;
+  const res = await ctx.fetchImpl(url, { signal: AbortSignal.timeout(10_000) });
+  if (!res.ok) throw new Error(`${url} answered HTTP ${res.status}.`);
+  return (await res.json()) as SetupStatus;
+}
+
 /**
- * `/.well-known/gitorange` must report this installation and version (retried every 5 s, 12
- * tries, while a certificate is issued), then setup must not be open without a code.
+ * `/.well-known/gitorange` must report this installation at `version` (retried every 5 s for
+ * 60 s), then setup must not be open without a code. Returns the setup status.
  */
-export async function verify(ctx: Ctx, s: InstallState): Promise<void> {
-  const version = await buildVersion(ctx);
+export async function verifyAt(
+  ctx: Ctx,
+  s: InstallState,
+  version: string
+): Promise<SetupStatus> {
   const url = `${s.baseUrl}/.well-known/gitorange`;
   let last = '';
   for (let attempt = 1; ; attempt++) {
@@ -324,20 +350,18 @@ export async function verify(ctx: Ctx, s: InstallState): Promise<void> {
     await ctx.sleep(VERIFY_INTERVAL_MS);
   }
 
-  const statusUrl = `${s.baseUrl}/api/setup/status`;
-  const res = await ctx.fetchImpl(statusUrl, {
-    signal: AbortSignal.timeout(10_000),
-  });
-  if (!res.ok) throw new Error(`${statusUrl} answered HTTP ${res.status}.`);
-  const st = (await res.json()) as {
-    setupRequired?: boolean;
-    codeRequired?: boolean;
-  };
+  const st = await setupStatus(ctx, s);
   if (st.setupRequired && !st.codeRequired) {
     throw new Error(
-      `${statusUrl} reports setup open without a setup code: anyone could claim this instance. Run yarn gitorange install --resume --name ${s.inputs.name}.`
+      `${s.baseUrl}/api/setup/status reports setup open without a setup code: anyone could claim this instance. Run yarn gitorange install --resume --name ${s.inputs.name}.`
     );
   }
+  return st;
+}
+
+/** verifyAt the version last deployed (HEAD's when none is recorded). */
+export async function verify(ctx: Ctx, s: InstallState): Promise<void> {
+  await verifyAt(ctx, s, s.deployedVersion ?? (await buildVersion(ctx)));
 }
 
 export function summary(
