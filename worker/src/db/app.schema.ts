@@ -1183,3 +1183,12 @@ export type PrReviewFlag = typeof prReviewFlags.$inferSelect;
 export type UserEmail = typeof userEmails.$inferSelect;
 export type AgentRun = typeof agentRuns.$inferSelect;
 export type AgentStep = typeof agentSteps.$inferSelect;
+
+// Written by `yarn gitorange install`: one row per installation of this instance.
+export const installState = sqliteTable('install_state', {
+  installationId: text('installation_id').primaryKey(),
+  ownershipNonce: text('ownership_nonce').notNull(),
+  version: text('version'),
+  manifestJson: text('manifest_json'),
+  updatedAt: integer('updated_at', { mode: 'timestamp_ms' }).notNull(),
+});

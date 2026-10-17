@@ -291,4 +291,5 @@ jobs:
           worker/src/__tests__/health.test.ts
           worker/src/__tests__/search.test.ts
           worker/src/__tests__/live-feed.test.ts
+          worker/src/__tests__/install-wellknown.test.ts
           src/lib/

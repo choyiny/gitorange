@@ -204,6 +204,13 @@
       "when": 1791597500170,
       "tag": "0028_magenta_captain_cross",
       "breakpoints": true
+    },
+    {
+      "idx": 29,
+      "version": "6",
+      "when": 1792249580515,
+      "tag": "0029_spotty_mattie_franklin",
+      "breakpoints": true
     }
   ]
 }

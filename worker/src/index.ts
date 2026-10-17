@@ -19,6 +19,7 @@ import { usersRouter } from './routers/users-router';
 import { namespacesRouter, teamRouter } from './routers/teams-router';
 import { mcpApiRouter, mcpRouter } from './mcp';
 import { wellKnownRouter } from './mcp/well-known';
+import { installRouter } from './routers/install-router';
 import type { AppEnv } from './variables';
 import type { Context, MiddlewareHandler } from 'hono';
 import type { RepoEnv } from './lib/repos';
@@ -61,6 +62,7 @@ app.use('*', async (c, next) => {
 app.on(['GET', 'POST'], '/api/auth/*', (c) => c.get('auth').handler(c.req.raw));
 
 app.route('/', wellKnownRouter);
+app.route('/', installRouter);
 app.route('/mcp', mcpRouter);
 
 // Public
