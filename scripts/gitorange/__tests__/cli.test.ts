@@ -9,7 +9,7 @@ import {
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { main, resolveToken, type Deps } from '../cli.ts';
+import { applyCommand, main, resolveToken, type Deps } from '../cli.ts';
 import type { Io } from '../collect.ts';
 import { installationIdOf, resourceNames } from '../names.ts';
 import type { RunResult } from '../runner.ts';
@@ -74,6 +74,9 @@ function harness(
     prompts?: (string | null)[];
     wellKnown?: () => Response;
     analyticsOk?: boolean;
+    confirm?: boolean;
+    setupStatus?: { setupRequired: boolean; codeRequired: boolean };
+    onCloudflare?: (cf: FakeCloudflare) => void;
   } = {}
 ) {
   let cf: FakeCloudflare | null = null;
@@ -94,6 +97,7 @@ function harness(
   const out: string[] = [];
   const prompts = [...(opts.prompts ?? [])];
   const asked: string[] = [];
+  const confirms: string[] = [];
   const io: Io = {
     tty: opts.tty ?? false,
     async prompt(msg) {
@@ -104,7 +108,8 @@ function harness(
       return options[0]!.value;
     },
     async confirm(_m: string, initial: boolean) {
-      return initial;
+      confirms.push(_m);
+      return opts.confirm ?? initial;
     },
     print(t) {
       out.push(t);
@@ -131,7 +136,9 @@ function harness(
       return Response.json({ installationId: ID, version: VERSION });
     }
     if (url === `${BASE}/api/setup/status`) {
-      return Response.json({ setupRequired: true, codeRequired: true });
+      return Response.json(
+        opts.setupStatus ?? { setupRequired: true, codeRequired: true }
+      );
     }
     throw new Error(`unexpected fetch ${url}`);
   }) as typeof fetch;
@@ -155,6 +162,7 @@ function harness(
         doNamespaces: DO_NAMESPACES,
         ...opts.seed,
       });
+      opts.onCloudflare?.(cf);
       return cf;
     },
   };
@@ -162,6 +170,7 @@ function harness(
     deps,
     out,
     asked,
+    confirms,
     fetched,
     runner,
     text: () => out.join('\n'),
@@ -339,6 +348,129 @@ describe('install', () => {
     expect(h.cf()!.calls.filter((c) => c.method === 'createD1')).toEqual([]);
   });
 
+  it('--yes --expect-plan <stale> stops before any credential prompt or create', async () => {
+    const h = harness({ tty: true, prompts: ['x', 'y', 'z'] });
+    const code = await main(
+      ['install', '--yes', '--expect-plan', '000000000000', ...FLAGS],
+      h.deps
+    );
+    expect(code).toBe(1);
+    expect(h.asked).toEqual([]);
+    expect(h.out.at(-1)).toMatch(/Plan [0-9a-f]{12}$/);
+    expect(h.cf()!.calls.filter((c) => MUTATING.includes(c.method))).toEqual(
+      []
+    );
+    expect(existsSync(dir)).toBe(false);
+  });
+
+  it('a plan that changes after it was shown stops the apply', async () => {
+    const h = harness({
+      onCloudflare(cf) {
+        // The second observe (install's recomputation) sees our workflow appear: reuse, not create.
+        const orig = cf.listWorkflows.bind(cf);
+        let n = 0;
+        cf.listWorkflows = async (a) => {
+          const r = await orig(a);
+          return ++n >= 2
+            ? [...r, { name: 'acme-actions-run', scriptName: 'acme' }]
+            : r;
+        };
+      },
+    });
+    expect(await main(['install', '--yes', ...FLAGS], h.deps)).toBe(1);
+    expect(h.text()).toContain('The plan changed since it was reviewed');
+    expect(h.cf()!.calls.filter((c) => c.method === 'createD1')).toEqual([]);
+  });
+
+  it('declining "Apply this plan?" exits 1 and writes nothing', async () => {
+    const h = harness({ tty: true, confirm: false });
+    expect(await main(['install', ...FLAGS], h.deps)).toBe(1);
+    expect(h.confirms).toEqual(['Apply this plan?']);
+    expect(h.text()).toContain('Nothing was changed.');
+    expect(existsSync(dir)).toBe(false);
+    expect(existsSync(join(cwd, 'wrangler.jsonc'))).toBe(false);
+    expect(h.cf()!.calls.filter((c) => MUTATING.includes(c.method))).toEqual(
+      []
+    );
+  });
+
+  it('--from-email with --no-email is a usage error', async () => {
+    const h = harness();
+    const code = await main(
+      ['install', '--plan', '--from-email', 'a@example.com', '--no-email'],
+      h.deps
+    );
+    expect(code).toBe(2);
+    expect(h.cf()).toBeNull();
+  });
+
+  it('several accounts without a terminal need --account (exit 2)', async () => {
+    const h = harness({
+      seed: {
+        accounts: [
+          { id: ACCOUNT, name: 'Acme' },
+          { id: 'b'.repeat(32), name: 'Other' },
+        ],
+      },
+    });
+    const code = await main(
+      ['install', '--plan', '--name', 'acme', '--workers-dev', '--no-email'],
+      h.deps
+    );
+    expect(code).toBe(2);
+    expect(h.text()).toContain('--account is required');
+  });
+
+  it('--plan --resume prints a command with --resume and the digest', async () => {
+    const h = harness({ seed: { d1: [{ uuid: 'd1-x', name: 'acme-db' }] } });
+    writeState(dir, { ...installedState(), status: 'failed' });
+    expect(
+      await main(['install', '--plan', '--resume', '--name', 'acme'], h.deps)
+    ).toBe(0);
+    expect(h.out.at(-1)).toMatch(
+      new RegExp(
+        `^yarn gitorange install --resume --name acme --account ${ACCOUNT} --workers-dev --no-email --expect-plan [0-9a-f]{12} --yes$`
+      )
+    );
+  });
+
+  it('--plan --resume on an installed state prints no --expect-plan', async () => {
+    const h = harness({ seed: { d1: [{ uuid: 'd1-x', name: 'acme-db' }] } });
+    writeState(dir, installedState());
+    expect(
+      await main(['install', '--plan', '--resume', '--name', 'acme'], h.deps)
+    ).toBe(0);
+    expect(h.out.at(-1)).toBe(
+      `yarn gitorange install --resume --name acme --account ${ACCOUNT} --workers-dev --no-email --yes`
+    );
+  });
+
+  it('--resume on an installed state runs resumeInstalled: verify only', async () => {
+    const h = harness({
+      seed: { d1: [{ uuid: 'd1-x', name: 'acme-db' }] },
+      setupStatus: { setupRequired: false, codeRequired: false },
+    });
+    const s = installedState();
+    writeState(dir, s);
+    expect(
+      await main(['install', '--resume', '--yes', '--name', 'acme'], h.deps)
+    ).toBe(0);
+    expect(h.out.at(-1)).toBe('Nothing to do.');
+    expect(h.confirms).toEqual([]);
+    expect(
+      h
+        .cf()!
+        .calls.filter((c) =>
+          ['createD1', 'createR2', 'putR2Object', 'putR2Lifecycle'].includes(
+            c.method
+          )
+        )
+    ).toEqual([]);
+    expect(h.runner.calls.some((c) => c.args[1] === 'deploy')).toBe(false);
+    expect(h.fetched).toContain(`${BASE}/.well-known/gitorange`);
+    expect(readState(dir, ID)!.status).toBe('installed');
+  });
+
   it('a rejected analytics token from the env exits 1 without a terminal', async () => {
     const h = harness({
       env: { GITORANGE_CF_ANALYTICS_TOKEN: 'bad' },
@@ -384,6 +516,18 @@ describe('status', () => {
     expect(h.text()).toContain('other');
   });
 
+  it.each([
+    ['null', 'null'],
+    ['not JSON', '<html>hi</html>'],
+  ])('exits 1 on a 2xx body that is %s', async (_label, body) => {
+    const h = harness({ wellKnown: () => new Response(body, { status: 200 }) });
+    writeState(dir, installedState());
+    expect(await main(['status'], h.deps)).toBe(1);
+    expect(h.text()).toContain(
+      `Unexpected answer from ${BASE}/.well-known/gitorange`
+    );
+  });
+
   it('exits 1 when unreachable', async () => {
     const h = harness({
       wellKnown: () => {
@@ -410,19 +554,54 @@ describe('resolveToken', () => {
     );
     expect(r.calls).toEqual([]);
   });
-  it("uses the last line of wrangler's auth token", async () => {
+  it("uses the last token-shaped line of wrangler's output, without colour codes", async () => {
+    const tok = 'AbC_def-123.456789012345';
     const r = fakeRunner({
-      yarn: () => ({ code: 0, stdout: 'banner\nwr-tok\n', stderr: '' }),
+      yarn: () => ({
+        code: 0,
+        stdout: `\u001b[33m▲ [WARNING] a newer wrangler is out\u001b[0m\n\u001b[1m${tok}\u001b[22m\n\n`,
+        stderr: '',
+      }),
     });
-    expect(await resolveToken({}, r)).toBe('wr-tok');
+    expect(await resolveToken({}, r)).toBe(tok);
     expect(r.calls[0]!.args).toEqual(['-s', 'wrangler', 'auth', 'token']);
   });
+  it('with no token-shaped line says to run wrangler login', async () => {
+    const r = fakeRunner({
+      yarn: () => ({
+        code: 0,
+        stdout: 'You are not logged in.\nshort\n',
+        stderr: '',
+      }),
+    });
+    await expect(resolveToken({}, r)).rejects.toThrow(
+      'Run yarn wrangler login first.'
+    );
+  });
+
   it('without a login says to run wrangler login', async () => {
     const r = fakeRunner({
       yarn: () => ({ code: 1, stdout: '', stderr: 'Not logged in' }),
     });
     await expect(resolveToken({}, r)).rejects.toThrow(
       'Run yarn wrangler login first.'
+    );
+  });
+});
+
+describe('applyCommand', () => {
+  it('single-quotes values outside the safe set', () => {
+    const s = {
+      ...installedState(),
+      inputs: {
+        name: 'acme',
+        hostname: null,
+        workersDev: true,
+        fromEmail: "o'brien+git@example.com",
+      },
+    };
+    expect(applyCommand(s, false, 'abc')).toBe(
+      `yarn gitorange install --name acme --account ${ACCOUNT} --workers-dev --from-email 'o'\\''brien+git@example.com' --expect-plan abc --yes`
     );
   });
 });

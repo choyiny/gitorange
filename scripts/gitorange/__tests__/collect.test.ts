@@ -64,6 +64,21 @@ describe('collect', () => {
       collect(io(false), { ...base, draft: 'bad', validate })
     ).rejects.toThrow('--name is required');
   });
+  it('without a terminal, returns the fallback instead of failing', async () => {
+    expect(await collect(io(false), { ...base, fallback: 'gitorange' })).toBe(
+      'gitorange'
+    );
+  });
+  it('passes the initial value to the prompt', async () => {
+    let seen: string | undefined;
+    const i = io(true);
+    i.prompt = async (_m, opts) => {
+      seen = opts.initial;
+      return 'x';
+    };
+    expect(await collect(i, { ...base, initial: 'gitorange' })).toBe('x');
+    expect(seen).toBe('gitorange');
+  });
   it('a cancelled prompt throws', async () => {
     await expect(collect(io(true, null), base)).rejects.toThrow('Cancelled.');
   });

@@ -77,7 +77,18 @@ export async function status(
       signal: AbortSignal.timeout(10_000),
     });
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
-    got = (await res.json()) as typeof got;
+    const text = await res.text();
+    let body: unknown;
+    try {
+      body = JSON.parse(text);
+    } catch {
+      body = null;
+    }
+    if (typeof body !== 'object' || body === null || Array.isArray(body)) {
+      io.print(`\nUnexpected answer from ${url}`);
+      return 1;
+    }
+    got = body as typeof got;
   } catch (e) {
     io.print(
       `\nCould not reach ${url}: ${e instanceof Error ? e.message : String(e)}`

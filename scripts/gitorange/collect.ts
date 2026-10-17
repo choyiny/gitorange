@@ -58,6 +58,10 @@ export async function collect(
     mask?: boolean;
     validate?: (v: string) => string | undefined;
     flagName: string;
+    /** Prefilled in the prompt. */
+    initial?: string;
+    /** Used instead of failing when there is no terminal (a documented default, never a secret). */
+    fallback?: string;
   }
 ): Promise<string> {
   for (const v of [o.flag, o.env]) {
@@ -69,11 +73,17 @@ export async function collect(
   // A saved draft that no longer validates is ignored, not fatal.
   if (o.draft !== undefined && o.draft !== '' && !o.validate?.(o.draft))
     return o.draft;
-  if (!io.tty)
+  if (!io.tty) {
+    if (o.fallback !== undefined) return o.fallback;
     throw new Error(
       `${o.flagName} is required when not running in a terminal.`
     );
-  const v = await io.prompt(o.message, { mask: o.mask, validate: o.validate });
+  }
+  const v = await io.prompt(o.message, {
+    mask: o.mask,
+    validate: o.validate,
+    initial: o.initial,
+  });
   if (v === null) throw new Error('Cancelled.');
   return v;
 }

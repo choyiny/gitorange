@@ -5,7 +5,7 @@ import { parseArgs } from 'node:util';
 import { install, resumeInstalled, type Ctx, type Optional } from './apply.ts';
 import { OPTIONAL_ITEMS } from './apply-steps.ts';
 import { restCloudflare, type Cloudflare } from './cloudflare.ts';
-import { clackIo, type Io } from './collect.ts';
+import { clackIo, collect, type Io } from './collect.ts';
 import { installationIdOf, resourceNames, validateName } from './names.ts';
 import { observe } from './observe.ts';
 import { computePlan, formatPlan } from './plan.ts';
@@ -95,21 +95,34 @@ const hostProblem = (v: string) =>
 const emailProblem = (v: string) =>
   EMAIL_RE.test(v) ? undefined : `${v} is not an email address.`;
 
-/** The token: CLOUDFLARE_API_TOKEN, else the last line of `yarn -s wrangler auth token`. */
+// eslint-disable-next-line no-control-regex
+const ANSI = /\u001b\[[0-9;]*[A-Za-z]/g;
+const TOKEN_LINE = /^[A-Za-z0-9._-]{20,}$/;
+
+/**
+ * The token: CLOUDFLARE_API_TOKEN, else the last token-shaped line of `yarn -s wrangler auth token`
+ * (banners and colour codes around it are ignored).
+ */
 export async function resolveToken(
   env: Record<string, string | undefined>,
   runner: Runner
 ): Promise<string> {
   if (env.CLOUDFLARE_API_TOKEN) return env.CLOUDFLARE_API_TOKEN;
-  let line = '';
+  let token: string | undefined;
   try {
     const r = await runner.run('yarn', ['-s', 'wrangler', 'auth', 'token']);
-    if (r.code === 0) line = r.stdout.trim().split('\n').pop()?.trim() ?? '';
+    if (r.code === 0)
+      token = r.stdout
+        .replace(ANSI, '')
+        .split('\n')
+        .map((l) => l.trim())
+        .filter((l) => TOKEN_LINE.test(l))
+        .pop();
   } catch {
     // no wrangler: same message
   }
-  if (!line) throw new Error('Run yarn wrangler login first.');
-  return line;
+  if (!token) throw new Error('Run yarn wrangler login first.');
+  return token;
 }
 
 export async function main(argv: string[], deps: Deps): Promise<number> {
@@ -208,63 +221,68 @@ async function resolveAccount(
   );
 }
 
-/** Spec §2 order: name → account → hostname → sender. Flags first, then a prompt in a terminal. */
+/** collect(), with a missing or invalid input as a usage error (exit 2). */
+async function ask(io: Io, o: Parameters<typeof collect>[1]): Promise<string> {
+  try {
+    return await collect(io, o);
+  } catch (e) {
+    const m = (e as Error).message;
+    throw m === 'Cancelled.' ? e : new UsageError(m);
+  }
+}
+
+/** Spec §2 order: name → account → hostname → sender. Flag, then a prompt in a terminal (collect). */
 async function resolveInputs(
   f: InstallFlags,
   cf: Cloudflare,
   io: Io
 ): Promise<Resolved> {
-  let name = f.name;
-  if (name === undefined) {
-    if (io.tty) {
-      const v = await io.prompt('Installation name', {
-        initial: DEFAULT_NAME,
-        validate: (x) => validateName(x) ?? undefined,
-      });
-      if (v === null) throw new Error('Cancelled.');
-      name = v;
-    } else {
-      name = DEFAULT_NAME;
-    }
-  }
+  const name = await ask(io, {
+    flag: f.name,
+    message: 'Installation name',
+    initial: DEFAULT_NAME,
+    fallback: DEFAULT_NAME,
+    validate: (x) => validateName(x) ?? undefined,
+    flagName: '--name',
+  });
 
   const accountId = await resolveAccount(cf, io, f.account);
 
-  let hostname: string | null = f.hostname ?? null;
-  if (hostname === null && !f['workers-dev']) {
-    if (!io.tty) {
-      throw new UsageError(
-        '--hostname <host> or --workers-dev is required when not running in a terminal.'
-      );
-    }
-    const where = await io.select('Where should it be served?', [
-      {
-        value: 'workers.dev',
-        label: `workers.dev (${name}.<subdomain>.workers.dev)`,
-      },
-      { value: 'custom', label: 'A custom hostname on a zone in this account' },
-    ]);
-    if (where === 'custom') {
-      const v = await io.prompt('Hostname (like git.example.com)', {
+  const hostFlag = '--hostname <host> or --workers-dev';
+  let hostname: string | null = null;
+  if (!f['workers-dev']) {
+    const custom =
+      f.hostname !== undefined ||
+      !io.tty ||
+      (await io.select('Where should it be served?', [
+        {
+          value: 'workers.dev',
+          label: `workers.dev (${name}.<subdomain>.workers.dev)`,
+        },
+        {
+          value: 'custom',
+          label: 'A custom hostname on a zone in this account',
+        },
+      ])) === 'custom';
+    if (custom) {
+      hostname = await ask(io, {
+        flag: f.hostname,
+        message: 'Hostname (like git.example.com)',
         validate: hostProblem,
+        flagName: hostFlag,
       });
-      if (v === null) throw new Error('Cancelled.');
-      hostname = v;
     }
   }
 
-  let fromEmail: string | null = f['from-email'] ?? null;
-  if (fromEmail === null && !f['no-email']) {
-    if (!io.tty) {
-      throw new UsageError(
-        '--from-email <address> or --no-email is required when not running in a terminal.'
-      );
-    }
-    const v = await io.prompt(
-      'Invitation sender email (empty for none: invite links still work)',
-      { validate: (x) => (x === '' ? undefined : emailProblem(x)) }
-    );
-    if (v === null) throw new Error('Cancelled.');
+  let fromEmail: string | null = null;
+  if (!f['no-email']) {
+    const v = await ask(io, {
+      flag: f['from-email'],
+      message:
+        'Invitation sender email (empty for none: invite links still work)',
+      validate: (x) => (x === '' ? undefined : emailProblem(x)),
+      flagName: '--from-email <address> or --no-email',
+    });
     fromEmail = v === '' ? null : v;
   }
   return {
@@ -318,21 +336,30 @@ async function differences(
   return out;
 }
 
-/** The apply command for a reviewed plan: the resolved inputs as flags, never a secret. */
-function applyCommand(
+/** Single-quotes a value for a POSIX shell unless it is plainly safe. */
+export function shellQuote(v: string): string {
+  return /^[A-Za-z0-9@._:/-]+$/.test(v) ? v : `'${v.replace(/'/g, `'\\''`)}'`;
+}
+
+/**
+ * The apply command for a reviewed plan: the resolved inputs as flags, never a secret. `digest`
+ * is null for an installed resume, which applies no plan.
+ */
+export function applyCommand(
   s: InstallState,
   resume: boolean,
-  digest: string
+  digest: string | null
 ): string {
   const i = s.inputs;
+  const q = shellQuote;
   return [
     'yarn gitorange install',
     ...(resume ? ['--resume'] : []),
-    `--name ${i.name}`,
-    `--account ${s.accountId}`,
-    i.hostname ? `--hostname ${i.hostname}` : '--workers-dev',
-    i.fromEmail ? `--from-email ${i.fromEmail}` : '--no-email',
-    `--expect-plan ${digest}`,
+    `--name ${q(i.name)}`,
+    `--account ${q(s.accountId)}`,
+    i.hostname ? `--hostname ${q(i.hostname)}` : '--workers-dev',
+    i.fromEmail ? `--from-email ${q(i.fromEmail)}` : '--no-email',
+    ...(digest ? [`--expect-plan ${digest}`] : []),
     '--yes',
   ].join(' ');
 }
@@ -528,14 +555,24 @@ async function runInstall(f: InstallFlags, deps: Deps): Promise<number> {
       s
     );
     io.print(formatPlan(plan, s.inputs, s.baseUrl));
+    const installed = s.status === 'installed';
 
     if (f.plan) {
       io.print(`\nPlan ${plan.digest}\n\nTo apply it:`);
-      io.print(applyCommand(s, Boolean(f.resume), plan.digest));
+      // An installed resume applies no plan (resumeInstalled), so its command carries no digest.
+      io.print(
+        applyCommand(s, Boolean(f.resume), installed ? null : plan.digest)
+      );
       return 0;
     }
+    const expected = f['expect-plan'];
+    if (expected !== undefined && expected !== plan.digest) {
+      io.print(
+        `\nThe plan changed since it was reviewed (expected ${expected}, now ${plan.digest}). Nothing was changed.\n\nPlan ${plan.digest}`
+      );
+      return 1;
+    }
 
-    const installed = s.status === 'installed';
     if (!installed && !f.yes && !(await io.confirm('Apply this plan?', true))) {
       io.print('Nothing was changed.');
       return 1;
@@ -546,7 +583,8 @@ async function runInstall(f: InstallFlags, deps: Deps): Promise<number> {
     } else {
       await install(ctx, {
         state: s,
-        expectPlan: f['expect-plan'],
+        // Binds the apply to the plan shown (and confirmed): a plan that changes meanwhile stops.
+        expectPlan: expected ?? plan.digest,
         yes: Boolean(f.yes),
         optional,
       });
