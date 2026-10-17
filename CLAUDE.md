@@ -152,6 +152,13 @@ Drizzle/D1 and better-auth. Git storage is **Cloudflare Artifacts**: one Artifac
   kind `ordered_after`) and retargets `base_ref` (metadata only, CAS); `stackGate` blocks `landPull`, which also refuses a head carrying another
   open PR's commits (`carriedPull`). Tests drive
   `executeReconcile` with fake `StackModels` (`order`, `recheck`).
+- Installer (`scripts/gitorange/`, `yarn gitorange install|status`, spec `docs/superpowers/specs/2026-10-16-deterministic-install-design.md`):
+  pure modules (`names`, `plan`, `config`, `state`) plus ports for Cloudflare (`cloudflare.ts`) and processes (`runner.ts`) and
+  the prompts (`collect.ts`), all injected through `Deps`/`Ctx`. Same inputs give the same names, plan digest and generated
+  `wrangler.jsonc` (header marker; a hand-written one is never overwritten). State and lock live in `.gitorange/<id>.json`
+  (gitignored): `apply.ts` records each step, so `--resume` continues; resources carry an ownership marker and are never
+  touched otherwise. The setup code's hash is the `SETUP_CODE_HASH` secret; `/.well-known/gitorange` is what verify reads.
+  Tests are Node vitest (`scripts/gitorange/vitest.config.ts`), no workerd.
 - Artifacts has no local emulator: `yarn dev` runs `env.dev`, which uses the remote service in the
   `gitorange-dev` namespace. Tests use `wrangler.test.jsonc` (no remote bindings) plus an in-memory
   Artifacts fake.
@@ -163,7 +170,7 @@ Drizzle/D1 and better-auth. Git storage is **Cloudflare Artifacts**: one Artifac
 - When adding a binding or var, update all of: `wrangler.jsonc.example` (top level **and** `env.dev`),
   `wrangler.jsonc.ci`, `wrangler.test.jsonc` (if tests need it), and `docs/configuration.md`; then run
   `yarn cf-typegen` (which generates types from `wrangler.jsonc.ci`, never the local file).
-- Deploying is set up by the `/gitorange-onboarding` skill; keep it and `docs/setup.md` in sync.
+- A first deployment is `yarn gitorange install` (`/gitorange-onboarding` runs it with the user); keep the skill, `docs/setup.md`, and the installer's flags and messages in sync.
 
 ## Git Workflow
 

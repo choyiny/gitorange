@@ -369,7 +369,7 @@ export function restCloudflare(
       return vars;
     },
 
-    // GET /accounts/{a}/workers/durable_objects/namespaces (scripts/do-namespaces.mjs; wrangler listDurableObjects).
+    // GET /accounts/{a}/workers/durable_objects/namespaces (wrangler listDurableObjects; mapped to vars in apply-steps.ts DO_VARS).
     async durableObjectNamespaces(a) {
       const rows = await list<{ id: string; script: string; class: string }>(
         `/accounts/${a}/workers/durable_objects/namespaces`,

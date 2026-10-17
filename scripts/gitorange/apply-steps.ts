@@ -230,7 +230,7 @@ export async function deploy(
   );
 }
 
-/** Durable Object class -> var name (from scripts/do-namespaces.mjs). */
+/** Durable Object class -> var name (the four classes whose namespace IDs the worker reads). */
 const DO_VARS: Record<string, string> = {
   JobRunner: 'JOB_RUNNER_NAMESPACE_ID',
   MergeResolver: 'MERGE_RESOLVER_NAMESPACE_ID',

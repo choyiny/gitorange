@@ -256,12 +256,12 @@ job). The status stays `installed` throughout; a failure here records the failed
 
 **Setup code.**
 
-- The installer generates a code (e.g. 4 groups of 4 from an unambiguous alphabet, ~80 bits) and stores
+- The installer generates a code (5 groups of 4 from a 31-character unambiguous alphabet, ~99 bits) and stores
   `sha256(code)` as the Worker secret `SETUP_CODE_HASH`. It prints the code once at the end, with
   `<BASE_URL>/setup`.
 - `GET /api/setup/status` adds `codeRequired: boolean` (true when `SETUP_CODE_HASH` is set and no user exists).
 - `POST /api/setup` takes `code`; when `SETUP_CODE_HASH` is set, a wrong or missing code is a 403 and nothing is
-  created. Compare hashes in constant time. Attempts are rate-limited (builder's call on the mechanism).
+  created. Compare hashes in constant time. There is no rate limiter: at ~99 bits, online guessing is infeasible.
 - The welcome page (`src/pages/Setup.tsx`) asks for the code first when `codeRequired`.
 - When `SETUP_CODE_HASH` is unset (existing instances, `yarn dev`), setup works exactly as today.
 - Setup still closes forever once any user exists; the code is useless afterwards.

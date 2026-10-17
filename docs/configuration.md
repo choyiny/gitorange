@@ -1,6 +1,6 @@
 # Configuration
 
-GitOrange reads its configuration from `wrangler.jsonc` (copied from [`wrangler.jsonc.example`](../wrangler.jsonc.example), gitignored) and from Worker secrets. **Site admin → Setup** checks all of it on the running worker (secrets set and long enough, bindings present and reachable, variables, migrations, AI Gateway) and shows how to fix what's wrong.
+GitOrange reads its configuration from `wrangler.jsonc` (generated from [`wrangler.jsonc.example`](../wrangler.jsonc.example) by `yarn gitorange install`, or copied from it by hand; gitignored) and from Worker secrets. **Site admin → Setup** checks all of it on the running worker (secrets set and long enough, bindings present and reachable, variables, migrations, AI Gateway) and shows how to fix what's wrong.
 
 ## Bindings
 
@@ -53,18 +53,18 @@ Variables marked **Default only** are defaults: **Site admin → Settings** over
 
 Site admin → **Usage & cost** shows what this deployment uses on Cloudflare and what it would cost. GitOrange records Actions runner time, Workers AI calls, and emails itself. Everything else comes from Cloudflare's GraphQL Analytics API, which a daily cron (`triggers.crons`: `30 2 * * *`, 02:30 UTC) pulls into D1. Every query is filtered to the resources named below, so other things on the account never show up as GitOrange's. Leave a variable empty to skip that metric; it then shows as "not configured".
 
-| Variable                         | Example                      | Purpose                                                                                                               |
-| -------------------------------- | ---------------------------- | --------------------------------------------------------------------------------------------------------------------- |
-| `WORKER_NAME`                    | `gitorange`                  | This Worker's script name (the top-level `name`), for Workers requests and CPU time                                   |
-| `D1_DATABASE_ID`                 | `xxxxxxxx-xxxx-…`            | The `DB` database's `database_id`, for rows read and written and storage                                              |
-| `ACTIONS_LOGS_BUCKET_NAME`       | `gitorange-actions-logs`     | The `ACTIONS_LOGS` bucket's name. With `LFS_BUCKET_NAME` and `ACTIONS_CACHE_BUCKET_NAME`, the R2 buckets to measure   |
-| `ARTIFACTS_NAMESPACE`            | `gitorange`                  | The `artifacts[].namespace`, for Artifacts operations                                                                 |
-| `ACTIONS_WORKFLOW_NAME`          | `gitorange-actions-run`      | The `ACTIONS_RUN` Workflow's `name`                                                                                   |
-| `MERGE_RESOLUTION_WORKFLOW_NAME` | `gitorange-merge-resolution` | The `MERGE_RESOLUTION` Workflow's `name`                                                                              |
-| `JOB_RUNNER_NAMESPACE_ID`        | `0123…cdef`                  | Durable Object namespace ID of `JobRunner`: `node scripts/do-namespaces.mjs --write` fills in all four after a deploy |
-| `MERGE_RESOLVER_NAMESPACE_ID`    | `0123…cdef`                  | Same, for `MergeResolver`                                                                                             |
-| `AGENT_REVIEWER_NAMESPACE_ID`    | `0123…cdef`                  | Same, for `AgentReviewer`                                                                                             |
-| `LIVE_NAMESPACE_ID`              | `0123…cdef`                  | Same, for `LiveHub`                                                                                                   |
+| Variable                         | Example                      | Purpose                                                                                                             |
+| -------------------------------- | ---------------------------- | ------------------------------------------------------------------------------------------------------------------- |
+| `WORKER_NAME`                    | `gitorange`                  | This Worker's script name (the top-level `name`), for Workers requests and CPU time                                 |
+| `D1_DATABASE_ID`                 | `xxxxxxxx-xxxx-…`            | The `DB` database's `database_id`, for rows read and written and storage                                            |
+| `ACTIONS_LOGS_BUCKET_NAME`       | `gitorange-actions-logs`     | The `ACTIONS_LOGS` bucket's name. With `LFS_BUCKET_NAME` and `ACTIONS_CACHE_BUCKET_NAME`, the R2 buckets to measure |
+| `ARTIFACTS_NAMESPACE`            | `gitorange`                  | The `artifacts[].namespace`, for Artifacts operations                                                               |
+| `ACTIONS_WORKFLOW_NAME`          | `gitorange-actions-run`      | The `ACTIONS_RUN` Workflow's `name`                                                                                 |
+| `MERGE_RESOLUTION_WORKFLOW_NAME` | `gitorange-merge-resolution` | The `MERGE_RESOLUTION` Workflow's `name`                                                                            |
+| `JOB_RUNNER_NAMESPACE_ID`        | `0123…cdef`                  | Durable Object namespace ID of `JobRunner`: `yarn gitorange install` fills in all four after the first deploy       |
+| `MERGE_RESOLVER_NAMESPACE_ID`    | `0123…cdef`                  | Same, for `MergeResolver`                                                                                           |
+| `AGENT_REVIEWER_NAMESPACE_ID`    | `0123…cdef`                  | Same, for `AgentReviewer`                                                                                           |
+| `LIVE_NAMESPACE_ID`              | `0123…cdef`                  | Same, for `LiveHub`                                                                                                 |
 
 `R2_ACCOUNT_ID` is the account the queries read, and `AI_GATEWAY` names the gateway whose request count is shown (for the whole gateway, which other apps or a dev instance may share, so it is never added to GitOrange's totals).
 
@@ -78,12 +78,12 @@ The figures are estimates, not an invoice:
 
 ## Secrets
 
-| Secret                                     | How to set                                                                                                                                                                                                                                                                                                                |
-| ------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `BETTER_AUTH_SECRET`                       | Signs sessions and encrypts the MCP server's OAuth signing keys; changing it signs everyone out and disconnects every MCP app. Production: `wrangler secret put BETTER_AUTH_SECRET`. Local: `.dev.vars` (see `.dev.vars.example`). Generate with `openssl rand -hex 32`                                                   |
-| `R2_ACCESS_KEY_ID`, `R2_SECRET_ACCESS_KEY` | S3-compatible credentials of an R2 API token with **Object Read & Write** on the LFS bucket, used only to sign short-lived LFS URLs. Without them Git LFS answers "not configured"; everything else works                                                                                                                 |
-| `SETUP_CODE_HASH`                          | Optional. Lowercase hex SHA-256 of the one-time setup code (dashes removed, upper-cased) that `yarn gitorange install` prints. While set, the welcome page requires the code to create the first admin; empty or unset means the first account created becomes the site admin. No rate limiter: the code carries 80+ bits |
-| `CF_ANALYTICS_TOKEN`                       | Optional. An account API token with only **Account Analytics: Read**, for Usage & cost. Production: `wrangler secret put CF_ANALYTICS_TOKEN`. Without it, the page shows only what GitOrange records itself (Actions runners, Workers AI calls, emails)                                                                   |
+| Secret                                     | How to set                                                                                                                                                                                                                                                                                                                                                       |
+| ------------------------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `BETTER_AUTH_SECRET`                       | Signs sessions and encrypts the MCP server's OAuth signing keys; changing it signs everyone out and disconnects every MCP app. Production: `wrangler secret put BETTER_AUTH_SECRET`. Local: `.dev.vars` (see `.dev.vars.example`). Generate with `openssl rand -hex 32`                                                                                          |
+| `R2_ACCESS_KEY_ID`, `R2_SECRET_ACCESS_KEY` | S3-compatible credentials of an R2 API token with **Object Read & Write** on the LFS bucket, used only to sign short-lived LFS URLs. Without them Git LFS answers "not configured"; everything else works                                                                                                                                                        |
+| `SETUP_CODE_HASH`                          | Optional. Lowercase hex SHA-256 of the one-time setup code (dashes removed, upper-cased) that `yarn gitorange install` prints. While set, the welcome page requires the code to create the first admin; empty or unset means the first account created becomes the site admin. No rate limiter: the code carries about 99 bits, so online guessing is infeasible |
+| `CF_ANALYTICS_TOKEN`                       | Optional. An account API token with only **Account Analytics: Read**, for Usage & cost. Production: `wrangler secret put CF_ANALYTICS_TOKEN`. Without it, the page shows only what GitOrange records itself (Actions runners, Workers AI calls, emails)                                                                                                          |
 
 ## Environments
 

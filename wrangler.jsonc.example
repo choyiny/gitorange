@@ -1,5 +1,6 @@
 {
-  // Copy this file to wrangler.jsonc and fill in your values (or run /gitorange-onboarding in Claude Code).
+  // `yarn gitorange install` generates wrangler.jsonc from this file and your answers (see docs/setup.md).
+  // Copying it to wrangler.jsonc and filling in your values by hand still works.
   // wrangler.jsonc is gitignored so each deployer keeps their own account and resource IDs.
   //
   // The top level is your PRODUCTION worker (`yarn deploy`).
