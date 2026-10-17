@@ -243,7 +243,9 @@ does only what was asked for or is still missing, and touches nothing else _(bui
 
 - skipped optional credentials (LFS keys, analytics token): asked again; if any are supplied, one
   `deploy --secrets-file` with just those, then verify;
-- a lost setup code, only while no user exists: a new code and hash, one deploy, then verify and print the code;
+- a lost setup code, only while no user exists and only with consent: in a terminal, "Issue a new setup code? The old
+  one stops working." (default no); without a terminal, `--new-setup-code`. Then a new code and hash, one deploy, then
+  verify and print the code;
 - otherwise: verify only, and print "Nothing to do."
 
 Provisioning, migrations and `BETTER_AUTH_SECRET` are never redone on an installed instance (that is `upgrade`'s
@@ -265,8 +267,8 @@ job). The status stays `installed` throughout; a failure here records the failed
 - The welcome page (`src/pages/Setup.tsx`) asks for the code first when `codeRequired`.
 - When `SETUP_CODE_HASH` is unset (existing instances, `yarn dev`), setup works exactly as today.
 - Setup still closes forever once any user exists; the code is useless afterwards.
-- A lost code: `yarn gitorange install --resume` while no user exists issues a new code and replaces the hash
-  (recorded step `setup-code:<n>`).
+- A lost code: `yarn gitorange install --resume` while no user exists reissues only with consent (the terminal prompt,
+  default no, or `--new-setup-code` without a terminal), then replaces the hash (recorded step `setup-code:<n>`).
 - Site admin → Setup lists `SETUP_CODE_HASH` as optional and never shows its value.
 
 **`GET /.well-known/gitorange`** (public, no auth, `run_worker_first` already covers `/.well-known/*`): returns
@@ -327,5 +329,5 @@ Marked _(my call)_ in the text, for review:
    with an info line (§4).
 3. workers.dev installs hash the fixed token `workers.dev` into the installation id (§4).
 4. A reviewed plan reaches a separate apply through `--expect-plan <digest>` (§4).
-5. `--resume` on an installed instance only adds missing credentials or reissues a lost setup code (§6).
+5. `--resume` on an installed instance only adds missing credentials or, with consent, reissues a lost setup code (§6).
 6. Secrets go through `wrangler deploy --secrets-file`, verified to exist in the installed wrangler (§6).
