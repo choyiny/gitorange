@@ -68,15 +68,15 @@ Never ask them to paste any of these into the chat.
 
 ### Step 3: Apply
 
-Ask for an explicit yes, then give the user the apply command the plan printed (it ends with `--expect-plan <digest> --yes`, so it applies exactly the plan they reviewed) and have them run it themselves, so the masked prompts stay out of the chat:
+Ask for an explicit yes, then give the user the apply command the plan printed (it ends with `--expect-plan <digest> --yes`, so it applies exactly the plan they reviewed). Ask them to run it **in their own terminal window, not with `!` here**: the setup code it prints must stay out of this conversation, and the masked credential prompts need a real terminal, which `!` may not provide.
 
 ```
-! yarn gitorange install --name <name> ... --expect-plan <digest> --yes
+yarn gitorange install --name <name> ... --expect-plan <digest> --yes
 ```
 
-It runs for several minutes (the first deploy builds the runner image). At the end it prints a **setup code** once and `<BASE_URL>/setup`. Tell the user to keep it and enter it there to create the admin account; only someone with the code can.
+It runs for several minutes (the first deploy builds the runner image). At the end it prints a **setup code** once and `<BASE_URL>/setup`. Tell the user to keep it and enter it there to create the admin account; only someone with the code can. Ask them to come back and say whether it succeeded, **without pasting the setup code** (or any output line that contains it). Then run `yarn gitorange status --name <name>` yourself: it shows the recorded installation and asks the deployed worker whether it matches.
 
-If the run fails, the message names the failed step and prints `yarn gitorange install --resume --name <name>`. Read the error with them, fix the cause, and have them run that command (it skips what is done and creates nothing twice). "The plan changed since it was reviewed" means something moved: run `--plan` again and review the new one. A failure after the secrets went live also prints the setup code, so they keep it. A lost code before the admin exists: `--resume` issues a new one. `yarn gitorange status --name <name>` shows the recorded installation and asks the deployed worker whether it matches.
+If the run fails, the message names the failed step and prints `yarn gitorange install --resume --name <name>`. Ask the user for the error lines (never the `Setup code:` line: a failure after the secrets went live prints the code too, so they keep it), help fix the cause, and have them run that command in their terminal (it skips what is done and creates nothing twice). "The plan changed since it was reviewed" means something moved: run `--plan` again yourself and review the new one. A lost code before the admin exists: they run `yarn gitorange install --resume --name <name> --new-setup-code` in their terminal (the old code stops working; plain `--resume` in a terminal asks first).
 
 ### Step 4: Verify end to end
 
@@ -152,8 +152,9 @@ Site admin → Setup shows what's misconfigured on the deployed worker, with the
 
 - **`Access denied [code: 10004]`** — wrong account, account not on Workers Paid, or a wrangler login without Artifacts scopes (`! yarn wrangler login` again).
 - **"The API token cannot read: …"** — the token lacks a permission listed in `docs/setup.md`.
-- **"Not running in a terminal: pass --yes"** — only the user's `!` command is a terminal; Claude's shell is not.
-- **The installer refuses to overwrite `wrangler.jsonc`** — it was written by hand; move it aside and rerun.
+- **"Not running in a terminal: pass --yes"** — the apply runs in the user's own terminal window; Claude's shell (and `!`) is not a terminal.
+- **The installer refuses to overwrite `wrangler.jsonc`** — it was written by hand (`--plan` warns about it); move it aside and rerun.
+- **"`<host>` already has DNS records" / "is routed to `<worker>`"** — the deploy would replace them without asking, so the installer stops first: delete those records or routes, or choose another hostname.
 - **Auth errors / "invalid origin" after deploy** — `BASE_URL` doesn't match the URL in the browser. The installer sets it from the hostname or workers.dev address it verified; if you moved the instance, rerun the plan.
 - **Custom domain shows a Cloudflare error page** — the zone isn't on this Cloudflare account or isn't active; the plan's preflight reports it.
 - **Invitation email never arrives** — `FROM_EMAIL`'s domain isn't verified in Email Sending; check `yarn wrangler email sending list` (the installer's preflight checks it).

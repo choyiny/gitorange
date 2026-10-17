@@ -9,6 +9,8 @@ import {
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import type { Ctx } from '../apply.ts';
+import { renderConfig } from '../apply-steps.ts';
 import { applyCommand, main, resolveToken, type Deps } from '../cli.ts';
 import type { Io } from '../collect.ts';
 import { installationIdOf, resourceNames } from '../names.ts';
@@ -220,6 +222,7 @@ describe('usage', () => {
     expect(h.text()).toContain('install');
     expect(h.text()).toContain('status');
     expect(h.text()).toContain('--expect-plan');
+    expect(h.text()).toContain('--new-setup-code');
   });
 
   it('unknown command exits 2', async () => {
@@ -469,6 +472,55 @@ describe('install', () => {
     expect(h.runner.calls.some((c) => c.args[1] === 'deploy')).toBe(false);
     expect(h.fetched).toContain(`${BASE}/.well-known/gitorange`);
     expect(readState(dir, ID)!.status).toBe('installed');
+  });
+
+  it('--resume --new-setup-code on an installed state replaces the code', async () => {
+    const deployed = (h: ReturnType<typeof harness>) =>
+      h.runner.calls.filter((c) => c.args[1] === 'deploy').length;
+    const without = harness({
+      seed: { d1: [{ uuid: 'd1-x', name: 'acme-db' }] },
+    });
+    const s = installedState();
+    // Deployed from this checkout, so the code can be replaced without an upgrade.
+    writeState(dir, {
+      ...s,
+      deployedConfigHash: renderConfig({ cwd } as Ctx, s, VERSION).hash,
+    });
+    expect(
+      await main(
+        ['install', '--resume', '--yes', '--name', 'acme'],
+        without.deps
+      )
+    ).toBe(0);
+    expect(deployed(without)).toBe(0);
+    expect(without.text()).toContain('--new-setup-code');
+
+    const withFlag = harness({
+      seed: { d1: [{ uuid: 'd1-x', name: 'acme-db' }] },
+    });
+    expect(
+      await main(
+        ['install', '--resume', '--yes', '--name', 'acme', '--new-setup-code'],
+        withFlag.deps
+      )
+    ).toBe(0);
+    expect(deployed(withFlag)).toBe(1);
+    expect(withFlag.text()).toMatch(/Setup code: \S+/);
+    expect(withFlag.confirms).toEqual([]);
+  });
+
+  it('--plan --resume --new-setup-code carries the flag into the apply command', async () => {
+    const h = harness({ seed: { d1: [{ uuid: 'd1-x', name: 'acme-db' }] } });
+    writeState(dir, installedState());
+    expect(
+      await main(
+        ['install', '--plan', '--resume', '--name', 'acme', '--new-setup-code'],
+        h.deps
+      )
+    ).toBe(0);
+    expect(h.out.at(-1)).toBe(
+      `yarn gitorange install --resume --name acme --account ${ACCOUNT} --workers-dev --no-email --new-setup-code --yes`
+    );
   });
 
   it('a rejected analytics token from the env exits 1 without a terminal', async () => {

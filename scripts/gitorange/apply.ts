@@ -330,21 +330,25 @@ export async function install(
   ctx.io.print(summary(s, code, optional));
   if (!code && setup.setupRequired && setup.codeRequired) {
     ctx.io.print(
-      `The first admin still needs a setup code. If you no longer have it, run: yarn gitorange install --resume --name ${s.inputs.name}`
+      `The first admin still needs a setup code. If you no longer have it, run: ${newCodeCommand(s)}`
     );
   }
   return s;
 }
 
+const newCodeCommand = (s: InstallState) =>
+  `yarn gitorange install --resume --name ${s.inputs.name} --new-setup-code`;
+
 /**
- * `--resume` on an installed instance (spec §6): adds supplied optional credentials and reissues
- * a lost setup code while no user exists, in one deploy; otherwise only verifies. The status stays
- * `installed` throughout.
+ * `--resume` on an installed instance (spec §6): adds supplied optional credentials and, while no
+ * user exists, replaces the setup code (in a terminal after a yes, default no; otherwise only with
+ * `newSetupCode`), in one deploy; otherwise only verifies. The status stays `installed` throughout.
  */
 export async function resumeInstalled(
   outer: Ctx,
   state: InstallState,
-  optional: Optional
+  optional: Optional,
+  opts: { newSetupCode?: boolean } = {}
 ): Promise<InstallState> {
   let s = state;
   const ctx = onAccount(outer, s);
@@ -362,9 +366,22 @@ export async function resumeInstalled(
     step = 'setup-status';
     const { setupRequired } = await setupStatus(ctx, s);
     const secrets = optionalSecrets(opt);
-    if (setupRequired) {
+    // A new code makes the old one stop working: never replaced without being asked.
+    const replace =
+      setupRequired &&
+      (opts.newSetupCode === true ||
+        (ctx.io.tty &&
+          (await ctx.io.confirm(
+            'Issue a new setup code? The old one stops working.',
+            false
+          ))));
+    if (replace) {
       code = generateSetupCode();
       secrets.SETUP_CODE_HASH = setupCodeHash(code);
+    } else if (setupRequired && !ctx.io.tty) {
+      ctx.io.print(
+        `The first admin still needs the setup code. If it is lost, issue a new one (the old one stops working): ${newCodeCommand(s)}`
+      );
     }
     const changed = Object.keys(secrets).length > 0;
 

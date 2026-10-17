@@ -200,6 +200,7 @@ function harness(
     r2Status?: number;
     tty?: boolean;
     prompts?: (string | null)[];
+    confirm?: boolean;
   } = {}
 ) {
   const cf = fakeCloudflare({ doNamespaces: DO_NAMESPACES, ...opts.seed });
@@ -232,6 +233,7 @@ function harness(
   });
   const printed: string[] = [];
   const prompts = [...(opts.prompts ?? [])];
+  const confirms: { msg: string; initial: boolean }[] = [];
   const io: Io = {
     tty: opts.tty ?? false,
     async prompt() {
@@ -240,8 +242,9 @@ function harness(
     async select() {
       throw new Error('no select');
     },
-    async confirm() {
-      return true;
+    async confirm(msg, initial) {
+      confirms.push({ msg, initial });
+      return opts.confirm ?? true;
     },
     print(t) {
       printed.push(t);
@@ -289,7 +292,7 @@ function harness(
     now: () => new Date('2026-10-17T00:00:00Z'),
   };
   const count = (m: string) => cf.calls.filter((c) => c.method === m).length;
-  return { ctx, cf, runner, deploys, printed, fetched, slept, count };
+  return { ctx, cf, runner, deploys, printed, fetched, slept, count, confirms };
 }
 
 const noOptional = { yes: true, optional: {} };
@@ -761,13 +764,19 @@ describe('resumeInstalled', () => {
     expect(h.cf.calls.filter((c) => /^create/.test(c.method))).toEqual([]);
   });
 
-  it('reissues a lost setup code only while no user exists', async () => {
+  it('reissues a lost setup code with --new-setup-code, only while no user exists', async () => {
     const { s, seed } = installedFixture();
     const open = harness({
       seed,
       setupStatus: { setupRequired: true, codeRequired: true },
     });
-    const out = await resumeInstalled(open.ctx, pinned(open, s), {});
+    const out = await resumeInstalled(
+      open.ctx,
+      pinned(open, s),
+      {},
+      { newSetupCode: true }
+    );
+    expect(open.confirms).toEqual([]);
     expect(open.deploys).toHaveLength(1);
     expect(Object.keys(open.deploys[0].secrets!)).toEqual(['SETUP_CODE_HASH']);
     const code = /Setup code: (\S+)/.exec(open.printed.join('\n'))?.[1];
@@ -778,9 +787,75 @@ describe('resumeInstalled', () => {
       seed,
       setupStatus: { setupRequired: false, codeRequired: false },
     });
-    await resumeInstalled(closed.ctx, pinned(closed, s), {});
+    await resumeInstalled(
+      closed.ctx,
+      pinned(closed, s),
+      {},
+      { newSetupCode: true }
+    );
     expect(closed.deploys).toHaveLength(0);
     expect(closed.printed.join('\n')).not.toContain('Setup code:');
+  });
+
+  it('without a terminal and without --new-setup-code, keeps the old code', async () => {
+    const { s, seed } = installedFixture();
+    const h = harness({
+      seed,
+      setupStatus: { setupRequired: true, codeRequired: true },
+    });
+    const out = await resumeInstalled(h.ctx, pinned(h, s), {});
+    expect(h.deploys).toHaveLength(0);
+    expect(h.confirms).toEqual([]);
+    const printed = h.printed.join('\n');
+    expect(printed).not.toContain('Setup code:');
+    expect(printed).toContain(
+      'yarn gitorange install --resume --name acme --new-setup-code'
+    );
+    expect(out.steps.map((x) => x.key)).not.toContain('setup-code:2');
+  });
+
+  it('in a terminal, asks before replacing the code (default no)', async () => {
+    const { s, seed } = installedFixture();
+    const declined = harness({
+      seed,
+      tty: true,
+      confirm: false,
+      setupStatus: { setupRequired: true, codeRequired: true },
+    });
+    await resumeInstalled(declined.ctx, pinned(declined, s), {});
+    expect(declined.confirms).toEqual([
+      {
+        msg: 'Issue a new setup code? The old one stops working.',
+        initial: false,
+      },
+    ]);
+    expect(declined.deploys).toHaveLength(0);
+    expect(declined.printed.join('\n')).not.toContain('Setup code:');
+
+    const accepted = harness({
+      seed,
+      tty: true,
+      confirm: true,
+      setupStatus: { setupRequired: true, codeRequired: true },
+    });
+    await resumeInstalled(accepted.ctx, pinned(accepted, s), {});
+    expect(accepted.deploys).toHaveLength(1);
+    expect(Object.keys(accepted.deploys[0].secrets!)).toEqual([
+      'SETUP_CODE_HASH',
+    ]);
+  });
+
+  it('a declined code still sends supplied credentials', async () => {
+    const { s, seed } = installedFixture();
+    const h = harness({
+      seed,
+      tty: true,
+      confirm: false,
+      setupStatus: { setupRequired: true, codeRequired: true },
+    });
+    await resumeInstalled(h.ctx, pinned(h, s), { analytics: 'TOKEN' });
+    expect(h.deploys).toHaveLength(1);
+    expect(h.deploys[0].secrets).toEqual({ CF_ANALYTICS_TOKEN: 'TOKEN' });
   });
 
   it('deploys with the chosen account', async () => {
@@ -875,7 +950,7 @@ describe('install resumed after a failed verify', () => {
     const printed = again.printed.join('\n');
     expect(printed).not.toContain('Setup code:');
     expect(printed).toContain(
-      'The first admin still needs a setup code. If you no longer have it, run: yarn gitorange install --resume --name acme'
+      'The first admin still needs a setup code. If you no longer have it, run: yarn gitorange install --resume --name acme --new-setup-code'
     );
   });
 

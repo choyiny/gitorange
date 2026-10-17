@@ -41,6 +41,8 @@ install options:
   --plan                 Only show what would change, then print the apply command
   --expect-plan <digest> Apply only if the plan still has this digest
   --resume               Continue a recorded installation (or add skipped credentials)
+  --new-setup-code       With --resume on an installed instance nobody has claimed yet:
+                         replace the setup code (the old one stops working)
   --yes                  Apply without asking (required when not in a terminal)
 
   Environment: CLOUDFLARE_API_TOKEN (else wrangler's login), GITORANGE_R2_ACCESS_KEY_ID,
@@ -69,6 +71,7 @@ type InstallFlags = {
   plan?: boolean;
   'expect-plan'?: string;
   resume?: boolean;
+  'new-setup-code'?: boolean;
   yes?: boolean;
 };
 
@@ -82,6 +85,7 @@ const INSTALL_OPTIONS = {
   plan: { type: 'boolean' },
   'expect-plan': { type: 'string' },
   resume: { type: 'boolean' },
+  'new-setup-code': { type: 'boolean' },
   yes: { type: 'boolean' },
 } as const;
 
@@ -348,7 +352,8 @@ export function shellQuote(v: string): string {
 export function applyCommand(
   s: InstallState,
   resume: boolean,
-  digest: string | null
+  digest: string | null,
+  newSetupCode = false
 ): string {
   const i = s.inputs;
   const q = shellQuote;
@@ -360,6 +365,7 @@ export function applyCommand(
     i.hostname ? `--hostname ${q(i.hostname)}` : '--workers-dev',
     i.fromEmail ? `--from-email ${q(i.fromEmail)}` : '--no-email',
     ...(digest ? [`--expect-plan ${digest}`] : []),
+    ...(newSetupCode ? ['--new-setup-code'] : []),
     '--yes',
   ].join(' ');
 }
@@ -502,7 +508,8 @@ async function runInstall(f: InstallFlags, deps: Deps): Promise<number> {
           io.print(
             `${r.name} is already installed at ${existing.baseUrl}. Nothing was changed.\n` +
               `Check it: yarn gitorange status --name ${r.name}\n` +
-              `Add skipped credentials or a lost setup code: yarn gitorange install --resume --name ${r.name}`
+              `Add skipped credentials: yarn gitorange install --resume --name ${r.name}\n` +
+              `Replace a lost setup code (before the first admin exists): yarn gitorange install --resume --name ${r.name} --new-setup-code`
           );
           return 0;
         }
@@ -561,7 +568,12 @@ async function runInstall(f: InstallFlags, deps: Deps): Promise<number> {
       io.print(`\nPlan ${plan.digest}\n\nTo apply it:`);
       // An installed resume applies no plan (resumeInstalled), so its command carries no digest.
       io.print(
-        applyCommand(s, Boolean(f.resume), installed ? null : plan.digest)
+        applyCommand(
+          s,
+          Boolean(f.resume),
+          installed ? null : plan.digest,
+          Boolean(f['new-setup-code'])
+        )
       );
       return 0;
     }
@@ -579,7 +591,9 @@ async function runInstall(f: InstallFlags, deps: Deps): Promise<number> {
     }
     const optional = await collectOptional(deps, s);
     if (installed) {
-      await resumeInstalled(ctx, s, optional);
+      await resumeInstalled(ctx, s, optional, {
+        newSetupCode: Boolean(f['new-setup-code']),
+      });
     } else {
       await install(ctx, {
         state: s,
