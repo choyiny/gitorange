@@ -410,6 +410,68 @@ describe('install', () => {
     expect(out.status).toBe('installed');
   });
 
+  it('retries a failed marker write instead of stranding the bucket', async () => {
+    const h = harness();
+    h.cf.failNext('putR2Object', new Error('HTTP 500'));
+    h.cf.failNext('putR2Object', new Error('HTTP 503'));
+    const out = await install(h.ctx, { state: freshState(), ...noOptional });
+    expect(out.status).toBe('installed');
+    expect(JSON.parse(h.cf.state.r2['acme-lfs'][R2_MARKER_KEY])).toMatchObject({
+      installationId: ID,
+      key: 'lfs',
+    });
+    expect(h.slept.slice(0, 2)).toEqual([1000, 2000]);
+  });
+
+  it('a marker write failing three times fails the step, and the resume reuses the empty bucket', async () => {
+    const h = harness();
+    for (let i = 0; i < 3; i++)
+      h.cf.failNext('putR2Object', new Error('HTTP 500'));
+    await expect(
+      install(h.ctx, { state: freshState(), ...noOptional })
+    ).rejects.toThrow(/Step provision:lfs failed/);
+    const saved = readState(dir, ID)!;
+    expect(saved.steps.map((x) => x.key)).toContain('provision-intent:lfs');
+    expect(h.cf.state.r2['acme-lfs']).toEqual({});
+
+    const again = harness({
+      seed: {
+        d1: h.cf.state.d1.map(({ uuid, name }) => ({ uuid, name })),
+        r2: h.cf.state.r2,
+      },
+    });
+    const out = await install(again.ctx, { state: saved, ...noOptional });
+    expect(
+      again.cf.calls
+        .filter((c) => c.method === 'createR2')
+        .map((c) => c.args[1])
+    ).toEqual(['acme-actions-logs', 'acme-actions-cache']);
+    expect(
+      JSON.parse(again.cf.state.r2['acme-lfs'][R2_MARKER_KEY])
+    ).toMatchObject({ installationId: ID, key: 'lfs' });
+    expect(out.status).toBe('installed');
+  });
+
+  it('looks again before recording a provision intent', async () => {
+    const h = harness();
+    // Someone creates an empty bucket with our name between the plan and the create.
+    const real = h.cf.listR2.bind(h.cf);
+    let n = 0;
+    h.cf.listR2 = async (a) => {
+      n++;
+      // Calls: the plan, the look before d1, the look before acme-lfs.
+      if (n === 3) h.cf.state.r2['acme-lfs'] = {};
+      return real(a);
+    };
+    const err = (await install(h.ctx, {
+      state: freshState(),
+      ...noOptional,
+    }).catch((e: Error) => e)) as Error;
+    expect(err.message).toContain('`acme-lfs` already exists');
+    const saved = readState(dir, ID)!;
+    expect(saved.steps.map((x) => x.key)).not.toContain('provision-intent:lfs');
+  });
+
   it('resume after a crash before the D1 marker', async () => {
     const crashed: InstallState = {
       ...freshState(),

@@ -103,6 +103,31 @@ const onAccount = (ctx: Ctx, s: InstallState): Ctx => ({
   runner: withEnv(ctx.runner, { CLOUDFLARE_ACCOUNT_ID: s.accountId }),
 });
 
+const MARKER_TRIES = 3;
+
+/** The R2 ownership marker; the PUT is idempotent, so a transient failure is retried. */
+async function putMarker(
+  ctx: Ctx,
+  account: string,
+  bucket: string,
+  marker: { installationId: string; ownershipNonce: string; key: string }
+): Promise<void> {
+  for (let attempt = 1; ; attempt++) {
+    try {
+      await ctx.cf.putR2Object(
+        account,
+        bucket,
+        R2_MARKER_KEY,
+        JSON.stringify(marker)
+      );
+      return;
+    } catch (e) {
+      if (attempt >= MARKER_TRIES) throw e;
+      await ctx.sleep(1000 * attempt);
+    }
+  }
+}
+
 export async function install(
   outer: Ctx,
   opts: {
@@ -162,12 +187,14 @@ export async function install(
       step = `provision:${a.key}`;
       let action = a.action;
       if (action === 'create') {
-        save(recordStep(s, `provision-intent:${a.key}`));
-        // Look again: a PlanStop if someone else took the name meanwhile.
+        // Look again before the intent is recorded: a name someone else took meanwhile must
+        // stop here, not pass as ours later (an intent lets an empty same-name resource be reused).
         obs = await observe(ctx.cf, acct, s.names);
         action = computePlan(desired, obs, s).actions.find(
           (x) => x.key === a.key
         )!.action;
+        if (action === 'create')
+          save(recordStep(s, `provision-intent:${a.key}`));
       }
       let id: string;
       if (a.kind === 'd1') {
@@ -176,19 +203,15 @@ export async function install(
             ? (await ctx.cf.createD1(acct, a.name)).uuid
             : obs.d1.find((d) => d.name === a.name)!.uuid;
       } else {
-        if (action === 'create') {
-          await ctx.cf.createR2(acct, a.name);
-          // The marker goes in before the bucket is recorded: a recorded bucket always has one.
-          await ctx.cf.putR2Object(
-            acct,
-            a.name,
-            R2_MARKER_KEY,
-            JSON.stringify({
-              installationId: s.installationId,
-              ownershipNonce: s.ownershipNonce,
-              key: a.key,
-            })
-          );
+        if (action === 'create') await ctx.cf.createR2(acct, a.name);
+        // The marker goes in before the bucket is recorded: a recorded bucket always has one.
+        // A reused bucket without one is ours and empty (plan.ts), so it gets one now.
+        if (obs.r2Markers[a.name] == null) {
+          await putMarker(ctx, acct, a.name, {
+            installationId: s.installationId,
+            ownershipNonce: s.ownershipNonce,
+            key: a.key,
+          });
         }
         id = a.name;
       }

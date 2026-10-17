@@ -26,6 +26,8 @@ export interface Observed {
   r2: string[];
   /** Raw ownership marker body per bucket (null: no marker), only for our buckets that exist. */
   r2Markers: Record<string, string | null>;
+  /** Whether the bucket holds no object, only for our buckets that exist without a marker. */
+  r2Empty: Record<string, boolean>;
   workflows: { name: string; scriptName: string }[];
   artifactsNamespaces: string[];
 }
@@ -75,6 +77,12 @@ export async function observe(
     ),
   ]);
 
+  // One cheap list per unmarked bucket of ours: an empty one may be ours from an interrupted run.
+  const unmarked = markers.filter(([, m]) => m === null).map(([b]) => b);
+  const empties = await Promise.all(
+    unmarked.map(async (b) => [b, await cf.r2IsEmpty(accountId, b)] as const)
+  );
+
   const d1Tables: Observed['d1Tables'] = {};
   const d1InstallRow: Observed['d1InstallRow'] = {};
   for (const r of d1Reads) {
@@ -89,6 +97,7 @@ export async function observe(
     d1InstallRow,
     r2,
     r2Markers: Object.fromEntries(markers),
+    r2Empty: Object.fromEntries(empties),
     workflows,
     artifactsNamespaces,
   };

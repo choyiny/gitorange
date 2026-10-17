@@ -31,6 +31,7 @@ function empty(): Observed {
     d1InstallRow: {},
     r2: [],
     r2Markers: {},
+    r2Empty: {},
     workflows: [],
     artifactsNamespaces: [],
   };
@@ -134,6 +135,44 @@ describe('computePlan', () => {
     };
     expect(stopMessage(() => computePlan(desired, o, null))).toBe(
       notOurs('gitorange-lfs')
+    );
+  });
+
+  it('reuses an empty unmarked bucket after a provision intent (apply writes the marker)', () => {
+    const o = {
+      ...empty(),
+      r2: ['gitorange-lfs'],
+      r2Markers: { 'gitorange-lfs': null },
+      r2Empty: { 'gitorange-lfs': true },
+    };
+    const s = recordStep(state(), 'provision-intent:lfs');
+    expect(
+      computePlan(desired, o, s).actions.find((a) => a.key === 'lfs')?.action
+    ).toBe('reuse');
+  });
+
+  it('stops on an empty unmarked bucket without a provision intent', () => {
+    const o = {
+      ...empty(),
+      r2: ['gitorange-lfs'],
+      r2Markers: { 'gitorange-lfs': null },
+      r2Empty: { 'gitorange-lfs': true },
+    };
+    expect(stopMessage(() => computePlan(desired, o, state()))).toBe(
+      notOurs('gitorange-lfs')
+    );
+  });
+
+  it('stops on a non-empty unmarked bucket after a provision intent, with a hint', () => {
+    const o = {
+      ...empty(),
+      r2: ['gitorange-lfs'],
+      r2Markers: { 'gitorange-lfs': null },
+      r2Empty: { 'gitorange-lfs': false },
+    };
+    const s = recordStep(state(), 'provision-intent:lfs');
+    expect(stopMessage(() => computePlan(desired, o, s))).toBe(
+      `${notOurs('gitorange-lfs')} It may be the bucket this install created before it was interrupted; if it is empty, delete it and run --resume.`
     );
   });
 
@@ -532,6 +571,8 @@ describe('observe', () => {
       r2: {
         'gitorange-lfs': { [MARKER_KEY]: marker('lfs') },
         'other-bucket': { [MARKER_KEY]: 'x' },
+        'gitorange-actions-logs': {},
+        'gitorange-actions-cache': { 'some/object': 'x' },
       },
       workflows: [{ name: 'gitorange-actions-run', scriptName: 'gitorange' }],
       workerVars: { gitorange: { GITORANGE_INSTALLATION: 'v' } },
@@ -545,7 +586,16 @@ describe('observe', () => {
     expect(o.d1).toHaveLength(2);
     expect(o.d1Tables).toEqual({ 'uuid-1': [] });
     expect(o.d1InstallRow).toEqual({ 'uuid-1': null });
-    expect(o.r2Markers).toEqual({ 'gitorange-lfs': marker('lfs') });
+    expect(o.r2Markers).toEqual({
+      'gitorange-lfs': marker('lfs'),
+      'gitorange-actions-logs': null,
+      'gitorange-actions-cache': null,
+    });
+    // Emptiness is read only for our unmarked buckets.
+    expect(o.r2Empty).toEqual({
+      'gitorange-actions-logs': true,
+      'gitorange-actions-cache': false,
+    });
     expect(o.workflows).toEqual([
       { name: 'gitorange-actions-run', scriptName: 'gitorange' },
     ]);
@@ -560,6 +610,8 @@ describe('observe', () => {
     const markers = cf.calls.filter((c) => c.method === 'getR2Object');
     expect(markers.map((c) => c.args.slice(1))).toEqual([
       ['gitorange-lfs', MARKER_KEY],
+      ['gitorange-actions-logs', MARKER_KEY],
+      ['gitorange-actions-cache', MARKER_KEY],
     ]);
   });
 

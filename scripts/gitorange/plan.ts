@@ -136,7 +136,8 @@ function decide(
         }
         return 'create';
       }
-      const m = parseObject(observed.r2Markers[name]);
+      const raw = observed.r2Markers[name];
+      const m = parseObject(raw);
       if (
         m &&
         m.installationId === installationId &&
@@ -144,6 +145,18 @@ function decide(
         m.key === key
       ) {
         return 'reuse';
+      }
+      // A run stopped between create and marker: our intent, no marker, nothing in it yet.
+      // Apply writes the marker before recording it.
+      const intent =
+        state !== null && hasStep(state, `provision-intent:${key}`);
+      if (intent && raw == null && observed.r2Empty[name] === true) {
+        return 'reuse';
+      }
+      if (intent) {
+        throw new PlanStop(
+          `${notOurs(name).message} It may be the bucket this install created before it was interrupted; if it is empty, delete it and run --resume.`
+        );
       }
       throw notOurs(name);
     }
