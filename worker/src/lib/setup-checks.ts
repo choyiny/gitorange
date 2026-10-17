@@ -184,6 +184,18 @@ function secretChecks(ctx: Ctx): SetupCheck[] {
           fix: [],
         }
   );
+  const codeSet =
+    typeof env.SETUP_CODE_HASH === 'string' && env.SETUP_CODE_HASH !== '';
+  out.push({
+    id: 'secret-setup-code',
+    category: 'Secrets',
+    title: 'SETUP_CODE_HASH',
+    status: 'ok',
+    detail: codeSet
+      ? 'Set: the first admin needs the code from `yarn gitorange install`.'
+      : 'Not set: the first account created becomes the site admin.',
+    fix: [],
+  });
   return out;
 }
 

@@ -28,6 +28,7 @@
   // Invitation emails. FROM_EMAIL's domain must be onboarded to Cloudflare Email Sending:
   // https://dash.cloudflare.com/?to=/:account/email-service
   "send_email": [{ "name": "EMAIL" }],
+  // Optional secret SETUP_CODE_HASH: hash of the one-time setup code that gates the first admin (set by `yarn gitorange install`).
   // Git LFS file contents. Clients upload/download directly via pre-signed URLs, which need an
   // R2 API token: `wrangler secret put R2_ACCESS_KEY_ID` and `wrangler secret put R2_SECRET_ACCESS_KEY`.
   "r2_buckets": [

@@ -4,3 +4,5 @@ R2_ACCESS_KEY_ID=
 R2_SECRET_ACCESS_KEY=
 # Usage & cost (Site admin): an account API token with Account Analytics: Read. Optional.
 CF_ANALYTICS_TOKEN=
+# First-run setup: SHA-256 hash of the one-time setup code printed by `yarn gitorange install`. Empty = no code needed.
+SETUP_CODE_HASH=

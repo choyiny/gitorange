@@ -259,6 +259,7 @@ jobs:
           yarn test
           worker/src/__tests__/repos-pulls.test.ts
           worker/src/__tests__/protected-branches.test.ts
+          worker/src/__tests__/setup-code.test.ts
           worker/src/__tests__/setup-invites.test.ts
           worker/src/__tests__/teams-visibility.test.ts
           worker/src/__tests__/admin-setup.test.ts

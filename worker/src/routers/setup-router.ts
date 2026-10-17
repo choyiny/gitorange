@@ -3,6 +3,7 @@ import { OpenAPIHono, createRoute, z } from '@hono/zod-openapi';
 import { sql } from 'drizzle-orm';
 import { users } from '../db/auth.schema';
 import type { DrizzleDB } from '../db/middleware';
+import { setupCodeRequired, verifySetupCode } from '../lib/setup-code';
 import { USERNAME_RE, isReservedUsername } from '../lib/usernames';
 import type { AppEnv } from '../variables';
 import {
@@ -43,6 +44,8 @@ const statusRoute = createRoute({
     ...json200Response(
       z.object({
         setupRequired: z.boolean(),
+        /** The first admin must present the one-time setup code. */
+        codeRequired: z.boolean(),
         /** The instance's display name. */
         appName: z.string(),
       }),
@@ -52,9 +55,11 @@ const statusRoute = createRoute({
 });
 
 setupRouter.openapi(statusRoute, async (c) => {
+  const setupRequired = (await countUsers(c.get('db'))) === 0;
   return c.json(
     {
-      setupRequired: (await countUsers(c.get('db'))) === 0,
+      setupRequired,
+      codeRequired: setupRequired && setupCodeRequired(c.env),
       appName: await instanceName(c.get('db'), c.env),
     },
     200
@@ -74,6 +79,8 @@ const createAdminRoute = createRoute({
             username: usernameSchema,
             email: z.email(),
             password: z.string().min(8).max(128),
+            /** The one-time setup code, when the instance has one. */
+            code: z.string().max(100).optional(),
           }),
         },
       },
@@ -91,7 +98,9 @@ setupRouter.openapi(createAdminRoute, async (c) => {
   // Closed once any user exists, so it can't be used to escalate.
   if ((await countUsers(db)) > 0)
     return c.json({ error: 'Setup has already been completed' }, 403);
-  const { name, username, email, password } = c.req.valid('json');
+  const { name, username, email, password, code } = c.req.valid('json');
+  if (!(await verifySetupCode(c.env, code)))
+    return c.json({ error: 'The setup code is missing or wrong.' }, 403);
   try {
     await c.get('auth').api.createUser({
       body: {

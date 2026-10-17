@@ -1206,12 +1206,17 @@ const qs = (params: Record<string, string | number>) => {
 
 export const api = {
   setupStatus: () =>
-    apiFetch<{ setupRequired: boolean; appName: string }>('/api/setup/status'),
+    apiFetch<{
+      setupRequired: boolean;
+      codeRequired: boolean;
+      appName: string;
+    }>('/api/setup/status'),
   setup: (body: {
     name: string;
     username: string;
     email: string;
     password: string;
+    code?: string;
   }) => apiFetch<{ ok: true }>('/api/setup', { method: 'POST', json: body }),
 
   validateInvite: (token: string) =>

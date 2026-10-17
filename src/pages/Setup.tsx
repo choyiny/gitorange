@@ -15,6 +15,7 @@ export default function Setup() {
   const qc = useQueryClient();
   const status = useQuery({ queryKey: qk.setup, queryFn: api.setupStatus });
   const [form, setForm] = useState({
+    code: '',
     name: '',
     username: '',
     email: '',
@@ -33,7 +34,8 @@ export default function Setup() {
     setBusy(true);
     setError(null);
     try {
-      await api.setup(form);
+      const { code, ...rest } = form;
+      await api.setup(status.data?.codeRequired ? { ...rest, code } : rest);
       const res = await signIn.email({
         email: form.email,
         password: form.password,
@@ -57,6 +59,24 @@ export default function Setup() {
     >
       <FlashError message={error} />
       <form className="auth-fields" onSubmit={submit}>
+        {status.data?.codeRequired && (
+          <div className="fld">
+            <label htmlFor="code">Setup code</label>
+            <input
+              id="code"
+              className="form-control"
+              required
+              value={form.code}
+              onChange={set('code')}
+              autoComplete="one-time-code"
+              autoFocus
+              aria-describedby="code-hint"
+            />
+            <p id="code-hint" className="hint">
+              Printed at the end of <code>yarn gitorange install</code>.
+            </p>
+          </div>
+        )}
         <div className="fld">
           <label htmlFor="name">Full name</label>
           <input
@@ -65,7 +85,7 @@ export default function Setup() {
             required
             value={form.name}
             onChange={set('name')}
-            autoFocus
+            autoFocus={!status.data?.codeRequired}
           />
         </div>
         <div className="fld">

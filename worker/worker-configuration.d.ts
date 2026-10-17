@@ -36,6 +36,7 @@ interface __BaseEnv_CloudflareBindings {
 	R2_ACCESS_KEY_ID: string;
 	R2_SECRET_ACCESS_KEY: string;
 	CF_ANALYTICS_TOKEN: string;
+	SETUP_CODE_HASH: string;
 	JOB_RUNNER: DurableObjectNamespace<import("./src/index").JobRunner>;
 	ACTIONS_QUEUE: DurableObjectNamespace<import("./src/index").ActionsQueue>;
 	MERGE_RESOLVER: DurableObjectNamespace<import("./src/index").MergeResolver>;
@@ -56,7 +57,7 @@ type StringifyValues<EnvType extends Record<string, unknown>> = {
 	[Binding in keyof EnvType]: EnvType[Binding] extends string ? EnvType[Binding] : string;
 };
 declare namespace NodeJS {
-	interface ProcessEnv extends StringifyValues<Pick<Cloudflare.Env, "APP_NAME" | "BASE_URL" | "FROM_EMAIL" | "R2_ACCOUNT_ID" | "LFS_BUCKET_NAME" | "ACTIONS_CACHE_BUCKET_NAME" | "RESOLVER_MODEL" | "GITORANGE_INSTALLATION" | "GITORANGE_VERSION" | "AI_GATEWAY" | "SUMMARY_MODEL" | "REVIEW_MODEL" | "WORKER_NAME" | "D1_DATABASE_ID" | "ACTIONS_LOGS_BUCKET_NAME" | "ARTIFACTS_NAMESPACE" | "ACTIONS_WORKFLOW_NAME" | "MERGE_RESOLUTION_WORKFLOW_NAME" | "JOB_RUNNER_NAMESPACE_ID" | "MERGE_RESOLVER_NAMESPACE_ID" | "AGENT_REVIEWER_NAMESPACE_ID" | "LIVE_NAMESPACE_ID" | "BETTER_AUTH_SECRET" | "R2_ACCESS_KEY_ID" | "R2_SECRET_ACCESS_KEY" | "CF_ANALYTICS_TOKEN">> {}
+	interface ProcessEnv extends StringifyValues<Pick<Cloudflare.Env, "APP_NAME" | "BASE_URL" | "FROM_EMAIL" | "R2_ACCOUNT_ID" | "LFS_BUCKET_NAME" | "ACTIONS_CACHE_BUCKET_NAME" | "RESOLVER_MODEL" | "GITORANGE_INSTALLATION" | "GITORANGE_VERSION" | "AI_GATEWAY" | "SUMMARY_MODEL" | "REVIEW_MODEL" | "WORKER_NAME" | "D1_DATABASE_ID" | "ACTIONS_LOGS_BUCKET_NAME" | "ARTIFACTS_NAMESPACE" | "ACTIONS_WORKFLOW_NAME" | "MERGE_RESOLUTION_WORKFLOW_NAME" | "JOB_RUNNER_NAMESPACE_ID" | "MERGE_RESOLVER_NAMESPACE_ID" | "AGENT_REVIEWER_NAMESPACE_ID" | "LIVE_NAMESPACE_ID" | "BETTER_AUTH_SECRET" | "R2_ACCESS_KEY_ID" | "R2_SECRET_ACCESS_KEY" | "CF_ANALYTICS_TOKEN" | "SETUP_CODE_HASH">> {}
 }
 
 // Begin runtime types
