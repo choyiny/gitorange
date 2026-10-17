@@ -33,7 +33,7 @@ export const clackIo: Io = {
   async select<T>(msg: string, options: { value: T; label: string }[]) {
     const v = await clack.select<T>({
       message: msg,
-      options: options as never,
+      options: options as clack.Option<T>[],
     });
     if (clack.isCancel(v)) throw new Error('Cancelled.');
     return v as T;
@@ -60,14 +60,15 @@ export async function collect(
     flagName: string;
   }
 ): Promise<string> {
-  const given = [o.flag, o.env, o.draft].find(
-    (v) => v !== undefined && v !== ''
-  );
-  if (given !== undefined) {
-    const bad = o.validate?.(given);
+  for (const v of [o.flag, o.env]) {
+    if (v === undefined || v === '') continue;
+    const bad = o.validate?.(v);
     if (bad) throw new Error(bad);
-    return given;
+    return v;
   }
+  // A saved draft that no longer validates is ignored, not fatal.
+  if (o.draft !== undefined && o.draft !== '' && !o.validate?.(o.draft))
+    return o.draft;
   if (!io.tty)
     throw new Error(
       `${o.flagName} is required when not running in a terminal.`

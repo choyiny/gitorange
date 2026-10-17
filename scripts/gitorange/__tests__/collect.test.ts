@@ -55,6 +55,15 @@ describe('collect', () => {
       collect(io(true), { ...base, env: 'bad', validate })
     ).rejects.toThrow('nope');
   });
+  it('ignores an invalid draft: prompts in a terminal, fails otherwise', async () => {
+    const validate = (v: string) => (v === 'bad' ? 'nope' : undefined);
+    expect(await collect(io(true), { ...base, draft: 'bad', validate })).toBe(
+      'prompted'
+    );
+    await expect(
+      collect(io(false), { ...base, draft: 'bad', validate })
+    ).rejects.toThrow('--name is required');
+  });
   it('a cancelled prompt throws', async () => {
     await expect(collect(io(true, null), base)).rejects.toThrow('Cancelled.');
   });

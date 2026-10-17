@@ -51,26 +51,38 @@ export async function withSecretsFile<T>(
 }
 
 /**
- * Prefilled R2 API-token page for the account (spec §2). The dashboard path is the documented
- * one; the bucket names are shown by the caller, not encoded here, as the page has no
- * documented query parameter for them.
+ * Prefilled R2 API-token page (the form void's platform-setup.ts builds): an account token with
+ * Object Read & Write preselected, so a read-only token cannot slip past checkR2Keys. The
+ * caller prints which buckets to scope it to.
  */
 export function r2TokenLink(accountId: string, _buckets: string[]): string {
-  return `https://dash.cloudflare.com/${encodeURIComponent(accountId)}/r2/api-tokens/create?type=account`;
+  return (
+    'https://dash.cloudflare.com/?' +
+    new URLSearchParams({
+      to: `/${accountId}/r2/api-tokens/create`,
+      type: 'account',
+      name: 'GitOrange Uploads',
+      permission: 'object-write',
+      bucketScope: 'all',
+    })
+  );
 }
 
 /**
- * Dashboard token-template URL. Key `account_analytics` / `read` is the one in spec §2
- * (from platform-setup.ts), which is all the usage page needs.
+ * Account-owned token template (outlives the person running the install), as void builds it.
+ * Key `account_analytics` / `read` is from spec §2.
  */
 export function analyticsTokenLink(accountId: string, name: string): string {
-  const keys = JSON.stringify([{ key: 'account_analytics', type: 'read' }]);
-  const q = new URLSearchParams({
-    permissionGroupKeys: keys,
-    accountId,
-    name,
-  });
-  return `https://dash.cloudflare.com/profile/api-tokens?${q.toString()}`;
+  return (
+    'https://dash.cloudflare.com/?' +
+    new URLSearchParams({
+      to: `/${accountId}/api-tokens`,
+      name,
+      permissionGroupKeys: JSON.stringify([
+        { key: 'account_analytics', type: 'read' },
+      ]),
+    })
+  );
 }
 
 export async function checkR2Keys(
@@ -94,7 +106,8 @@ export async function checkR2Keys(
       : `R2 rejected these keys (HTTP ${res.status}).`;
   } catch (e) {
     const text = e instanceof Error ? e.message : 'request failed';
-    return `R2 rejected these keys (${text.split(keys.secret).join('***')}).`;
+    const safe = keys.secret ? text.split(keys.secret).join('***') : text;
+    return `Couldn't reach R2 to check these keys (${safe}).`;
   }
 }
 

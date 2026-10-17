@@ -62,9 +62,17 @@ describe('withSecretsFile', () => {
 });
 
 describe('token links', () => {
-  it('include the account id', () => {
-    expect(r2TokenLink('acc123', ['b1', 'b2'])).toContain('acc123');
-    expect(analyticsTokenLink('acc123', 'gitorange')).toContain('acc123');
+  it('R2 link preselects object-write on the create page', () => {
+    const u = new URL(r2TokenLink('acc123', ['b1', 'b2']));
+    expect(u.searchParams.get('to')).toBe('/acc123/r2/api-tokens/create');
+    expect(u.searchParams.get('permission')).toBe('object-write');
+  });
+  it('analytics link is account-owned with the read permission', () => {
+    const u = new URL(analyticsTokenLink('acc123', 'gitorange'));
+    expect(u.searchParams.get('to')).toBe('/acc123/api-tokens');
+    expect(JSON.parse(u.searchParams.get('permissionGroupKeys')!)).toEqual([
+      { key: 'account_analytics', type: 'read' },
+    ]);
   });
 });
 
@@ -83,6 +91,7 @@ describe('credential checks', () => {
       throw new Error('offline');
     }) as unknown as typeof fetch;
     const m = await checkR2Keys('a', 'b', keys, f);
+    expect(m).toContain("Couldn't reach R2");
     expect(m).toContain('offline');
     expect(m).not.toContain(keys.secret);
   });
