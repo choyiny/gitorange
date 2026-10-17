@@ -7,6 +7,7 @@ import type { Cloudflare } from './cloudflare.ts';
 import type { Io } from './collect.ts';
 import {
   ConfigConflict,
+  deployedPart,
   generateWranglerConfig,
   isGenerated,
 } from './config.ts';
@@ -104,7 +105,10 @@ export function assertConfigWritable(ctx: Ctx): void {
   if (text !== null && !isGenerated(text)) throw new ConfigConflict();
 }
 
-/** The wrangler.jsonc text for `s` at `version`, and its sha256. Writes nothing. */
+/**
+ * The wrangler.jsonc text for `s` at `version`, and the sha256 of its deployed (top-level) part.
+ * Writes nothing.
+ */
 export function renderConfig(
   ctx: Ctx,
   s: InstallState,
@@ -120,10 +124,13 @@ export function renderConfig(
     version,
     existing: existingConfig(ctx),
   });
-  return { text, hash: createHash('sha256').update(text).digest('hex') };
+  return {
+    text,
+    hash: createHash('sha256').update(deployedPart(text)).digest('hex'),
+  };
 }
 
-/** Generates and writes wrangler.jsonc; returns the sha256 of the text. */
+/** Generates and writes wrangler.jsonc; returns renderConfig's hash. */
 export function writeConfig(
   ctx: Ctx,
   s: InstallState,
@@ -343,8 +350,11 @@ export async function verifyAt(
       last = e instanceof Error ? e.message : String(e);
     }
     if (attempt >= VERIFY_TRIES) {
+      const cert = s.inputs.hostname
+        ? ` A custom domain's certificate can take several minutes to issue; wait, then run: yarn gitorange install --resume --name ${s.inputs.name}`
+        : '';
       throw new Error(
-        `${url} did not report installation ${s.installationId} at version ${version} within 60 s. Last response: ${last}`
+        `${url} did not report installation ${s.installationId} at version ${version} within 60 s. Last response: ${last}${cert}`
       );
     }
     await ctx.sleep(VERIFY_INTERVAL_MS);

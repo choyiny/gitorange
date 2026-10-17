@@ -164,3 +164,14 @@ export function generateWranglerConfig(
   const header = `${MARKER}${s.installationId}). Edit inputs with yarn gitorange, not by hand.`;
   return `${header}\n${text}`;
 }
+
+/**
+ * The text that drift detection hashes: the generated config without its `env` block. A plain
+ * `wrangler deploy` (yarn deploy) deploys only the top level, so editing `env.dev` is not drift.
+ */
+export function deployedPart(text: string): string {
+  return applyEdits(
+    text,
+    modify(text, ['env'], undefined, { formattingOptions: FORMAT })
+  );
+}

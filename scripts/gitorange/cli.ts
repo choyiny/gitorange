@@ -1,11 +1,14 @@
 // `yarn gitorange <command>`: the user-facing installer (spec §2–§6). Every outside effect comes in
 // through `Deps`, so tests drive `main` with fakes; the real wiring is at the bottom.
-import { join } from 'node:path';
+import { realpathSync } from 'node:fs';
+import { join, resolve } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { parseArgs } from 'node:util';
 import { install, resumeInstalled, type Ctx, type Optional } from './apply.ts';
-import { OPTIONAL_ITEMS } from './apply-steps.ts';
+import { assertConfigWritable, OPTIONAL_ITEMS } from './apply-steps.ts';
 import { restCloudflare, type Cloudflare } from './cloudflare.ts';
 import { clackIo, collect, type Io } from './collect.ts';
+import { ConfigConflict } from './config.ts';
 import { installationIdOf, resourceNames, validateName } from './names.ts';
 import { observe } from './observe.ts';
 import { computePlan, formatPlan } from './plan.ts';
@@ -403,7 +406,7 @@ async function collectOptional(deps: Deps, s: InstallState): Promise<Optional> {
         [
           '',
           'Optional: R2 upload keys for Git LFS and the Actions cache.',
-          `Create an R2 API token (Object Read & Write) scoped to ${n.lfs}, ${n.actionsLogs} and ${n.actionsCache}:`,
+          `Create an R2 API token (Object Read & Write); it may cover all buckets or just ${n.lfs}, ${n.actionsLogs} and ${n.actionsCache}:`,
           `  ${r2TokenLink(s.accountId, [n.lfs, n.actionsLogs, n.actionsCache])}`,
           `Leave empty to skip (${later}).`,
         ].join('\n')
@@ -565,6 +568,14 @@ async function runInstall(f: InstallFlags, deps: Deps): Promise<number> {
     const installed = s.status === 'installed';
 
     if (f.plan) {
+      try {
+        assertConfigWritable(ctx);
+      } catch (e) {
+        if (!(e instanceof ConfigConflict)) throw e;
+        io.print(
+          '\nwrangler.jsonc was written by hand: apply will refuse until you move it aside (e.g. `mv wrangler.jsonc wrangler.jsonc.hand`).'
+        );
+      }
       io.print(`\nPlan ${plan.digest}\n\nTo apply it:`);
       // An installed resume applies no plan (resumeInstalled), so its command carries no digest.
       io.print(
@@ -612,7 +623,28 @@ async function runInstall(f: InstallFlags, deps: Deps): Promise<number> {
   }
 }
 
-if (import.meta.main) {
+/**
+ * Whether this module is the program being run. `import.meta.main` exists from Node 22.18/24.2;
+ * where it is undefined (an older Node), compare the script path instead.
+ */
+export function isEntry(
+  main: boolean | undefined,
+  argv1: string | undefined,
+  url: string
+): boolean {
+  if (main !== undefined) return main;
+  if (argv1 === undefined) return false;
+  const real = (p: string) => {
+    try {
+      return realpathSync(p);
+    } catch {
+      return resolve(p);
+    }
+  };
+  return real(argv1) === real(fileURLToPath(url));
+}
+
+if (isEntry(import.meta.main, process.argv[1], import.meta.url)) {
   const cwd = process.cwd();
   const deps: Deps = {
     io: clackIo,

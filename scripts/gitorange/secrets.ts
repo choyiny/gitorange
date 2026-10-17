@@ -52,8 +52,8 @@ export async function withSecretsFile<T>(
 
 /**
  * Prefilled R2 API-token page (the form void's platform-setup.ts builds): an account token with
- * Object Read & Write preselected, so a read-only token cannot slip past checkR2Keys. The
- * caller prints which buckets to scope it to.
+ * Object Read & Write preselected, so a read-only token cannot slip past checkR2Keys. The form
+ * starts at all buckets; the caller says the token may cover all buckets or just this install's.
  */
 export function r2TokenLink(accountId: string, _buckets: string[]): string {
   return (

@@ -164,11 +164,12 @@ export async function install(
   let codeDeployed = false;
   let setup: SetupStatus = {};
 
+  // Before the lock and the draft: a hand-written wrangler.jsonc leaves nothing behind.
+  assertConfigWritable(ctx);
   const release = acquireLock(ctx.dir, s.installationId);
   try {
     // 1. Draft saved, lock held; the plan is recomputed against Cloudflare as it is now.
     save(s);
-    assertConfigWritable(ctx);
     const desired = desiredOf(s);
     let obs: Observed = await observe(ctx.cf, acct, s.names);
     const plan = computePlan(desired, obs, s);

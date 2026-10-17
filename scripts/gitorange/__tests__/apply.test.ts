@@ -583,6 +583,8 @@ describe('install', () => {
     expect(readFileSync(join(cwd, 'wrangler.jsonc'), 'utf8')).toBe(
       '{ "name": "mine" }\n'
     );
+    // No state file or lock is left behind.
+    expect(existsSync(dir)).toBe(false);
   });
 
   it('rejected R2 keys stop before the deploy', async () => {
@@ -714,6 +716,25 @@ describe('verify', () => {
     expect(h.slept.length).toBe(12);
   });
 
+  it('on a custom hostname, says the certificate may still be issuing', async () => {
+    const h = harness({
+      wellKnown: () => {
+        throw new TypeError('fetch failed');
+      },
+    });
+    const s = freshState();
+    const custom = {
+      ...s,
+      inputs: { ...s.inputs, hostname: 'git.example.com', workersDev: false },
+    };
+    const err = (await verify(h.ctx, custom).catch((e: Error) => e)) as Error;
+    expect(err.message).toContain(
+      "A custom domain's certificate can take several minutes to issue; wait, then run: yarn gitorange install --resume --name acme"
+    );
+    const plain = (await verify(h.ctx, s).catch((e: Error) => e)) as Error;
+    expect(plain.message).not.toContain('certificate');
+  });
+
   it('fails when setup is open without a code', async () => {
     const h = harness({
       setupStatus: { setupRequired: true, codeRequired: false },
@@ -726,6 +747,25 @@ describe('verify', () => {
       setupStatus: { setupRequired: false, codeRequired: false },
     });
     await expect(verify(h.ctx, freshState())).resolves.toBeUndefined();
+  });
+});
+
+describe('config hash', () => {
+  it('covers the deployed (top-level) config, not the env block', async () => {
+    const h = harness();
+    const s = await install(h.ctx, { state: freshState(), ...noOptional });
+    const path = join(cwd, 'wrangler.jsonc');
+    const before = renderConfig(h.ctx, s, VERSION).hash;
+    expect(before).toBe(s.deployedConfigHash);
+    const text = readFileSync(path, 'utf8');
+    writeFileSync(
+      path,
+      text.replace('"WORKER_NAME": "gitorange-dev"', '"WORKER_NAME": "my-dev"')
+    );
+    expect(readFileSync(path, 'utf8')).toContain('"WORKER_NAME": "my-dev"');
+    expect(renderConfig(h.ctx, s, VERSION).hash).toBe(before);
+    // A top-level change still counts.
+    expect(renderConfig(h.ctx, s, 'fedcba654321').hash).not.toBe(before);
   });
 });
 

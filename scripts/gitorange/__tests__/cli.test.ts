@@ -11,7 +11,13 @@ import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import type { Ctx } from '../apply.ts';
 import { renderConfig } from '../apply-steps.ts';
-import { applyCommand, main, resolveToken, type Deps } from '../cli.ts';
+import {
+  applyCommand,
+  isEntry,
+  main,
+  resolveToken,
+  type Deps,
+} from '../cli.ts';
 import type { Io } from '../collect.ts';
 import { installationIdOf, resourceNames } from '../names.ts';
 import type { RunResult } from '../runner.ts';
@@ -266,6 +272,27 @@ describe('install', () => {
     expect(existsSync(join(cwd, 'wrangler.jsonc'))).toBe(false);
     expect(h.cf()!.calls.filter((c) => MUTATING.includes(c.method))).toEqual(
       []
+    );
+  });
+
+  it('--plan warns that a hand-written wrangler.jsonc blocks the apply', async () => {
+    writeFileSync(join(cwd, 'wrangler.jsonc'), '{ "name": "mine" }\n');
+    const h = harness();
+    expect(await main(['install', '--plan', ...FLAGS], h.deps)).toBe(0);
+    expect(h.text()).toContain(
+      'wrangler.jsonc was written by hand: apply will refuse until you move it aside'
+    );
+    const clean = harness();
+    rmSync(join(cwd, 'wrangler.jsonc'));
+    await main(['install', '--plan', ...FLAGS], clean.deps);
+    expect(clean.text()).not.toContain('written by hand');
+  });
+
+  it('the R2 token text matches the link (all buckets or just these three)', async () => {
+    const h = harness({ tty: true, prompts: ['', ''] });
+    await main(['install', '--yes', ...FLAGS], h.deps);
+    expect(h.text()).toContain(
+      'Create an R2 API token (Object Read & Write); it may cover all buckets or just acme-lfs, acme-actions-logs and acme-actions-cache:'
     );
   });
 
@@ -655,5 +682,20 @@ describe('applyCommand', () => {
     expect(applyCommand(s, false, 'abc')).toBe(
       `yarn gitorange install --name acme --account ${ACCOUNT} --workers-dev --from-email 'o'\\''brien+git@example.com' --expect-plan abc --yes`
     );
+  });
+});
+
+describe('isEntry', () => {
+  const url = 'file:///repo/scripts/gitorange/cli.ts';
+  it('uses import.meta.main when the runtime has it', () => {
+    expect(isEntry(true, undefined, url)).toBe(true);
+    expect(isEntry(false, '/repo/scripts/gitorange/cli.ts', url)).toBe(false);
+  });
+  it('falls back to comparing argv[1] on Node without import.meta.main', () => {
+    expect(isEntry(undefined, '/repo/scripts/gitorange/cli.ts', url)).toBe(
+      true
+    );
+    expect(isEntry(undefined, '/repo/other.ts', url)).toBe(false);
+    expect(isEntry(undefined, undefined, url)).toBe(false);
   });
 });
