@@ -47,6 +47,38 @@ async function guard(
   }
 }
 
+/**
+ * Parses the cli-table3 output of `wrangler email sending list` (header zone|name|enabled|tag, cells split by
+ * a box-drawing or ASCII bar). Returns null when no header with `name` and `enabled` is found.
+ */
+export function parseEmailTable(
+  out: string
+): { name: string; enabled: string }[] | null {
+  // eslint-disable-next-line no-control-regex
+  const lines = out.replace(/\u001b\[[0-9;]*m/g, '').split('\n');
+  let name = -1;
+  let enabled = -1;
+  const rows: { name: string; enabled: string }[] = [];
+  for (const line of lines) {
+    if (!/[│|]/.test(line)) continue;
+    const cells = line
+      .split(/[│|]/)
+      .slice(1, -1)
+      .map((c) => c.trim());
+    if (name < 0) {
+      const lower = cells.map((c) => c.toLowerCase());
+      if (lower.includes('name') && lower.includes('enabled')) {
+        name = lower.indexOf('name');
+        enabled = lower.indexOf('enabled');
+      }
+      continue;
+    }
+    if (cells.length > Math.max(name, enabled))
+      rows.push({ name: cells[name], enabled: cells[enabled] });
+  }
+  return name < 0 ? null : rows;
+}
+
 const one = (check: string, message: string, fix: string): Outcome => ({
   failures: [{ check, message, fix }],
 });
@@ -93,6 +125,7 @@ export async function preflight(
           await cf.listR2(a);
           return { failures: [] };
         } catch (e) {
+          // 10042 is unverified (not in wrangler's source); the generic r2 failure below keeps the activation link anyway.
           if (e instanceof CloudflareError && e.codes.includes(10042))
             return one(
               'r2',
@@ -152,6 +185,7 @@ export async function preflight(
             message: `The zone ${z.name} is ${z.status}, not active.`,
             fix: 'Finish the zone setup (point the registrar at Cloudflare nameservers) and wait until it is active.',
           });
+        // Only custom domains are checked, not routes: a hostname owned by another worker's route is not detected.
         const taken = (await cf.workerDomains(a)).find(
           (d) =>
             d.hostname.toLowerCase() === host.toLowerCase() &&
@@ -188,15 +222,31 @@ export async function preflight(
             `Could not list Email Sending domains: ${res.stderr.split('\n')[0] || `exit ${res.code}`}`,
             fix
           );
-        const listed = res.stdout
-          .toLowerCase()
-          .split(/[^a-z0-9.-]+/)
-          .some((t) => t.replace(/^\.+|\.+$/g, '') === domain);
+        const table = parseEmailTable(res.stdout);
+        if (table === null) {
+          if (/No sending subdomains found/i.test(res.stdout))
+            return one(
+              'email',
+              `The sender domain ${domain} is not set up for Email Sending.`,
+              fix
+            );
+          const first =
+            res.stdout.split('\n').find((l) => l.trim()) ?? '(empty output)';
+          return one(
+            'email',
+            `Could not read the Email Sending list: ${first.trim()}`,
+            fix
+          );
+        }
+        const listed = table.some(
+          (r) =>
+            r.name.toLowerCase() === domain && /^(yes|true)$/i.test(r.enabled)
+        );
         return listed
           ? { failures: [] }
           : one(
               'email',
-              `The sender domain ${domain} is not set up for Email Sending.`,
+              `The sender domain ${domain} is not listed and enabled for Email Sending.`,
               fix
             );
       },

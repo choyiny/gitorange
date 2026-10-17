@@ -3,7 +3,20 @@ import { CloudflareError } from '../cloudflare.ts';
 import { preflight } from '../preflight.ts';
 import { fakeCloudflare, fakeRunner } from './fakes.ts';
 
-const okRunner = (emailOut = 'mail.example.com\n') =>
+const table = (rows: [string, string, string][]) =>
+  [
+    '┌──────────────┬──────────────────┬─────────┬──────────┐',
+    '│ zone         │ name             │ enabled │ tag      │',
+    ...rows.flatMap(([z, n, e]) => [
+      '├──────────────┼──────────────────┼─────────┼──────────┤',
+      `│ ${z} │ ${n} │ ${e} │ abc123   │`,
+    ]),
+    '└──────────────┴──────────────────┴─────────┴──────────┘',
+  ].join('\n');
+
+const okRunner = (
+  emailOut = table([['example.com', 'mail.example.com', 'yes']])
+) =>
   fakeRunner({
     docker: () => ({ code: 0, stdout: '27.0\n', stderr: '' }),
     yarn: () => ({ code: 0, stdout: emailOut, stderr: '' }),
@@ -87,15 +100,39 @@ describe('preflight', () => {
 
   it('matches the sender domain as a whole entry, not a substring', async () => {
     const cf = fakeCloudflare({ subdomain: 'me' });
-    const r = await preflight(cf, okRunner('notmail.example.com\n'), input);
+    const r = await preflight(
+      cf,
+      okRunner(table([['example.com', 'notmail.example.com', 'yes']])),
+      input
+    );
     expect(r.failures.map((f) => f.check)).toEqual(['email']);
     expect(r.failures[0].fix).toContain('Email Service');
     const hit = await preflight(
       cf,
-      okRunner('| MAIL.Example.com | verified |\n'),
+      okRunner(table([['example.com', 'MAIL.Example.com', 'yes']])),
       input
     );
     expect(hit.failures).toEqual([]);
+  });
+
+  it('does not pass on a zone-column match, a disabled row or unreadable output', async () => {
+    const cf = fakeCloudflare({ subdomain: 'me' });
+    const bare = { ...input, fromEmail: 'noreply@example.com' };
+    const zoneOnly = await preflight(
+      cf,
+      okRunner(table([['example.com', 'mail.example.com', 'yes']])),
+      bare
+    );
+    expect(zoneOnly.failures.map((f) => f.check)).toEqual(['email']);
+    const disabled = await preflight(
+      cf,
+      okRunner(table([['example.com', 'mail.example.com', 'no']])),
+      input
+    );
+    expect(disabled.failures.map((f) => f.check)).toEqual(['email']);
+    const junk = await preflight(cf, okRunner('mail.example.com\n'), input);
+    expect(junk.failures[0].message).toContain('Could not read');
+    expect(junk.failures[0].message).toContain('mail.example.com');
   });
 
   it('reports a failing email list command with stderr', async () => {
@@ -127,13 +164,21 @@ describe('preflight', () => {
   it('reports docker exit 1 and a docker that cannot start', async () => {
     const down = fakeRunner({
       docker: () => ({ code: 1, stdout: '', stderr: 'nope' }),
-      yarn: () => ({ code: 0, stdout: 'mail.example.com', stderr: '' }),
+      yarn: () => ({
+        code: 0,
+        stdout: table([['example.com', 'mail.example.com', 'yes']]),
+        stderr: '',
+      }),
     });
     const a = await preflight(fakeCloudflare({ subdomain: 'me' }), down, input);
     expect(a.failures.map((f) => f.check)).toEqual(['docker']);
     const missing = fakeRunner({
       docker: () => Promise.reject(new Error('spawn docker ENOENT')),
-      yarn: () => ({ code: 0, stdout: 'mail.example.com', stderr: '' }),
+      yarn: () => ({
+        code: 0,
+        stdout: table([['example.com', 'mail.example.com', 'yes']]),
+        stderr: '',
+      }),
     });
     const b = await preflight(
       fakeCloudflare({ subdomain: 'me' }),
