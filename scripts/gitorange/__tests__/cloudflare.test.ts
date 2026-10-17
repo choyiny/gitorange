@@ -43,9 +43,45 @@ describe('restCloudflare', () => {
     expect(err.message).not.toContain('Bearer');
   });
 
+  it('listAccounts sends per_page=50; Artifacts and workers/domains send none', async () => {
+    const acc = fakeFetch(() => ok([]));
+    await restCloudflare('t', acc.fetch, noSleep).listAccounts();
+    expect(acc.calls[0]!.url.searchParams.get('per_page')).toBe('50');
+    const art = fakeFetch(() => ok([]));
+    const cf = restCloudflare('t', art.fetch, noSleep);
+    await cf.listArtifactsNamespaces('a');
+    await cf.workerDomains('a');
+    expect(art.calls.map((c) => c.url.searchParams.has('per_page'))).toEqual([
+      false,
+      false,
+    ]);
+  });
+
+  it('listR2 follows result_info.cursor across two pages', async () => {
+    const { fetch, calls } = fakeFetch((c) =>
+      c.url.searchParams.get('cursor') === 'c1'
+        ? ok({ buckets: [{ name: 'b2' }] }, {})
+        : ok({ buckets: [{ name: 'b1' }] }, { cursor: 'c1' })
+    );
+    expect(await restCloudflare('t', fetch, noSleep).listR2('a')).toEqual([
+      'b1',
+      'b2',
+    ]);
+    expect(calls).toHaveLength(2);
+    expect(calls[0]!.url.searchParams.get('per_page')).toBe('1000');
+  });
+
+  it('stops when the cursor repeats', async () => {
+    const { fetch, calls } = fakeFetch(() =>
+      ok({ buckets: [{ name: 'b' }] }, { cursor: 'same' })
+    );
+    await restCloudflare('t', fetch, noSleep).listR2('a');
+    expect(calls).toHaveLength(2);
+  });
+
   it('concatenates pages', async () => {
     const { fetch, calls } = fakeFetch((c) =>
-      c.url.searchParams.get('page') === '1'
+      c.url.searchParams.get('page') === null
         ? ok([{ uuid: '1', name: 'a' }], { total_pages: 2 })
         : ok([{ uuid: '2', name: 'b' }], { total_pages: 2 })
     );

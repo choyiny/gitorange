@@ -163,28 +163,33 @@ export function restCloudflare(
     return (await envelope(res, path)).result as T;
   }
 
-  /** GET a list, following result_info pages (page/total_pages) or cursor. */
+  /**
+   * GET a list, following result_info pages (page/total_pages) or cursor. `perPage` is sent only
+   * where the endpoint documents it; the first request carries no page parameter.
+   */
   async function list<T>(
     path: string,
-    query: Record<string, string> = {},
-    pick: (result: unknown) => T[] = (r) => r as T[]
+    opts: { perPage?: number; pick?: (result: unknown) => T[] } = {}
   ): Promise<T[]> {
+    const pick = opts.pick ?? ((r: unknown) => r as T[]);
     const out: T[] = [];
     let page = 1;
     let cursor: string | undefined;
     for (;;) {
-      const q = { ...query, per_page: '100' } as Record<string, string>;
+      const q: Record<string, string> = {};
+      if (opts.perPage) q.per_page = String(opts.perPage);
       if (cursor) q.cursor = cursor;
-      else q.page = String(page);
+      else if (page > 1) q.page = String(page);
       const res = await send('GET', path, { query: q });
       const env = await envelope(res, path);
       out.push(...pick(env.result));
       const info = env.result_info;
-      if (info?.cursor) {
+      // A repeated cursor means the server is not advancing; stop rather than loop forever.
+      if (info?.cursor && info.cursor !== cursor) {
         cursor = info.cursor;
         continue;
       }
-      if (info?.total_pages && page < info.total_pages) {
+      if (!info?.cursor && info?.total_pages && page < info.total_pages) {
         page++;
         continue;
       }
@@ -206,9 +211,11 @@ export function restCloudflare(
     `/accounts/${a}/r2/buckets/${enc(bucket)}/objects/${key.split('/').map(enc).join('/')}`;
 
   return {
-    // GET /accounts (Cloudflare API docs).
+    // GET /accounts (Cloudflare API docs; per_page max 50).
     async listAccounts() {
-      const rows = await list<{ id: string; name: string }>('/accounts');
+      const rows = await list<{ id: string; name: string }>('/accounts', {
+        perPage: 50,
+      });
       return rows.map((r) => ({ id: r.id, name: r.name }));
     },
 
@@ -253,7 +260,8 @@ export function restCloudflare(
     // GET /accounts/{a}/d1/database (wrangler cloudflare@5.2 resources/d1/database).
     async listD1(a) {
       const rows = await list<{ uuid: string; name: string }>(
-        `/accounts/${a}/d1/database`
+        `/accounts/${a}/d1/database`,
+        { perPage: 100 }
       );
       return rows.map((r) => ({ uuid: r.uuid, name: r.name }));
     },
@@ -280,11 +288,11 @@ export function restCloudflare(
 
     // GET /accounts/{a}/r2/buckets -> { buckets: [{ name }] } (wrangler src/r2/helpers/bucket.ts listR2Buckets).
     async listR2(a) {
-      const r = await call<{ buckets?: { name: string }[] }>(
-        'GET',
-        `/accounts/${a}/r2/buckets`
-      );
-      return (r.buckets ?? []).map((b) => b.name);
+      const rows = await list<{ name: string }>(`/accounts/${a}/r2/buckets`, {
+        perPage: 1000,
+        pick: (r) => (r as { buckets?: { name: string }[] }).buckets ?? [],
+      });
+      return rows.map((b) => b.name);
     },
 
     // POST /accounts/{a}/r2/buckets {name} (wrangler src/r2/helpers/bucket.ts createR2Bucket). Not retried.
@@ -292,7 +300,7 @@ export function restCloudflare(
       await call('POST', `/accounts/${a}/r2/buckets`, { json: { name } });
     },
 
-    // PUT /accounts/{a}/r2/buckets/{b}/lifecycle {rules} (wrangler putLifecycleRules; rule shape from `r2 bucket lifecycle add`: Age maxAge is seconds). Not retried.
+    // PUT /accounts/{a}/r2/buckets/{b}/lifecycle {rules} (wrangler putLifecycleRules; rule shape from `r2 bucket lifecycle add`: Age maxAge is seconds). Not retried. REPLACES the bucket's whole rule set: use on installer-owned buckets only.
     async putR2Lifecycle(a, bucket, rules) {
       await call('PUT', `/accounts/${a}/r2/buckets/${enc(bucket)}/lifecycle`, {
         json: {
@@ -341,12 +349,13 @@ export function restCloudflare(
     // GET /accounts/{a}/workflows (wrangler `workflows list`, src/workflows/commands/list.ts; fields name, script_name).
     async listWorkflows(a) {
       const rows = await list<{ name: string; script_name: string }>(
-        `/accounts/${a}/workflows`
+        `/accounts/${a}/workflows`,
+        { perPage: 100 }
       );
       return rows.map((r) => ({ name: r.name, scriptName: r.script_name }));
     },
 
-    // GET /accounts/{a}/workers/scripts/{s}/settings -> { bindings: [{ type: 'plain_text', name, text }] } (wrangler cloudflare@5.2 resources/workers/scripts/settings); 404 -> null.
+    // GET /accounts/{a}/workers/scripts/{s}/settings -> { bindings: [{ type: 'plain_text', name, text }] } (wrangler cloudflare@5.2 resources/workers/scripts/settings); 404 -> null. Only plain_text vars are returned, so GITORANGE_INSTALLATION must be written as a string var.
     async workerVars(a, script) {
       const r = await orNull<{
         bindings?: { type: string; name: string; text?: string }[];
@@ -363,7 +372,8 @@ export function restCloudflare(
     // GET /accounts/{a}/workers/durable_objects/namespaces (scripts/do-namespaces.mjs; wrangler listDurableObjects).
     async durableObjectNamespaces(a) {
       const rows = await list<{ id: string; script: string; class: string }>(
-        `/accounts/${a}/workers/durable_objects/namespaces`
+        `/accounts/${a}/workers/durable_objects/namespaces`,
+        { perPage: 1000 }
       );
       return rows.map((r) => ({ id: r.id, script: r.script, class: r.class }));
     },
