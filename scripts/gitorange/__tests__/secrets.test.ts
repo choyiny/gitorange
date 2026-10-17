@@ -21,6 +21,8 @@ describe('setup code', () => {
       setupCodeHash('ABCDEFGHJKMNPQRSTUVW')
     );
     expect(setupCodeHash('ABCDEFGHJKMNPQRSTUVW')).toBe(hex);
+    // Whitespace anywhere is ignored too (a pasted code), as in the Worker.
+    expect(setupCodeHash(' abcd-efgh jkmn-pqrs-tuvw \n')).toBe(hex);
   });
   it('has the documented format', () => {
     for (let i = 0; i < 50; i++)

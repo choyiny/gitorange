@@ -35,7 +35,9 @@ export default function Setup() {
     setError(null);
     try {
       const { code, ...rest } = form;
-      await api.setup(status.data?.codeRequired ? { ...rest, code } : rest);
+      await api.setup(
+        status.data?.codeRequired ? { ...rest, code: code.trim() } : rest
+      );
       const res = await signIn.email({
         email: form.email,
         password: form.password,

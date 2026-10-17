@@ -7,6 +7,7 @@ import { latestSync } from '../usage/sync';
  * secrets are reported as present, missing, or too short.
  */
 import { presign } from './lfs';
+import { setupCodeRequired } from './setup-code';
 import { aiGateway } from './ai-gateway';
 import journal from '../../../migrations/meta/_journal.json?raw';
 
@@ -184,8 +185,7 @@ function secretChecks(ctx: Ctx): SetupCheck[] {
           fix: [],
         }
   );
-  const codeSet =
-    typeof env.SETUP_CODE_HASH === 'string' && env.SETUP_CODE_HASH !== '';
+  const codeSet = setupCodeRequired(env);
   out.push({
     id: 'secret-setup-code',
     category: 'Secrets',

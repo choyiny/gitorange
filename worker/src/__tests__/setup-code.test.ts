@@ -57,6 +57,27 @@ describe('setup code', () => {
     expect(await users(t)).toBe(1);
   });
 
+  it('accepts a pasted code with surrounding and inner whitespace', async () => {
+    const t = await withHash(await setupCodeHash(CODE));
+    expect(await setupCodeHash(' abcd-efgh jkmn-pqrs-tuvw \n')).toBe(
+      await setupCodeHash(CODE)
+    );
+    expect((await post(t, ' abcd-efgh-jkmn-pqrs-tuvw \n')).status).toBe(200);
+    expect(await users(t)).toBe(1);
+  });
+
+  it('Site admin → Setup reports a whitespace-only SETUP_CODE_HASH as not set', async () => {
+    const { runSetupChecks } = await import('../lib/setup-checks');
+    const set = await withHash(await setupCodeHash(CODE));
+    const blank = await withHash('  \n');
+    const detail = async (t: TestEnv) =>
+      (await runSetupChecks(t.env, 'http://test.local')).find(
+        (c) => c.id === 'secret-setup-code'
+      )!.detail;
+    expect(await detail(set)).toMatch(/^Set:/);
+    expect(await detail(blank)).toMatch(/^Not set:/);
+  });
+
   it('an empty SETUP_CODE_HASH counts as unset', async () => {
     const t = await withHash('');
     expect(

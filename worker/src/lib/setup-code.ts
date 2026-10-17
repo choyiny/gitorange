@@ -1,12 +1,12 @@
 /**
  * The one-time setup code. `yarn gitorange install` sets `SETUP_CODE_HASH` (the hash of a code it
  * prints) as a secret; while it is set, the first admin can only be created with the code.
- * The Node CLI computes the same hash: strip dashes, upper-case, SHA-256, lowercase hex.
+ * The Node CLI computes the same hash: strip dashes and whitespace, upper-case, SHA-256, lowercase hex.
  */
 
-/** Lowercase hex SHA-256 of the code with dashes removed and upper-cased. */
+/** Lowercase hex SHA-256 of the code with dashes and whitespace removed, upper-cased. */
 export async function setupCodeHash(code: string): Promise<string> {
-  const normalised = code.replace(/-/g, '').toUpperCase();
+  const normalised = code.replace(/[\s-]/g, '').toUpperCase();
   const digest = await crypto.subtle.digest(
     'SHA-256',
     new TextEncoder().encode(normalised)

@@ -24,10 +24,10 @@ export function generateSetupCode(): string {
   return groups.join('-');
 }
 
-/** Same as worker/src/lib/setup-code.ts: strip dashes, upper-case, SHA-256, lowercase hex. */
+/** Same as worker/src/lib/setup-code.ts: strip dashes and whitespace, upper-case, SHA-256, lowercase hex. */
 export function setupCodeHash(code: string): string {
   return createHash('sha256')
-    .update(code.replace(/-/g, '').toUpperCase())
+    .update(code.replace(/[\s-]/g, '').toUpperCase())
     .digest('hex');
 }
 
