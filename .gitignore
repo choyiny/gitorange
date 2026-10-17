@@ -11,3 +11,6 @@ wrangler.jsonc
 
 # Superpowers subagent-driven-development workspaces
 .superpowers/
+
+# GitOrange installer state
+.gitorange/

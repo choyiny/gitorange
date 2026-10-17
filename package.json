@@ -6,10 +6,11 @@
   "scripts": {
     "dev": "node scripts/dev.mjs",
     "seed:demo": "node scripts/seed-demo.mjs",
+    "gitorange": "node scripts/gitorange/cli.ts",
     "build": "vite build",
     "preview": "vite preview",
     "deploy": "vite build && wrangler deploy",
-    "typecheck": "tsc --noEmit -p tsconfig.app.json && tsc --noEmit -p worker/tsconfig.json",
+    "typecheck": "tsc --noEmit -p tsconfig.app.json && tsc --noEmit -p worker/tsconfig.json && tsc --noEmit -p scripts/gitorange",
     "cf-typegen": "node scripts/cf-typegen.mjs",
     "auth:generate": "npx --yes @better-auth/cli@latest generate --config worker/src/auth/index.ts --output worker/src/db/auth.schema.ts -y",
     "auth:format": "prettier --write worker/src/db/auth.schema.ts",
@@ -19,7 +20,7 @@
     "db:migrate:prod": "wrangler d1 migrations apply DB --remote",
     "db:studio:dev": "drizzle-kit studio",
     "tail": "wrangler tail --format=pretty",
-    "test": "vitest run --config worker/vitest.config.ts --max-workers=1 --no-isolate",
+    "test": "vitest run --config scripts/gitorange/vitest.config.ts && vitest run --config worker/vitest.config.ts --max-workers=1 --no-isolate",
     "test:watch": "vitest --config worker/vitest.config.ts",
     "format": "prettier --write .",
     "format:check": "prettier --check .",
@@ -63,6 +64,7 @@
     "zod": "^4"
   },
   "devDependencies": {
+    "@clack/prompts": "^1.8.1",
     "@cloudflare/vite-plugin": "^1.62.4",
     "@cloudflare/vitest-pool-workers": "^0.22.0",
     "@cloudflare/workers-types": "^4",
@@ -73,6 +75,7 @@
     "@vitejs/plugin-react-swc": "^3",
     "drizzle-kit": "^0.31",
     "husky": "^9",
+    "jsonc-parser": "^3.3.1",
     "lint-staged": "^16",
     "prettier": "^3",
     "typescript": "^5.8",
