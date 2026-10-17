@@ -1,17 +1,578 @@
-const USAGE = `Usage: yarn gitorange <command>
+// `yarn gitorange <command>`: the user-facing installer (spec §2–§6). Every outside effect comes in
+// through `Deps`, so tests drive `main` with fakes; the real wiring is at the bottom.
+import { join } from 'node:path';
+import { parseArgs } from 'node:util';
+import { install, resumeInstalled, type Ctx, type Optional } from './apply.ts';
+import { OPTIONAL_ITEMS } from './apply-steps.ts';
+import { restCloudflare, type Cloudflare } from './cloudflare.ts';
+import { clackIo, type Io } from './collect.ts';
+import { installationIdOf, resourceNames, validateName } from './names.ts';
+import { observe } from './observe.ts';
+import { computePlan, formatPlan } from './plan.ts';
+import { preflight } from './preflight.ts';
+import { processRunner, type Runner } from './runner.ts';
+import {
+  analyticsTokenLink,
+  checkAnalyticsToken,
+  r2TokenLink,
+} from './secrets.ts';
+import {
+  hasStep,
+  listStates,
+  newState,
+  readState,
+  type InstallState,
+} from './state.ts';
+import { findState, status, UsageError } from './status.ts';
+
+const USAGE = `Usage: yarn gitorange <command> [options]
 
 Commands:
   install    Create or update a GitOrange installation on Cloudflare
+  status     Show a recorded installation and check that it answers
+
+install options:
+  --name <name>          Installation name (default: gitorange)
+  --account <id|name>    Cloudflare account (not needed when the login sees one)
+  --hostname <host>      Serve on a custom hostname in one of the account's zones
+  --workers-dev          Serve on <name>.<subdomain>.workers.dev instead
+  --from-email <address> Invitation sender (a domain set up for Email Sending)
+  --no-email             No invitation email (invite links still work)
+  --plan                 Only show what would change, then print the apply command
+  --expect-plan <digest> Apply only if the plan still has this digest
+  --resume               Continue a recorded installation (or add skipped credentials)
+  --yes                  Apply without asking (required when not in a terminal)
+
+  Environment: CLOUDFLARE_API_TOKEN (else wrangler's login), GITORANGE_R2_ACCESS_KEY_ID,
+  GITORANGE_R2_SECRET_ACCESS_KEY, GITORANGE_CF_ANALYTICS_TOKEN.
+
+status options:
+  --name <name>          Which installation (default: the only one recorded)
 `;
 
-export async function main(argv: string[]): Promise<number> {
-  const [command] = argv;
+const DEFAULT_NAME = 'gitorange';
+
+export type Deps = Omit<Ctx, 'cf'> & {
+  env: Record<string, string | undefined>;
+  /** The Cloudflare API token; throws with what to do when there is none. */
+  token(): Promise<string>;
+  cloudflare(token: string): Cloudflare;
+};
+
+type InstallFlags = {
+  name?: string;
+  account?: string;
+  hostname?: string;
+  'workers-dev'?: boolean;
+  'from-email'?: string;
+  'no-email'?: boolean;
+  plan?: boolean;
+  'expect-plan'?: string;
+  resume?: boolean;
+  yes?: boolean;
+};
+
+const INSTALL_OPTIONS = {
+  name: { type: 'string' },
+  account: { type: 'string' },
+  hostname: { type: 'string' },
+  'workers-dev': { type: 'boolean' },
+  'from-email': { type: 'string' },
+  'no-email': { type: 'boolean' },
+  plan: { type: 'boolean' },
+  'expect-plan': { type: 'string' },
+  resume: { type: 'boolean' },
+  yes: { type: 'boolean' },
+} as const;
+
+const HOST_RE = /^(?=.{1,253}$)([a-z0-9]([a-z0-9-]*[a-z0-9])?\.)+[a-z]{2,}$/i;
+const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+
+const hostProblem = (v: string) =>
+  HOST_RE.test(v)
+    ? undefined
+    : `${v} is not a hostname (like git.example.com).`;
+const emailProblem = (v: string) =>
+  EMAIL_RE.test(v) ? undefined : `${v} is not an email address.`;
+
+/** The token: CLOUDFLARE_API_TOKEN, else the last line of `yarn -s wrangler auth token`. */
+export async function resolveToken(
+  env: Record<string, string | undefined>,
+  runner: Runner
+): Promise<string> {
+  if (env.CLOUDFLARE_API_TOKEN) return env.CLOUDFLARE_API_TOKEN;
+  let line = '';
+  try {
+    const r = await runner.run('yarn', ['-s', 'wrangler', 'auth', 'token']);
+    if (r.code === 0) line = r.stdout.trim().split('\n').pop()?.trim() ?? '';
+  } catch {
+    // no wrangler: same message
+  }
+  if (!line) throw new Error('Run yarn wrangler login first.');
+  return line;
+}
+
+export async function main(argv: string[], deps: Deps): Promise<number> {
+  const [command, ...rest] = argv;
+  const { io } = deps;
   if (command === undefined || command === '--help' || command === '-h') {
-    process.stdout.write(USAGE);
+    io.print(USAGE);
     return command === undefined ? 2 : 0;
   }
-  process.stderr.write(`Unknown command: ${command}\n\n${USAGE}`);
+  try {
+    if (command === 'install') {
+      const { values } = parseArgs({
+        args: rest,
+        options: INSTALL_OPTIONS,
+        strict: true,
+        allowPositionals: false,
+      });
+      return await runInstall(values, deps);
+    }
+    if (command === 'status') {
+      const { values } = parseArgs({
+        args: rest,
+        options: { name: { type: 'string' } },
+        strict: true,
+        allowPositionals: false,
+      });
+      return await status(values, deps);
+    }
+  } catch (e) {
+    if (e instanceof UsageError || isParseArgsError(e)) {
+      io.print(`${(e as Error).message}\n\n${USAGE}`);
+      return 2;
+    }
+    throw e;
+  }
+  io.print(`Unknown command: ${command}\n\n${USAGE}`);
   return 2;
 }
 
-process.exitCode = await main(process.argv.slice(2));
+function isParseArgsError(e: unknown): boolean {
+  const code = (e as { code?: string } | null)?.code;
+  return typeof code === 'string' && code.startsWith('ERR_PARSE_ARGS');
+}
+
+type Resolved = {
+  name: string;
+  accountId: string;
+  hostname: string | null;
+  fromEmail: string | null;
+};
+
+/** Checks that need no network: conflicting or malformed flags are usage errors. */
+function checkFlags(f: InstallFlags): void {
+  if (f.hostname !== undefined && f['workers-dev']) {
+    throw new UsageError('Pass either --hostname or --workers-dev, not both.');
+  }
+  if (f['from-email'] !== undefined && f['no-email']) {
+    throw new UsageError('Pass either --from-email or --no-email, not both.');
+  }
+  const bad =
+    (f.name !== undefined ? (validateName(f.name) ?? undefined) : undefined) ??
+    (f.hostname !== undefined ? hostProblem(f.hostname) : undefined) ??
+    (f['from-email'] !== undefined ? emailProblem(f['from-email']) : undefined);
+  if (bad) throw new UsageError(bad);
+}
+
+async function resolveAccount(
+  cf: Cloudflare,
+  io: Io,
+  flag: string | undefined
+): Promise<string> {
+  const accounts = await cf.listAccounts();
+  if (accounts.length === 0) {
+    throw new Error('This Cloudflare login sees no accounts.');
+  }
+  if (flag !== undefined) {
+    const hit =
+      accounts.find((a) => a.id === flag) ??
+      accounts.find((a) => a.name.toLowerCase() === flag.toLowerCase());
+    if (!hit) {
+      throw new Error(
+        `No account matches --account ${flag}. This login sees: ${accounts.map((a) => `${a.name} (${a.id})`).join(', ')}.`
+      );
+    }
+    return hit.id;
+  }
+  if (accounts.length === 1) return accounts[0]!.id;
+  if (!io.tty) {
+    throw new UsageError(
+      '--account is required when not running in a terminal (this login sees more than one account).'
+    );
+  }
+  return io.select(
+    'Cloudflare account',
+    accounts.map((a) => ({ value: a.id, label: `${a.name} (${a.id})` }))
+  );
+}
+
+/** Spec §2 order: name → account → hostname → sender. Flags first, then a prompt in a terminal. */
+async function resolveInputs(
+  f: InstallFlags,
+  cf: Cloudflare,
+  io: Io
+): Promise<Resolved> {
+  let name = f.name;
+  if (name === undefined) {
+    if (io.tty) {
+      const v = await io.prompt('Installation name', {
+        initial: DEFAULT_NAME,
+        validate: (x) => validateName(x) ?? undefined,
+      });
+      if (v === null) throw new Error('Cancelled.');
+      name = v;
+    } else {
+      name = DEFAULT_NAME;
+    }
+  }
+
+  const accountId = await resolveAccount(cf, io, f.account);
+
+  let hostname: string | null = f.hostname ?? null;
+  if (hostname === null && !f['workers-dev']) {
+    if (!io.tty) {
+      throw new UsageError(
+        '--hostname <host> or --workers-dev is required when not running in a terminal.'
+      );
+    }
+    const where = await io.select('Where should it be served?', [
+      {
+        value: 'workers.dev',
+        label: `workers.dev (${name}.<subdomain>.workers.dev)`,
+      },
+      { value: 'custom', label: 'A custom hostname on a zone in this account' },
+    ]);
+    if (where === 'custom') {
+      const v = await io.prompt('Hostname (like git.example.com)', {
+        validate: hostProblem,
+      });
+      if (v === null) throw new Error('Cancelled.');
+      hostname = v;
+    }
+  }
+
+  let fromEmail: string | null = f['from-email'] ?? null;
+  if (fromEmail === null && !f['no-email']) {
+    if (!io.tty) {
+      throw new UsageError(
+        '--from-email <address> or --no-email is required when not running in a terminal.'
+      );
+    }
+    const v = await io.prompt(
+      'Invitation sender email (empty for none: invite links still work)',
+      { validate: (x) => (x === '' ? undefined : emailProblem(x)) }
+    );
+    if (v === null) throw new Error('Cancelled.');
+    fromEmail = v === '' ? null : v;
+  }
+  return {
+    name,
+    accountId,
+    hostname: hostname?.toLowerCase() ?? null,
+    fromEmail,
+  };
+}
+
+/** `--resume` without `--name`: the only unfinished installation, else the only one. */
+function resumable(dir: string, name: string | undefined): InstallState | null {
+  if (name !== undefined) return findState(dir, name);
+  const all = listStates(dir);
+  const unfinished = all.filter((s) => s.status !== 'installed');
+  if (unfinished.length === 1) return unfinished[0]!;
+  if (unfinished.length > 1 || all.length > 1) {
+    throw new UsageError(
+      `More than one installation is recorded in ${dir} (${all.map((s) => s.inputs.name).join(', ')}): pass --name.`
+    );
+  }
+  return all[0] ?? null;
+}
+
+/** The flags given that disagree with what `s` recorded. */
+async function differences(
+  f: InstallFlags,
+  s: InstallState,
+  cf: Cloudflare
+): Promise<string[]> {
+  const out: string[] = [];
+  if (f.account !== undefined && f.account !== s.accountId) {
+    const hit = (await cf.listAccounts()).find(
+      (a) => a.name.toLowerCase() === f.account!.toLowerCase()
+    );
+    if (hit?.id !== s.accountId) out.push('account');
+  }
+  if (
+    (f.hostname !== undefined &&
+      f.hostname.toLowerCase() !== s.inputs.hostname) ||
+    (f['workers-dev'] && !s.inputs.workersDev)
+  ) {
+    out.push('hostname');
+  }
+  if (
+    (f['from-email'] !== undefined && f['from-email'] !== s.inputs.fromEmail) ||
+    (f['no-email'] && s.inputs.fromEmail !== null)
+  ) {
+    out.push('from-email');
+  }
+  return out;
+}
+
+/** The apply command for a reviewed plan: the resolved inputs as flags, never a secret. */
+function applyCommand(
+  s: InstallState,
+  resume: boolean,
+  digest: string
+): string {
+  const i = s.inputs;
+  return [
+    'yarn gitorange install',
+    ...(resume ? ['--resume'] : []),
+    `--name ${i.name}`,
+    `--account ${s.accountId}`,
+    i.hostname ? `--hostname ${i.hostname}` : '--workers-dev',
+    i.fromEmail ? `--from-email ${i.fromEmail}` : '--no-email',
+    `--expect-plan ${digest}`,
+    '--yes',
+  ].join(' ');
+}
+
+/** The optional items still to offer: all before the first deploy, else only those skipped. */
+function toOffer(s: InstallState): Set<string> {
+  const fresh = s.status !== 'installed' && !hasStep(s, 'deploy:1');
+  return new Set(
+    OPTIONAL_ITEMS.map((i) => i.id).filter(
+      (id) => fresh || s.skipped.includes(id)
+    )
+  );
+}
+
+/** Spec §2: env first, else (in a terminal) a link and masked prompts; empty skips. */
+async function collectOptional(deps: Deps, s: InstallState): Promise<Optional> {
+  const { io, env } = deps;
+  const offer = toOffer(s);
+  const optional: Optional = {};
+  const later = `add it later with: yarn gitorange install --resume --name ${s.inputs.name}`;
+
+  if (offer.has('r2-keys')) {
+    const id = env.GITORANGE_R2_ACCESS_KEY_ID;
+    const secret = env.GITORANGE_R2_SECRET_ACCESS_KEY;
+    if (id || secret) {
+      if (!id || !secret) {
+        throw new UsageError(
+          'Set both GITORANGE_R2_ACCESS_KEY_ID and GITORANGE_R2_SECRET_ACCESS_KEY, or neither.'
+        );
+      }
+      optional.r2 = { id, secret };
+    } else if (io.tty) {
+      const n = s.names;
+      io.print(
+        [
+          '',
+          'Optional: R2 upload keys for Git LFS and the Actions cache.',
+          `Create an R2 API token (Object Read & Write) scoped to ${n.lfs}, ${n.actionsLogs} and ${n.actionsCache}:`,
+          `  ${r2TokenLink(s.accountId, [n.lfs, n.actionsLogs, n.actionsCache])}`,
+          `Leave empty to skip (${later}).`,
+        ].join('\n')
+      );
+      const keyId = await io.prompt('R2 access key ID', { mask: true });
+      const keySecret = keyId
+        ? await io.prompt('R2 secret access key', { mask: true })
+        : null;
+      if (keyId && keySecret) optional.r2 = { id: keyId, secret: keySecret };
+    }
+  }
+
+  if (offer.has('analytics-token')) {
+    const check = (t: string) =>
+      checkAnalyticsToken(s.accountId, t, deps.fetchImpl);
+    const fromEnv = env.GITORANGE_CF_ANALYTICS_TOKEN;
+    if (fromEnv) {
+      const problem = await check(fromEnv);
+      if (problem) throw new Error(`GITORANGE_CF_ANALYTICS_TOKEN: ${problem}`);
+      optional.analytics = fromEnv;
+    } else if (io.tty) {
+      io.print(
+        [
+          '',
+          'Optional: a token for the Usage & cost page (Account Analytics, read).',
+          `  ${analyticsTokenLink(s.accountId, `GitOrange analytics (${s.inputs.name})`)}`,
+          `Leave empty to skip (${later}).`,
+        ].join('\n')
+      );
+      for (let attempt = 1; attempt <= 2; attempt++) {
+        const t = await io.prompt('Analytics API token', { mask: true });
+        if (!t) break;
+        const problem = await check(t);
+        if (!problem) {
+          optional.analytics = t;
+          break;
+        }
+        io.print(
+          attempt === 1
+            ? `${problem} Try again, or leave empty to skip.`
+            : `${problem} Skipped.`
+        );
+      }
+    }
+  }
+  return optional;
+}
+
+async function runInstall(f: InstallFlags, deps: Deps): Promise<number> {
+  const { io } = deps;
+  checkFlags(f);
+  // Review Focus 4: before the token or any Cloudflare call.
+  if (!io.tty && !f.plan && !f.yes) {
+    io.print(
+      'Not running in a terminal: pass --yes to apply (or --plan to only review).'
+    );
+    return 2;
+  }
+
+  let token: string;
+  try {
+    token = await deps.token();
+  } catch (e) {
+    io.print((e as Error).message);
+    return 1;
+  }
+  const { env: _env, token: _t, cloudflare, ...rest } = deps;
+  const ctx: Ctx = { ...rest, cf: cloudflare(token) };
+
+  try {
+    let s: InstallState;
+    let recorded: boolean;
+    if (f.resume) {
+      const found = resumable(deps.dir, f.name);
+      if (!found) {
+        io.print(
+          f.name === undefined
+            ? `No installation found to resume in ${deps.dir}.`
+            : `No installation named ${f.name} found in ${deps.dir}.`
+        );
+        return 1;
+      }
+      const diff = await differences(f, found, ctx.cf);
+      if (diff.length > 0) {
+        io.print(
+          `These options differ from the recorded installation: ${diff.join(', ')}`
+        );
+        return 1;
+      }
+      s = found;
+      recorded = true;
+    } else {
+      const r = await resolveInputs(f, ctx.cf, io);
+      const id = installationIdOf(
+        r.accountId,
+        r.name,
+        r.hostname ?? 'workers.dev'
+      );
+      const existing = readState(deps.dir, id);
+      if (existing) {
+        if (existing.status === 'installed') {
+          io.print(
+            `${r.name} is already installed at ${existing.baseUrl}. Nothing was changed.\n` +
+              `Check it: yarn gitorange status --name ${r.name}\n` +
+              `Add skipped credentials or a lost setup code: yarn gitorange install --resume --name ${r.name}`
+          );
+          return 0;
+        }
+        io.print(
+          `An installation of ${r.name} is recorded with status ${existing.status}. Rerun with --resume: yarn gitorange install --resume --name ${r.name}`
+        );
+        return 1;
+      }
+      // Transient: written only by install(), never by --plan.
+      s = newState({
+        installationId: id,
+        accountId: r.accountId,
+        inputs: {
+          name: r.name,
+          hostname: r.hostname,
+          workersDev: r.hostname === null,
+          fromEmail: r.fromEmail,
+        },
+        names: resourceNames(r.name),
+        baseUrl: '',
+      });
+      recorded = false;
+    }
+
+    const pre = await preflight(ctx.cf, ctx.runner, {
+      accountId: s.accountId,
+      hostname: s.inputs.hostname,
+      workersDev: s.inputs.workersDev,
+      fromEmail: s.inputs.fromEmail,
+      workerName: s.names.worker,
+    });
+    if (pre.failures.length > 0) {
+      io.print('Preflight found problems; nothing was changed.\n');
+      for (const x of pre.failures) io.print(`✗ ${x.message}\n  Fix: ${x.fix}`);
+      return 1;
+    }
+    // A recorded base URL is never recomputed.
+    if (!recorded) {
+      if (!pre.baseUrl) throw new Error('Could not work out the base URL.');
+      s = { ...s, baseUrl: pre.baseUrl };
+    }
+
+    const plan = computePlan(
+      {
+        installationId: s.installationId,
+        ownershipNonce: s.ownershipNonce,
+        names: s.names,
+      },
+      await observe(ctx.cf, s.accountId, s.names),
+      s
+    );
+    io.print(formatPlan(plan, s.inputs, s.baseUrl));
+
+    if (f.plan) {
+      io.print(`\nPlan ${plan.digest}\n\nTo apply it:`);
+      io.print(applyCommand(s, Boolean(f.resume), plan.digest));
+      return 0;
+    }
+
+    const installed = s.status === 'installed';
+    if (!installed && !f.yes && !(await io.confirm('Apply this plan?', true))) {
+      io.print('Nothing was changed.');
+      return 1;
+    }
+    const optional = await collectOptional(deps, s);
+    if (installed) {
+      await resumeInstalled(ctx, s, optional);
+    } else {
+      await install(ctx, {
+        state: s,
+        expectPlan: f['expect-plan'],
+        yes: Boolean(f.yes),
+        optional,
+      });
+    }
+    return 0;
+  } catch (e) {
+    if (e instanceof UsageError) throw e;
+    // A PlanStop's message is the text meant for the person, like every other failure here.
+    io.print((e as Error).message);
+    return 1;
+  }
+}
+
+if (import.meta.main) {
+  const cwd = process.cwd();
+  const deps: Deps = {
+    io: clackIo,
+    env: process.env,
+    runner: processRunner,
+    dir: join(cwd, '.gitorange'),
+    cwd,
+    fetchImpl: fetch,
+    sleep: (ms) => new Promise((r) => setTimeout(r, ms)),
+    now: () => new Date(),
+    token: () => resolveToken(process.env, processRunner),
+    cloudflare: (token) => restCloudflare(token, fetch),
+  };
+  process.exitCode = await main(process.argv.slice(2), deps);
+}
