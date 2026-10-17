@@ -25,6 +25,7 @@ import {
   type SetupStatus,
 } from './apply-steps.ts';
 import { observe, R2_MARKER_KEY, type Observed } from './observe.ts';
+import { withEnv } from './runner.ts';
 import { computePlan, formatPlan, type Desired } from './plan.ts';
 import {
   generateAuthSecret,
@@ -96,8 +97,14 @@ function wrap(e: unknown, step: string, s: InstallState): Error {
   );
 }
 
+/** Every wrangler (and deploy) subprocess works on the recorded account, never one wrangler picks. */
+const onAccount = (ctx: Ctx, s: InstallState): Ctx => ({
+  ...ctx,
+  runner: withEnv(ctx.runner, { CLOUDFLARE_ACCOUNT_ID: s.accountId }),
+});
+
 export async function install(
-  ctx: Ctx,
+  outer: Ctx,
   opts: {
     state: InstallState;
     expectPlan?: string;
@@ -106,6 +113,7 @@ export async function install(
   }
 ): Promise<InstallState> {
   let s = opts.state;
+  const ctx = onAccount(outer, s);
   let step = 'plan';
   let code: string | null = null;
   let optional = opts.optional;
@@ -311,11 +319,12 @@ export async function install(
  * `installed` throughout.
  */
 export async function resumeInstalled(
-  ctx: Ctx,
+  outer: Ctx,
   state: InstallState,
   optional: Optional
 ): Promise<InstallState> {
   let s = state;
+  const ctx = onAccount(outer, s);
   let step = 'config';
   let code: string | null = null;
   let codeDeployed = false;

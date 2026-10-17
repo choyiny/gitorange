@@ -37,3 +37,12 @@ export const processRunner: Runner = {
     });
   },
 };
+
+/** `runner` with `env` added to every command's environment (a command's own env wins). */
+export function withEnv(runner: Runner, env: Record<string, string>): Runner {
+  return {
+    run(cmd, args, opts = {}) {
+      return runner.run(cmd, args, { ...opts, env: { ...env, ...opts.env } });
+    },
+  };
+}

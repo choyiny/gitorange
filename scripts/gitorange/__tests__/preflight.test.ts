@@ -98,6 +98,78 @@ describe('preflight', () => {
     expect(pending.failures.map((f) => f.check)).toEqual(['zone']);
   });
 
+  describe('existing DNS records and routes on the hostname', () => {
+    const custom = { ...input, workersDev: false, hostname: 'git.example.com' };
+    const zones = [{ id: 'z1', name: 'example.com', status: 'active' }];
+
+    it('stops on an existing DNS record', async () => {
+      const cf = fakeCloudflare({
+        zones,
+        dnsRecords: {
+          z1: [{ name: 'git.example.com', type: 'A', content: '192.0.2.1' }],
+        },
+      });
+      const r = await preflight(cf, okRunner(), custom);
+      expect(r.failures.map((f) => f.check)).toEqual(['zone']);
+      expect(r.failures[0].message).toBe(
+        '`git.example.com` already has DNS records (A 192.0.2.1). Nothing was changed.'
+      );
+      expect(cf.calls.find((c) => c.method === 'dnsRecords')?.args).toEqual([
+        'z1',
+        'git.example.com',
+      ]);
+    });
+
+    it("stops on another worker's route covering the hostname", async () => {
+      for (const pattern of [
+        'git.example.com/*',
+        '*.example.com/*',
+        'https://git.example.com/api/*',
+      ]) {
+        const cf = fakeCloudflare({
+          zones,
+          routes: { z1: [{ pattern, script: 'other' }] },
+        });
+        const r = await preflight(cf, okRunner(), custom);
+        expect(r.failures.map((f) => f.message)).toEqual([
+          '`git.example.com` is routed to `other`. Nothing was changed.',
+        ]);
+      }
+    });
+
+    it('ignores routes on other hostnames and routes without a worker', async () => {
+      const cf = fakeCloudflare({
+        zones,
+        routes: {
+          z1: [
+            { pattern: 'www.example.com/*', script: 'other' },
+            { pattern: 'git.example.com/static/*', script: null },
+          ],
+        },
+      });
+      expect((await preflight(cf, okRunner(), custom)).failures).toEqual([]);
+    });
+
+    it("passes on this worker's own custom domain and its record (a resume)", async () => {
+      const cf = fakeCloudflare({
+        zones,
+        workerDomains: [{ hostname: 'git.example.com', service: 'gitorange' }],
+        dnsRecords: {
+          z1: [{ name: 'git.example.com', type: 'AAAA', content: '100::' }],
+        },
+        routes: { z1: [{ pattern: 'git.example.com/*', script: 'gitorange' }] },
+      });
+      expect((await preflight(cf, okRunner(), custom)).failures).toEqual([]);
+    });
+  });
+
+  it('runs wrangler with the chosen account', async () => {
+    const runner = okRunner();
+    await preflight(fakeCloudflare({ subdomain: 'me' }), runner, input);
+    const email = runner.calls.find((c) => c.cmd === 'yarn');
+    expect(email?.opts?.env).toEqual({ CLOUDFLARE_ACCOUNT_ID: 'acc' });
+  });
+
   it('matches the sender domain as a whole entry, not a substring', async () => {
     const cf = fakeCloudflare({ subdomain: 'me' });
     const r = await preflight(

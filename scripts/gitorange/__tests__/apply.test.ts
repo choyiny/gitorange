@@ -379,6 +379,16 @@ describe('install', () => {
     expect(existsSync(join(dir, `${ID}.lock`))).toBe(false);
   });
 
+  it('runs every wrangler and deploy subprocess with the chosen account', async () => {
+    const h = harness();
+    await install(h.ctx, { state: freshState(), ...noOptional });
+    const yarn = h.runner.calls.filter((c) => c.cmd === 'yarn');
+    expect(yarn.length).toBeGreaterThanOrEqual(4);
+    for (const c of yarn) {
+      expect(c.opts?.env).toMatchObject({ CLOUDFLARE_ACCOUNT_ID: ACCOUNT });
+    }
+  });
+
   it('resume after a crash between create and record', async () => {
     const s = freshState();
     const crashed: InstallState = {
@@ -709,6 +719,17 @@ describe('resumeInstalled', () => {
     await resumeInstalled(closed.ctx, pinned(closed, s), {});
     expect(closed.deploys).toHaveLength(0);
     expect(closed.printed.join('\n')).not.toContain('Setup code:');
+  });
+
+  it('deploys with the chosen account', async () => {
+    const { s, seed } = installedFixture();
+    const h = harness({
+      seed,
+      setupStatus: { setupRequired: false, codeRequired: false },
+    });
+    await resumeInstalled(h.ctx, pinned(h, s), { analytics: 'TOKEN' });
+    const deploy = h.runner.calls.find((c) => c.args[1] === 'deploy');
+    expect(deploy?.opts?.env).toMatchObject({ CLOUDFLARE_ACCOUNT_ID: ACCOUNT });
   });
 
   it('a failing deploy keeps the install installed', async () => {

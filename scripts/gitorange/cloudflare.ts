@@ -27,6 +27,13 @@ export interface Cloudflare {
     hostname: string
   ): Promise<{ id: string; name: string; status: string } | null>;
   workerDomains(a: string): Promise<{ hostname: string; service: string }[]>;
+  dnsRecords(
+    zoneId: string,
+    name: string
+  ): Promise<{ type: string; content: string }[]>;
+  workerRoutes(
+    zoneId: string
+  ): Promise<{ pattern: string; script: string | null }[]>;
   listArtifactsNamespaces(a: string): Promise<string[]>;
   listD1(a: string): Promise<{ uuid: string; name: string }[]>;
   createD1(a: string, name: string): Promise<{ uuid: string }>;
@@ -44,6 +51,7 @@ export interface Cloudflare {
     rules: LifecycleRule[]
   ): Promise<void>;
   getR2Object(a: string, bucket: string, key: string): Promise<string | null>;
+  r2IsEmpty(a: string, bucket: string): Promise<boolean>;
   putR2Object(
     a: string,
     bucket: string,
@@ -169,14 +177,18 @@ export function restCloudflare(
    */
   async function list<T>(
     path: string,
-    opts: { perPage?: number; pick?: (result: unknown) => T[] } = {}
+    opts: {
+      perPage?: number;
+      query?: Record<string, string>;
+      pick?: (result: unknown) => T[];
+    } = {}
   ): Promise<T[]> {
     const pick = opts.pick ?? ((r: unknown) => r as T[]);
     const out: T[] = [];
     let page = 1;
     let cursor: string | undefined;
     for (;;) {
-      const q: Record<string, string> = {};
+      const q: Record<string, string> = { ...opts.query };
       if (opts.perPage) q.per_page = String(opts.perPage);
       if (cursor) q.cursor = cursor;
       else if (page > 1) q.page = String(page);
@@ -247,6 +259,28 @@ export function restCloudflare(
         `/accounts/${a}/workers/domains`
       );
       return rows.map((r) => ({ hostname: r.hostname, service: r.service }));
+    },
+
+    // GET /zones/{z}/dns_records?name.exact= (wrangler cloudflare@5.2 resources/dns/records list; `name.exact`
+    // per developers.cloudflare.com/api/resources/dns/subresources/records/methods/list/).
+    async dnsRecords(zoneId, name) {
+      const rows = await list<{ type: string; content: string }>(
+        `/zones/${enc(zoneId)}/dns_records`,
+        { perPage: 100, query: { 'name.exact': name } }
+      );
+      return rows.map((r) => ({ type: r.type, content: r.content }));
+    },
+
+    // GET /zones/{z}/workers/routes -> [{ id, pattern, script? }] (wrangler cloudflare@5.2 resources/workers/routes
+    // list; wrangler's deploy reads `{ pattern, script }` from the same path). No script = a route that runs no worker.
+    async workerRoutes(zoneId) {
+      const rows = await list<{ pattern: string; script?: string | null }>(
+        `/zones/${enc(zoneId)}/workers/routes`
+      );
+      return rows.map((r) => ({
+        pattern: r.pattern,
+        script: r.script ?? null,
+      }));
     },
 
     // GET /accounts/{a}/artifacts/namespaces (wrangler src/artifacts/client.ts getArtifactsNamespacesPath; item shape `namespace` per formatNamespaceDetails).
@@ -330,6 +364,17 @@ export function restCloudflare(
         );
       }
       return res.text();
+    },
+
+    // GET /accounts/{a}/r2/buckets/{b}/objects?per_page=1 -> result: object list (developers.cloudflare.com/api/
+    // resources/r2/subresources/buckets/subresources/objects/methods/list/; wrangler has no list-objects call). One page only.
+    async r2IsEmpty(a, bucket) {
+      const rows = await call<unknown[]>(
+        'GET',
+        `/accounts/${a}/r2/buckets/${enc(bucket)}/objects`,
+        { query: { per_page: '1' } }
+      );
+      return rows.length === 0;
     },
 
     // PUT /accounts/{a}/r2/buckets/{b}/objects/{key} with the raw body (wrangler putR2Object). Not retried.

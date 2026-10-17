@@ -1,5 +1,5 @@
 import type { Cloudflare } from '../cloudflare.ts';
-import type { RunResult, Runner } from '../runner.ts';
+import type { RunOptions, RunResult, Runner } from '../runner.ts';
 
 type Handler = (args: string[]) => RunResult | Promise<RunResult>;
 
@@ -7,14 +7,14 @@ type Handler = (args: string[]) => RunResult | Promise<RunResult>;
  * A Runner driven by a script keyed by `cmd` or `cmd arg0` (the more specific key wins).
  * Unscripted commands fail loudly.
  */
-export function fakeRunner(
-  script: Record<string, Handler>
-): Runner & { calls: Array<{ cmd: string; args: string[] }> } {
-  const calls: Array<{ cmd: string; args: string[] }> = [];
+export function fakeRunner(script: Record<string, Handler>): Runner & {
+  calls: Array<{ cmd: string; args: string[]; opts?: RunOptions }>;
+} {
+  const calls: Array<{ cmd: string; args: string[]; opts?: RunOptions }> = [];
   return {
     calls,
-    async run(cmd, args) {
-      calls.push({ cmd, args });
+    async run(cmd, args, opts) {
+      calls.push({ cmd, args, opts });
       const handler = script[`${cmd} ${args[0] ?? ''}`.trim()] ?? script[cmd];
       if (!handler)
         throw new Error(`fakeRunner: unscripted ${cmd} ${args.join(' ')}`);
@@ -36,6 +36,13 @@ export interface FakeCloudflareSeed {
   doNamespaces?: { id: string; script: string; class: string }[];
   workerDomains?: { hostname: string; service: string }[];
   artifactsNamespaces?: string[];
+  /** zone id -> DNS records */
+  dnsRecords?: Record<
+    string,
+    { name: string; type: string; content: string }[]
+  >;
+  /** zone id -> Workers routes */
+  routes?: Record<string, { pattern: string; script: string | null }[]>;
 }
 
 export type FakeCloudflare = Cloudflare & {
@@ -94,6 +101,22 @@ export function fakeCloudflare(seed: FakeCloudflareSeed = {}): FakeCloudflare {
     async workerDomains(a) {
       await enter('workerDomains', [a]);
       return seed.workerDomains ?? [];
+    },
+    async dnsRecords(zoneId, name) {
+      await enter('dnsRecords', [zoneId, name]);
+      return (seed.dnsRecords?.[zoneId] ?? [])
+        .filter((r) => r.name.toLowerCase() === name.toLowerCase())
+        .map(({ type, content }) => ({ type, content }));
+    },
+    async workerRoutes(zoneId) {
+      await enter('workerRoutes', [zoneId]);
+      return seed.routes?.[zoneId] ?? [];
+    },
+    async r2IsEmpty(a, bucket) {
+      await enter('r2IsEmpty', [a, bucket]);
+      const b = state.r2[bucket];
+      if (!b) throw new Error(`fakeCloudflare: no bucket ${bucket}`);
+      return Object.keys(b).length === 0;
     },
     async listArtifactsNamespaces(a) {
       await enter('listArtifactsNamespaces', [a]);

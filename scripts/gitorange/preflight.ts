@@ -1,5 +1,5 @@
 import { CloudflareError, type Cloudflare } from './cloudflare.ts';
-import type { Runner } from './runner.ts';
+import { withEnv, type Runner } from './runner.ts';
 
 export type Failure = { check: string; message: string; fix: string };
 
@@ -79,6 +79,16 @@ export function parseEmailTable(
   return name < 0 ? null : rows;
 }
 
+/** Whether a Workers route pattern (`host/path`, optionally `*`-prefixed or with a scheme) covers `host`. */
+export function routeCovers(pattern: string, host: string): boolean {
+  const h = pattern
+    .replace(/^https?:\/\//i, '')
+    .split('/', 1)[0]!
+    .toLowerCase();
+  const want = host.toLowerCase();
+  return h.startsWith('*') ? want.endsWith(h.slice(1)) : h === want;
+}
+
 const one = (check: string, message: string, fix: string): Outcome => ({
   failures: [{ check, message, fix }],
 });
@@ -94,6 +104,8 @@ export async function preflight(
   zoneId: string | null;
 }> {
   const a = input.accountId;
+  // wrangler picks the account itself (and may ask) unless told: always the chosen one.
+  const run = withEnv(runner, { CLOUDFLARE_ACCOUNT_ID: a });
 
   const artifacts = () =>
     guard(
@@ -185,18 +197,47 @@ export async function preflight(
             message: `The zone ${z.name} is ${z.status}, not active.`,
             fix: 'Finish the zone setup (point the registrar at Cloudflare nameservers) and wait until it is active.',
           });
-        // Only custom domains are checked, not routes: a hostname owned by another worker's route is not detected.
-        const taken = (await cf.workerDomains(a)).find(
-          (d) =>
-            d.hostname.toLowerCase() === host.toLowerCase() &&
-            d.service !== input.workerName
+        const onHost = (await cf.workerDomains(a)).filter(
+          (d) => d.hostname.toLowerCase() === host.toLowerCase()
         );
+        const taken = onHost.find((d) => d.service !== input.workerName);
         if (taken)
           failures.push({
             check: 'zone',
             message: `${host} is already served by the worker "${taken.service}".`,
             fix: `Remove that custom domain from "${taken.service}" or choose another hostname.`,
           });
+        if (z) {
+          // Without a terminal, wrangler's deploy replaces conflicting DNS records and other
+          // workers' origins on the hostname (override_existing_dns_record/_origin): check first.
+          // This worker's own custom domain owns its record (a resume), so that one is fine.
+          const own = onHost.some((d) => d.service === input.workerName);
+          const records = own ? [] : await cf.dnsRecords(z.id, host);
+          if (records.length > 0)
+            failures.push({
+              check: 'zone',
+              message: `\`${host}\` already has DNS records (${records.map((r) => `${r.type} ${r.content}`).join(', ')}). Nothing was changed.`,
+              fix: `Delete those records in the Cloudflare dashboard (DNS → Records for ${z.name}) or choose another hostname.`,
+            });
+          const scripts = [
+            ...new Set(
+              (await cf.workerRoutes(z.id))
+                .filter(
+                  (r) =>
+                    r.script !== null &&
+                    r.script !== input.workerName &&
+                    routeCovers(r.pattern, host)
+                )
+                .map((r) => r.script!)
+            ),
+          ];
+          if (scripts.length > 0)
+            failures.push({
+              check: 'zone',
+              message: `\`${host}\` is routed to ${scripts.map((x) => `\`${x}\``).join(', ')}. Nothing was changed.`,
+              fix: `Remove those routes in the Cloudflare dashboard (Workers Routes for ${z.name}) or choose another hostname.`,
+            });
+        }
         return { failures, baseUrl: `https://${host}`, zoneId: z?.id ?? null };
       },
       'Check the zone and custom domains in the Cloudflare dashboard.'
@@ -209,7 +250,7 @@ export async function preflight(
       async () => {
         const domain = input.fromEmail!.split('@').pop()!.toLowerCase();
         const fix = `Add ${domain} under Email Sending in the Cloudflare dashboard (Compute & AI → Email Service), verify it, then run the installer again.`;
-        const res = await runner.run('yarn', [
+        const res = await run.run('yarn', [
           '-s',
           'wrangler',
           'email',

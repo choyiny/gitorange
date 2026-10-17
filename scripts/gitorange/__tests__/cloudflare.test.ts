@@ -196,6 +196,54 @@ describe('restCloudflare', () => {
     expect(hit.calls[0]!.url.pathname).toMatch(/\/objects\/k\/x$/);
   });
 
+  it('dnsRecords filters by exact name and returns type and content', async () => {
+    const { fetch, calls } = fakeFetch(() =>
+      ok([{ name: 'git.example.com', type: 'A', content: '192.0.2.1' }])
+    );
+    expect(
+      await restCloudflare('t', fetch, noSleep).dnsRecords(
+        'z1',
+        'git.example.com'
+      )
+    ).toEqual([{ type: 'A', content: '192.0.2.1' }]);
+    expect(calls[0]!.url.pathname).toBe('/client/v4/zones/z1/dns_records');
+    expect(calls[0]!.url.searchParams.get('name.exact')).toBe(
+      'git.example.com'
+    );
+  });
+
+  it('workerRoutes lists the zone routes with their script', async () => {
+    const { fetch, calls } = fakeFetch(() =>
+      ok([
+        { id: 'r1', pattern: 'git.example.com/*', script: 'other' },
+        { id: 'r2', pattern: 'x.example.com/*' },
+      ])
+    );
+    expect(
+      await restCloudflare('t', fetch, noSleep).workerRoutes('z1')
+    ).toEqual([
+      { pattern: 'git.example.com/*', script: 'other' },
+      { pattern: 'x.example.com/*', script: null },
+    ]);
+    expect(calls[0]!.url.pathname).toBe('/client/v4/zones/z1/workers/routes');
+  });
+
+  it('r2IsEmpty lists at most one object', async () => {
+    const empty = fakeFetch(() => ok([]));
+    expect(
+      await restCloudflare('t', empty.fetch, noSleep).r2IsEmpty('a', 'b')
+    ).toBe(true);
+    expect(empty.calls[0]!.url.pathname).toBe(
+      '/client/v4/accounts/a/r2/buckets/b/objects'
+    );
+    expect(empty.calls[0]!.url.searchParams.get('per_page')).toBe('1');
+    const full = fakeFetch(() => ok([{ key: 'x' }], { is_truncated: true }));
+    expect(
+      await restCloudflare('t', full.fetch, noSleep).r2IsEmpty('a', 'b')
+    ).toBe(false);
+    expect(full.calls).toHaveLength(1);
+  });
+
   it('workerVars keeps only plain_text bindings; 404 -> null', async () => {
     const { fetch } = fakeFetch(() =>
       ok({
