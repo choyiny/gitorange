@@ -16,13 +16,14 @@ export async function setupCodeHash(code: string): Promise<string> {
     .join('');
 }
 
-function configuredHash(env: CloudflareBindings): string {
+/** Any env shape: Site admin → Setup passes a partial one. */
+function configuredHash(env: object): string {
   const v = (env as { SETUP_CODE_HASH?: unknown }).SETUP_CODE_HASH;
   return typeof v === 'string' ? v.trim().toLowerCase() : '';
 }
 
 /** Whether a setup code is configured (an empty secret counts as unset). */
-export function setupCodeRequired(env: CloudflareBindings): boolean {
+export function setupCodeRequired(env: object): boolean {
   return configuredHash(env) !== '';
 }
 
