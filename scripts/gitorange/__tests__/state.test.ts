@@ -1,4 +1,6 @@
 import {
+  mkdirSync,
+  readFileSync,
   mkdtempSync,
   existsSync,
   readdirSync,
@@ -149,7 +151,7 @@ describe('lock', () => {
     acquireLock(dir, 'id', { pidAlive: () => true })();
   });
   it('stale lock from a dead pid is reclaimed', () => {
-    require_dir();
+    makeDir();
     writeFileSync(
       join(dir, 'id.lock'),
       JSON.stringify({ pid: 999999, host: hostname(), startedAt: 'x' })
@@ -158,8 +160,41 @@ describe('lock', () => {
     release();
     expect(existsSync(join(dir, 'id.lock'))).toBe(false);
   });
+  it('an empty (partially written) lock is held, not stale, and left untouched', () => {
+    makeDir();
+    writeFileSync(join(dir, 'id.lock'), '');
+    expect(() => acquireLock(dir, 'id', { pidAlive: () => false })).toThrow(
+      /Another yarn gitorange run/
+    );
+    expect(readFileSync(join(dir, 'id.lock'), 'utf8')).toBe('');
+  });
+  it('release does not delete a lock now owned by someone else', () => {
+    const release = acquireLock(dir, 'id', { pidAlive: () => true });
+    const other = JSON.stringify({ pid: 1, host: 'elsewhere', startedAt: 'y' });
+    writeFileSync(join(dir, 'id.lock'), other);
+    release();
+    expect(readFileSync(join(dir, 'id.lock'), 'utf8')).toBe(other);
+  });
+  it('leaves no stray files after reclaiming a stale lock', () => {
+    makeDir();
+    writeFileSync(
+      join(dir, 'id.lock'),
+      JSON.stringify({ pid: 1, host: hostname(), startedAt: 'x' })
+    );
+    const release = acquireLock(dir, 'id', { pidAlive: () => false });
+    expect(readdirSync(dir)).toEqual(['id.lock']);
+    release();
+  });
+  it('a corrupt state file names the path', () => {
+    makeDir();
+    writeFileSync(join(dir, 'bad.json'), '{');
+    expect(() => readState(dir, 'bad')).toThrow(
+      /State file .*bad\.json is corrupt/
+    );
+    expect(() => listStates(dir)).toThrow(/is corrupt/);
+  });
   it('a lock from another host is never reclaimed', () => {
-    require_dir();
+    makeDir();
     writeFileSync(
       join(dir, 'id.lock'),
       JSON.stringify({ pid: 1, host: 'elsewhere', startedAt: 'x' })
@@ -170,7 +205,6 @@ describe('lock', () => {
   });
 });
 
-import { mkdirSync } from 'node:fs';
-function require_dir() {
+function makeDir() {
   mkdirSync(dir, { recursive: true, mode: 0o700 });
 }

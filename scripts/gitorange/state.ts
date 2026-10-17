@@ -1,9 +1,8 @@
 import { randomBytes } from 'node:crypto';
 import {
-  closeSync,
   existsSync,
+  linkSync,
   mkdirSync,
-  openSync,
   readdirSync,
   readFileSync,
   renameSync,
@@ -127,12 +126,20 @@ export function statePath(dir: string, id: string): string {
   return join(dir, `${id}.json`);
 }
 
+function parseState(path: string): InstallState {
+  try {
+    return JSON.parse(readFileSync(path, 'utf8')) as InstallState;
+  } catch (e) {
+    throw new Error(`State file ${path} is corrupt: ${(e as Error).message}`);
+  }
+}
+
 export function readState(dir: string, id: string): InstallState | null {
   const p = statePath(dir, id);
   if (!existsSync(p)) {
     return null;
   }
-  return JSON.parse(readFileSync(p, 'utf8')) as InstallState;
+  return parseState(p);
 }
 
 export function writeState(dir: string, s: InstallState): void {
@@ -150,7 +157,7 @@ export function listStates(dir: string): InstallState[] {
   return readdirSync(dir)
     .filter((f) => f.endsWith('.json'))
     .sort()
-    .map((f) => JSON.parse(readFileSync(join(dir, f), 'utf8')) as InstallState);
+    .map((f) => parseState(join(dir, f)));
 }
 
 function defaultPidAlive(pid: number): boolean {
@@ -177,44 +184,91 @@ export function acquireLock(
   const pidAlive = opts.pidAlive ?? defaultPidAlive;
   const path = join(dir, `${id}.lock`);
   const me = hostname();
-  for (let attempt = 0; attempt < 2; attempt++) {
+  const info: LockInfo = {
+    pid: process.pid,
+    host: me,
+    startedAt: new Date().toISOString(),
+  };
+  const heldMessage = (h: LockInfo) =>
+    `Another yarn gitorange run is using this installation (pid ${h.pid} on ${h.host}).`;
+
+  // The lock file appears only fully written: write a private file, then link it into place.
+  const tryCreate = (): boolean => {
+    const tmp = `${path}.${process.pid}.${randomBytes(4).toString('hex')}.tmp`;
+    writeFileSync(tmp, JSON.stringify(info), { mode: 0o600 });
     try {
-      const fd = openSync(path, 'wx', 0o600);
-      const info: LockInfo = {
-        pid: process.pid,
-        host: me,
-        startedAt: new Date().toISOString(),
-      };
-      writeFileSync(fd, JSON.stringify(info));
-      closeSync(fd);
+      linkSync(tmp, path);
+      return true;
+    } catch (e) {
+      if ((e as NodeJS.ErrnoException).code === 'EEXIST') {
+        return false;
+      }
+      throw e;
+    } finally {
+      unlinkSync(tmp);
+    }
+  };
+
+  for (let attempt = 0; attempt < 10; attempt++) {
+    if (tryCreate()) {
       return () => {
         try {
-          unlinkSync(path);
+          const h = JSON.parse(readFileSync(path, 'utf8')) as LockInfo;
+          if (
+            h.pid === info.pid &&
+            h.host === info.host &&
+            h.startedAt === info.startedAt
+          ) {
+            unlinkSync(path);
+          }
         } catch {
-          // already gone
+          // gone or not ours
         }
       };
-    } catch (e) {
-      if ((e as NodeJS.ErrnoException).code !== 'EEXIST') {
-        throw e;
-      }
     }
-    let held: LockInfo | null = null;
+    let raw: string;
     try {
-      held = JSON.parse(readFileSync(path, 'utf8')) as LockInfo;
-    } catch {
-      // unreadable or vanished: treat as stale on the first pass
+      raw = readFileSync(path, 'utf8');
+    } catch (e) {
+      if ((e as NodeJS.ErrnoException).code === 'ENOENT') {
+        continue;
+      }
+      throw e;
     }
-    if (held && !(held.host === me && !pidAlive(held.pid))) {
+    let held: LockInfo;
+    try {
+      held = JSON.parse(raw) as LockInfo;
+    } catch {
       throw new Error(
-        `Another yarn gitorange run is using this installation (pid ${held.pid} on ${held.host}).`
+        `Another yarn gitorange run is using this installation (lock file ${path} is unreadable). ` +
+          'If that run is gone, delete the file.'
       );
     }
-    try {
-      unlinkSync(path);
-    } catch {
-      // raced with another reclaimer; the retry's O_EXCL decides
+    if (!(held.host === me && !pidAlive(held.pid))) {
+      throw new Error(heldMessage(held));
     }
+    // Stale. Move it aside (only one reclaimer wins the rename), then confirm what we moved.
+    const aside = `${path}.stale.${process.pid}.${randomBytes(4).toString('hex')}`;
+    try {
+      renameSync(path, aside);
+    } catch (e) {
+      if ((e as NodeJS.ErrnoException).code === 'ENOENT') {
+        continue;
+      }
+      throw e;
+    }
+    if (readFileSync(aside, 'utf8') === raw) {
+      unlinkSync(aside);
+      continue;
+    }
+    // We moved a different (live) lock: put it back if the slot is free.
+    try {
+      linkSync(aside, path);
+    } catch {
+      // someone else took the slot meanwhile; they hold it
+    }
+    unlinkSync(aside);
+    continue;
   }
-  throw new Error('Another yarn gitorange run is using this installation.');
+  throw new Error('Could not acquire the installation lock; try again.');
 }
