@@ -65,6 +65,9 @@ describe('release MCP tools', () => {
       'v0.1.0',
     ]);
     expect(after.unreleased.pulls).toEqual([]);
+    expect(
+      Math.abs(Date.parse(after.releases[0].created_at) - Date.now())
+    ).toBeLessThan(60_000);
 
     const audit = await s.t.env.DB.prepare(
       "SELECT via FROM audit_events WHERE action = 'release.created'"

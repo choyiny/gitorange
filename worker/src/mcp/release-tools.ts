@@ -45,7 +45,7 @@ const listReleasesTool: ToolModule = {
           releases: list.map((r) => ({
             tag: r.tag,
             title: r.title,
-            created_at: new Date(r.createdAt * 1000).toISOString(),
+            created_at: new Date(r.createdAt).toISOString(),
             pulls: r.pulls.map((p) => p.number),
           })),
         }),
