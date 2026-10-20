@@ -38,6 +38,7 @@ import {
 import { usageRouter } from './routers/usage-router';
 import { adminAuditRouter, repoAuditRouter } from './routers/audit-router';
 import { branchesRouter } from './routers/branches-router';
+import { releasesRouter } from './routers/releases-router';
 import { sessionsRouter } from './routers/sessions-router';
 import { queueRouter } from './routers/queue-router';
 import { healthRouter } from './routers/health-router';
@@ -114,6 +115,7 @@ app.route('/api/repos', repoAgentsRouter);
 app.route('/api/repos', repoAuditRouter);
 app.route('/api/repos', sessionsRouter);
 app.route('/api/repos', branchesRouter);
+app.route('/api/repos', releasesRouter);
 app.route('/api/repos', queueRouter);
 app.route('/api/repos', healthRouter);
 app.use('/api/search', requireAuth);
