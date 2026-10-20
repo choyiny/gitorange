@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { call } from './helpers/app';
+import { addMember } from './helpers/app';
 import { connect, crewRepo, tool, type CrewRepo } from './helpers/crew';
 
 const head = (s: CrewRepo) => s.repo.refs.get('refs/heads/main')!;
@@ -88,7 +88,6 @@ describe('release MCP tools', () => {
   it('refuses a member without push access', async () => {
     const s = await crewRepo();
     await landed(s, 1, 'patch');
-    const { addMember } = await import('./helpers/app');
     const member = await addMember(s.t, s.admin, 'bob');
     const { access_token } = await connect(s.t, member);
     const res = await tool(s.t, access_token, 'gitorange_create_release', {
@@ -99,6 +98,5 @@ describe('release MCP tools', () => {
     expect(res.isError).toBe(true);
     expect(res.content[0].text).toContain('push access');
     expect(s.repo.refs.get('refs/tags/v0.1.0')).toBeUndefined();
-    void call;
   });
 });
