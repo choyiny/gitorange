@@ -146,6 +146,8 @@ revert is reviewed like any other change.
 - **Connect an agent in a minute.** Point Claude Code, Claude.ai, Cursor, Codex, or any MCP client at
   `https://your-host/mcp`. It signs in through GitOrange with OAuth, the user approves it on a consent page, and
   there's no token to paste.
+- **Releases from merged work.** Mark a pull request patch, minor or major; cutting a release tags the default branch
+  with the next `vX.Y.Z` and lists what shipped. People and agents (over MCP) can both cut one.
 - **Familiar where it counts.** Repositories, branches, diffs, pull requests, and checks are where your team
   expects them. `git clone`, `git push`, and Git LFS work as usual.
 - **Your CI keeps working.** Existing `.github/workflows` files run unchanged on Cloudflare Containers, and

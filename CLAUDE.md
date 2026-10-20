@@ -139,6 +139,16 @@ Drizzle/D1 and better-auth. Git storage is **Cloudflare Artifacts**: one Artifac
   wrangler var it replaced or a built-in value. Read with `getSetting`/`getSettings` only where used, never per request;
   deploy-time facts (BASE_URL, bucket names) stay in wrangler. A daily Cron Trigger (`scheduled()` in `index.ts`) runs
   `runActionsRetention` (`worker/src/actions/retention.ts`).
+- Releases (`worker/src/lib/releases.ts`, `semver.ts`, `routers/releases-router.ts`, MCP `mcp/release-tools.ts`): a release is a
+  lightweight `vX.Y.Z` tag on the default branch plus a `releases` row (notes) and `release_pulls` rows (chunked inserts), cut by a
+  person or `gitorange_create_release`. "Unreleased" is D1 only, never a history walk: merged PRs whose land target
+  (`landTargetOf`) is the default branch and that sit in no `release_pulls` row. The version is the previous release plus the
+  largest `pull_requests.version_bump` among them, or typed; the first release is always typed and records every earlier PR
+  without listing them. `cutRelease` checks the head the caller saw, creates the tag only from absent (`GitService.createRef`,
+  never moves a tag), writes `releases` + `release_pulls` in one batch, calls `onRefsUpdated` so `on: push: tags:` workflows
+  run, and audits `release.created`. Releases are never deleted (a version is never handed out twice); hand-pushed tags are
+  not releases and never count as the latest. SPA: `pages/RepoReleases.tsx`, `ReleaseView.tsx`, `RepoTags.tsx`,
+  `components/pull/VersionPanel.tsx`.
 - Stacking (`worker/src/stack/`): always on when AI is configured, with `STACKING_DEFAULTS` (`stack/defaults.ts`). A `stack` run on `MERGE_RESOLUTION` (after the review finishes — or on PR open
   where no agent is invited — and from the sweep) pairs a PR with open PRs into the same target and
   recently landed ones: git first (`stack/lineage.ts`: a branch holding the other's commits or rebased copies builds on it,
