@@ -85,6 +85,7 @@ import {
 } from '../review/approvals';
 import { landShas, landTargetOf } from '../lib/land-target';
 import { recordAudit } from '../lib/audit';
+import { releasedIn, releasedInMany } from '../lib/releases';
 import { BUMPS } from '../lib/semver';
 import { recordEvent } from '../pulls/events';
 
@@ -140,7 +141,8 @@ function serializePull(
   pr: PullRequest,
   people: Map<string, PublicUser>,
   sessionId: string,
-  commentCount = 0
+  commentCount = 0,
+  releaseTag: string | null = null
 ) {
   return {
     id: pr.id,
@@ -165,8 +167,7 @@ function serializePull(
     updatedAt: pr.updatedAt.toISOString(),
     commentCount,
     versionBump: pr.versionBump,
-    // Filled in with the releases lookup.
-    releasedIn: null as string | null,
+    releasedIn: releaseTag,
   };
 }
 
@@ -464,6 +465,13 @@ pullsRouter.openapi(listRoute, async (c) => {
       };
     });
   const sessionIds = await pullSessionIds(shown.map((r) => r.pr));
+  const released = new Map<string, string>();
+  for (const part of chunks(
+    shown.filter((r) => r.pr.state === 'merged').map((r) => r.pr.id),
+    90
+  ))
+    for (const [id, tag] of await releasedInMany(db, part))
+      released.set(id, tag);
   return c.json(
     {
       pulls: shown.map((r) => ({
@@ -471,7 +479,8 @@ pullsRouter.openapi(listRoute, async (c) => {
           r.pr,
           people,
           sessionIds.get(r.pr.id)!,
-          Number(r.comments)
+          Number(r.comments),
+          released.get(r.pr.id) ?? null
         ),
         headSha: headSha(r.pr),
         aiResolution: aiResolution(r.pr),
@@ -862,7 +871,13 @@ pullsRouter.openapi(getPullRoute, async (c) => {
   });
   return c.json(
     {
-      pull: serializePull(pr, people, await pullSessionId(pr), comments.length),
+      pull: serializePull(
+        pr,
+        people,
+        await pullSessionId(pr),
+        comments.length,
+        pr.state === 'merged' ? await releasedIn(db, pr.id) : null
+      ),
       comments: comments.map((x) => ({
         id: x.id,
         author: people.get(x.authorId) ?? ghost,

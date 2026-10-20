@@ -65,6 +65,19 @@ describe('ref advertisement', () => {
     expect(ad.refs.get('refs/heads/main')).toBe('a'.repeat(40));
   });
 
+  it('keeps the commit an annotated tag peels to apart from the refs', () => {
+    const body = concat([
+      pktLine(`${'a'.repeat(40)} refs/heads/main\0agent=x\n`),
+      pktLine(`${'c'.repeat(40)} refs/tags/v1.0.0\n`),
+      pktLine(`${'a'.repeat(40)} refs/tags/v1.0.0^{}\n`),
+      FLUSH,
+    ]);
+    const ad = parseRefAdvertisement(body);
+    expect(ad.refs.get('refs/tags/v1.0.0')).toBe('c'.repeat(40));
+    expect(ad.refs.has('refs/tags/v1.0.0^{}')).toBe(false);
+    expect(ad.peeled.get('refs/tags/v1.0.0')).toBe('a'.repeat(40));
+  });
+
   it('treats an empty repo advertisement as having no refs', () => {
     const body = concat([
       pktLine(`${'0'.repeat(40)} capabilities^{}\0agent=x\n`),

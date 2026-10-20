@@ -84,6 +84,7 @@ export class GitService {
   private trees = new Map<string, Entry[]>();
   private refsCache?: Promise<Map<string, string>>;
   private headCache?: string | null;
+  private peeledCache = new Map<string, string>();
   /** Objects made in memory (a rebase's trees, blobs and commits), readable before they are pushed. */
   private staged = new Map<string, GitObject>();
 
@@ -94,6 +95,7 @@ export class GitService {
   refs(): Promise<Map<string, string>> {
     this.refsCache ??= this.client.listRefs().then((ad) => {
       this.headCache = ad.head;
+      this.peeledCache = ad.peeled;
       return ad.refs;
     });
     return this.refsCache;
@@ -105,6 +107,18 @@ export class GitService {
       .filter(([name]) => name.startsWith('refs/heads/'))
       .map(([name, sha]) => ({ name: name.slice('refs/heads/'.length), sha }))
       .sort((a, b) => a.name.localeCompare(b.name));
+  }
+
+  /** Every tag, by name descending; an annotated tag gives the commit it peels to. */
+  async tags(): Promise<{ name: string; sha: string }[]> {
+    const refs = await this.refs();
+    return [...refs]
+      .filter(([name]) => name.startsWith('refs/tags/'))
+      .map(([name, sha]) => ({
+        name: name.slice('refs/tags/'.length),
+        sha: this.peeledCache.get(name) ?? sha,
+      }))
+      .sort((a, b) => b.name.localeCompare(a.name));
   }
 
   async resolve(ref: string): Promise<string | null> {
@@ -575,6 +589,18 @@ export class GitService {
       [{ ref, old: refs.get(ref) ?? ZERO_SHA, new: sha }],
       []
     );
+  }
+
+  /**
+   * Creates `ref` at `sha` only while it does not exist (compare-and-swap from absent): an existing ref is never moved,
+   * and the push throws GitPushError. The refs are read again afterwards either way.
+   */
+  async createRef(ref: string, sha: string) {
+    try {
+      await this.client.push([{ ref, old: ZERO_SHA, new: sha }], []);
+    } finally {
+      this.refsCache = undefined;
+    }
   }
 
   /**

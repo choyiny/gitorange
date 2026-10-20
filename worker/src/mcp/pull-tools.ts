@@ -33,6 +33,7 @@ import { McpToolError } from './errors';
 import { appName } from './moderators';
 import type { ToolContext, ToolModule } from './tools';
 import { landShas, landTargetOf } from '../lib/land-target';
+import { releasedIn } from '../lib/releases';
 
 export const text = (t: string) => ({ type: 'text' as const, text: t });
 const json = (v: unknown) => text(JSON.stringify(v, null, 2));
@@ -541,8 +542,8 @@ const getPullRequest: ToolModule = {
           session: pr.sessionLabel,
           request: pr.request,
           version_bump: pr.versionBump,
-          // Filled in with the releases lookup.
-          released_in: null,
+          released_in:
+            pr.state === 'merged' ? await releasedIn(ctx.db, pr.id) : null,
           commits: commits.map((c) => ({
             sha: c.hash.slice(0, 7),
             message: c.message.split('\n')[0],

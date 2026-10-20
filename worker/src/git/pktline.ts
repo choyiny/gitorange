@@ -30,6 +30,8 @@ export function parsePktLines(buf: Uint8Array): Pkt[] {
 
 export interface RefAdvertisement {
   refs: Map<string, string>;
+  /** Annotated tags: the ref name (no `^{}`) to the commit it peels to. */
+  peeled: Map<string, string>;
   head: string | null;
   capabilities: string[];
 }
@@ -37,6 +39,7 @@ export interface RefAdvertisement {
 /** Parses a smart-HTTP `info/refs` advertisement (protocol v1). */
 export function parseRefAdvertisement(buf: Uint8Array): RefAdvertisement {
   const refs = new Map<string, string>();
+  const peeled = new Map<string, string>();
   let head: string | null = null;
   let capabilities: string[] = [];
   for (const pkt of parsePktLines(buf)) {
@@ -52,8 +55,11 @@ export function parseRefAdvertisement(buf: Uint8Array): RefAdvertisement {
     }
     const [sha, name] = line.split(' ');
     if (!name || /^0{40}$/.test(sha) || name === 'capabilities^{}') continue;
-    if (name.endsWith('^{}')) continue;
+    if (name.endsWith('^{}')) {
+      peeled.set(name.slice(0, -3), sha);
+      continue;
+    }
     refs.set(name, sha);
   }
-  return { refs, head, capabilities };
+  return { refs, peeled, head, capabilities };
 }
