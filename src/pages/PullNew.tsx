@@ -10,7 +10,14 @@ import {
   XIcon,
 } from '@primer/octicons-react';
 import { useRepoSubPath } from '@/components/RepoLayout';
-import { api, qk, type FileDiff, type RepoDetail } from '@/lib/uiApi';
+import {
+  api,
+  qk,
+  type FileDiff,
+  type RepoDetail,
+  type VersionBump,
+} from '@/lib/uiApi';
+import { BUMPS, parseBump } from '@/lib/versionBump';
 import { useCurrentUser } from '@/lib/auth';
 import { errorMessage } from '@/lib/api';
 import {
@@ -78,6 +85,7 @@ export default function PullNew() {
   const [showForm, setShowForm] = useState(false);
   const [title, setTitle] = useState('');
   const [body, setBody] = useState('');
+  const [bump, setBump] = useState<VersionBump | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const cmp = useQuery({
@@ -97,6 +105,7 @@ export default function PullNew() {
         body,
         base: from,
         head,
+        versionBump: bump,
       });
       await qc.invalidateQueries({
         queryKey: qk.repo(repo.owner.username, repo.name),
@@ -309,6 +318,27 @@ export default function PullNew() {
                     placeholder="Add your description here..."
                     minHeight={200}
                   />
+                </div>
+                <div className="fld">
+                  <label htmlFor="pr-bump">Version bump</label>
+                  <select
+                    id="pr-bump"
+                    className="form-select"
+                    value={bump ?? ''}
+                    onChange={(e) => setBump(parseBump(e.target.value))}
+                    aria-describedby="pr-bump-hint"
+                  >
+                    <option value="">None (counts as patch)</option>
+                    {BUMPS.map((b) => (
+                      <option key={b} value={b}>
+                        {b[0].toUpperCase() + b.slice(1)}
+                      </option>
+                    ))}
+                  </select>
+                  <span id="pr-bump-hint" className="hint">
+                    What this change does to the next release’s version once it
+                    lands. Nothing changes until someone cuts a release.
+                  </span>
                 </div>
                 <div className="cmp-actions">
                   <PendingButton

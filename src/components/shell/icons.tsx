@@ -21,6 +21,7 @@ import {
   SearchIcon,
   ShieldIcon,
   SlidersIcon,
+  TagIcon,
   type Icon,
 } from '@primer/octicons-react';
 import type { PageIconName } from '@/lib/pageIcon';
@@ -76,6 +77,7 @@ const OCTICONS: Record<Exclude<PageIconName, 'crew'>, Icon> = {
   pull: GitPullRequestIcon,
   commit: GitCommitIcon,
   branch: GitBranchIcon,
+  tag: TagIcon,
   play: PlayIcon,
   graph: GraphIcon,
   pulse: PulseIcon,

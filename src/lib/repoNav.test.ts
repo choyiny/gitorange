@@ -29,6 +29,11 @@ describe('repoTabOf', () => {
       expect(repoTabOf(rest, false)).toBe('pulls');
   });
 
+  it('marks Releases on the releases, a release and the tags', () => {
+    for (const rest of [['releases'], ['releases', 'v1.2.0'], ['tags']])
+      expect(repoTabOf(rest, false)).toBe('releases');
+  });
+
   it('marks Health on its page', () => {
     expect(repoTabOf(['health'], false)).toBe('health');
   });
@@ -64,6 +69,7 @@ describe('repoTabs', () => {
       'code',
       'health',
       'pulls',
+      'releases',
       'actions',
       'insights',
       'settings',
@@ -72,9 +78,19 @@ describe('repoTabs', () => {
       'code',
       'health',
       'pulls',
+      'releases',
       'actions',
       'insights',
     ]);
+  });
+
+  it('puts Releases after Pull requests, with the tag icon', () => {
+    expect(repoTabs(false, false).find((t) => t.id === 'releases')).toEqual({
+      id: 'releases',
+      label: 'Releases',
+      icon: 'tag',
+      path: 'releases',
+    });
   });
 
   it('shows Code, Commits and Settings on agent repositories', () => {
@@ -155,5 +171,26 @@ describe('repoBand (the default trail for a repository page)', () => {
     expect(repoBand(['actions', 'agent', 'x'], base, false).title).toBe(
       'Agent run'
     );
+  });
+
+  it('names Releases, a release by its tag, and Tags under Releases', () => {
+    expect(repoBand(['releases'], base, false)).toEqual({
+      tab: 'releases',
+      icon: 'tag',
+      crumbs: [{ label: 'Releases' }],
+      title: 'Releases',
+    });
+    expect(repoBand(['releases', 'v1.2.0'], base, false)).toEqual({
+      tab: 'releases',
+      icon: 'tag',
+      crumbs: [{ label: 'Releases', to: '/o/r/releases' }, { label: 'v1.2.0' }],
+      title: 'v1.2.0',
+    });
+    expect(repoBand(['tags'], base, false)).toEqual({
+      tab: 'releases',
+      icon: 'tag',
+      crumbs: [{ label: 'Releases', to: '/o/r/releases' }, { label: 'Tags' }],
+      title: 'Tags',
+    });
   });
 });

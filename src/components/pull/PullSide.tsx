@@ -13,6 +13,7 @@ import {
 } from '@/components/Checks';
 import { ReviewersSidebar } from '@/components/ReviewersBox';
 import { PullStateLabel, PullStateReasons } from '@/components/PullStateLabel';
+import { VersionPanel } from './VersionPanel';
 
 /** The head commit's checks in one line, with a link to the Checks tab. */
 function ChecksPanel({ repo, d }: { repo: RepoDetail; d: PullDetail }) {
@@ -60,7 +61,8 @@ function ChecksPanel({ repo, d }: { repo: RepoDetail; d: PullDetail }) {
 
 /**
  * The side of the conversation: Reviews (each requested agent in its state), the head commit's checks, the
- * branches, the people in the conversation, and the technical details a developer may want.
+ * version bump and the release that shipped it, the branches, the people in the conversation, and the technical
+ * details a developer may want.
  */
 export function PullSide({
   repo,
@@ -88,6 +90,7 @@ export function PullSide({
         />
       )}
       {open && <ChecksPanel repo={repo} d={d} />}
+      <VersionPanel repo={repo} pr={pr} onSaved={refresh} />
       <section className="panel pad" aria-labelledby="pr-branch-title">
         <h2 id="pr-branch-title">Branch</h2>
         <p className="pr-branches">

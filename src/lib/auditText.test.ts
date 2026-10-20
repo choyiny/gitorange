@@ -490,6 +490,63 @@ describe('every audit action reads as one sentence', () => {
       },
       'mahmoud reset the instance setting AI review model to its default',
     ],
+    [
+      'release.created',
+      {
+        action: 'release.created',
+        target: 'v1.2.0',
+        data: { sha: 'abc', pulls: 3 },
+      },
+      'mahmoud released v1.2.0 of choyiny/gitorange',
+    ],
+    [
+      'release.updated',
+      {
+        action: 'release.updated',
+        target: 'v1.2.0',
+        data: { fields: ['title', 'notes'] },
+      },
+      'mahmoud edited the title and notes of release v1.2.0 in choyiny/gitorange',
+    ],
+    [
+      'release.updated (notes only)',
+      {
+        action: 'release.updated',
+        target: 'v1.2.0',
+        data: { fields: ['notes'] },
+      },
+      'mahmoud edited the notes of release v1.2.0 in choyiny/gitorange',
+    ],
+    [
+      'pull.version_bump set',
+      {
+        action: 'pull.version_bump',
+        target: '#4',
+        pull: 4,
+        data: { from: null, to: 'minor' },
+      },
+      'mahmoud set the version bump to minor on choyiny/gitorange#4',
+    ],
+    [
+      'pull.version_bump changed',
+      {
+        action: 'pull.version_bump',
+        target: '#4',
+        pull: 4,
+        data: { from: 'minor', to: 'major' },
+      },
+      'mahmoud changed the version bump from minor to major on choyiny/gitorange#4',
+    ],
+    [
+      'pull.version_bump cleared',
+      {
+        action: 'pull.version_bump',
+        target: '#4',
+        pull: 4,
+        data: { from: 'patch', to: null },
+      },
+      'mahmoud cleared the version bump on choyiny/gitorange#4',
+    ],
   ];
 
   it.each(cases)('%s', (_name, over, sentence) => {
@@ -526,6 +583,9 @@ describe('every audit action reads as one sentence', () => {
         'repository.created',
         'repository.deleted',
         'instance.settings',
+        'release.created',
+        'release.updated',
+        'pull.version_bump',
       ].sort()
     );
   });
@@ -577,6 +637,20 @@ describe('in a repository’s own log', () => {
         target: '1 branch',
       },
       'mahmoud cleaned up 1 merged branch',
+    ],
+    [
+      'released',
+      { action: 'release.created', target: 'v0.1.0', data: { pulls: 9 } },
+      'mahmoud released v0.1.0',
+    ],
+    [
+      'bump',
+      {
+        action: 'pull.version_bump',
+        pull: 4,
+        data: { from: null, to: 'patch' },
+      },
+      'mahmoud set the version bump to patch on #4',
     ],
   ])('%s', (_n, over, sentence) => {
     expect(auditText(ev(over), { scope: 'repo' })).toBe(sentence);
@@ -902,6 +976,18 @@ describe('the second line', () => {
     ).toBe('Description: none → A code host');
   });
 
+  it('counts the pull requests a release shipped', () => {
+    expect(
+      auditDetail(ev({ action: 'release.created', data: { pulls: 3 } }))
+    ).toBe('3 pull requests');
+    expect(
+      auditDetail(ev({ action: 'release.created', data: { pulls: 1 } }))
+    ).toBe('1 pull request');
+    expect(
+      auditDetail(ev({ action: 'release.created', data: { pulls: 0 } }))
+    ).toBeNull();
+  });
+
   it('has nothing to add to a plain event', () => {
     expect(auditDetail(ev({ action: 'merging.paused' }))).toBeNull();
   });
@@ -930,11 +1016,23 @@ describe('links and categories', () => {
     expect(auditLink(ev({ action: 'token.created', repo: null }))).toBeNull();
   });
 
+  it('links a release event to the release', () => {
+    expect(auditLink(ev({ action: 'release.created', target: 'v1.2.0' }))).toBe(
+      '/choyiny/gitorange/releases/v1.2.0'
+    );
+    expect(auditLink(ev({ action: 'release.updated', target: 'v1.2.0' }))).toBe(
+      '/choyiny/gitorange/releases/v1.2.0'
+    );
+  });
+
   it('puts every action in a category', () => {
     for (const action of AUDIT_ACTIONS)
-      expect(auditCategory(action)).toMatch(
-        /^(merging|decisions|access|settings)$/
-      );
+      if (action !== 'pull.version_bump')
+        expect(auditCategory(action)).toMatch(
+          /^(merging|decisions|access|settings)$/
+        );
+    expect(auditCategory('release.created')).toBe('merging');
+    expect(auditCategory('pull.version_bump')).toBe('activity');
     expect(auditCategory('pull.state_changed')).toBe('activity');
     expect(auditCategory('pull.rebased')).toBe('activity');
     expect(auditCategory('pull.dismissed')).toBe('decisions');

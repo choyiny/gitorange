@@ -187,6 +187,10 @@ export type Pull = {
   createdAt: string;
   updatedAt: string;
   commentCount: number;
+  /** The release this change calls for; null: it does not say (it counts as patch). */
+  versionBump: VersionBump | null;
+  /** The tag of the release that shipped it; null until one does. */
+  releasedIn: string | null;
 };
 /** A reviewer agent on a listed pull request (GET …/pulls): who it is and how its review of the head commit stands. */
 export type PullReviewer = {
@@ -1020,6 +1024,52 @@ export type SessionSummary = {
   lastActivity: number;
 };
 
+export type VersionBump = 'major' | 'minor' | 'patch';
+
+/** GET /api/repos/{o}/{r}/releases[/{tag}]: one release, as the changelog shows it. */
+export type Release = {
+  tag: string;
+  title: string;
+  /** Markdown. */
+  notes: string;
+  commitSha: string;
+  /** Milliseconds. */
+  createdAt: number;
+  /** The login of whoever cut it; null for a former member. */
+  createdBy: string | null;
+  /** The pull requests it shipped; empty for a first release. */
+  pulls: { number: number; title: string; bump: VersionBump | null }[];
+};
+
+/** GET /api/repos/{o}/{r}/releases/unreleased: what the next release would ship. */
+export type UnreleasedChanges = {
+  pulls: {
+    number: number;
+    title: string;
+    /** The author's login. */
+    author: string;
+    /** Null: it asked for none, which counts as patch. */
+    bump: VersionBump | null;
+    mergedAt: number;
+  }[];
+  /** The latest release's tag; null before the first release. */
+  latest: string | null;
+  /** The version the pull requests make; null for a first release (typed) or with nothing landed. */
+  next: string | null;
+  /** The default branch head: the `headSha` to cut with. */
+  head: string | null;
+  /** The notes a cut would write. */
+  notesPreview: string;
+};
+
+/** GET /api/repos/{o}/{r}/tags */
+export type Tag = {
+  name: string;
+  sha: string;
+  /** The release this tag is; null for a tag pushed by hand. */
+  release: string | null;
+};
+
 /** One branch (GET /api/repos/{o}/{r}/branches). */
 export type BranchInfo = {
   name: string;
@@ -1456,7 +1506,13 @@ export const api = {
   createPull: (
     o: string,
     n: string,
-    body: { title: string; body: string; base: string; head: string }
+    body: {
+      title: string;
+      body: string;
+      base: string;
+      head: string;
+      versionBump?: VersionBump | null;
+    }
   ) => apiFetch<Pull>(`${r(o, n)}/pulls`, { method: 'POST', json: body }),
   pullTree: (o: string, n: string) =>
     apiFetch<StackTree>(`${r(o, n)}/pulls/tree`),
@@ -1475,7 +1531,13 @@ export const api = {
     o: string,
     n: string,
     num: number,
-    body: { title?: string; body?: string; state?: 'open' | 'closed' }
+    body: {
+      title?: string;
+      body?: string;
+      state?: 'open' | 'closed';
+      /** null clears it (counts as patch); only before it is merged. */
+      versionBump?: VersionBump | null;
+    }
   ) => apiFetch(`${r(o, n)}/pulls/${num}`, { method: 'PATCH', json: body }),
   pullCommits: (o: string, n: string, num: number) =>
     apiFetch<Commit[]>(`${r(o, n)}/pulls/${num}/commits`),
@@ -1664,6 +1726,46 @@ export const api = {
       method: 'POST',
       json: { body },
     }),
+  /** The changelog, newest version first. */
+  releases: (o: string, n: string) =>
+    apiFetch<Release[]>(`${r(o, n)}/releases`),
+  unreleased: (o: string, n: string) =>
+    apiFetch<UnreleasedChanges>(`${r(o, n)}/releases/unreleased`),
+  release: (o: string, n: string, tag: string) =>
+    apiFetch<Release>(`${r(o, n)}/releases/${encodeURIComponent(tag)}`),
+  /**
+   * Cuts a release at `headSha`, the default branch head the page showed (a 409 carries the new `head` when it
+   * moved). A blank version, title or notes is left out, so the server computes the version and writes the notes.
+   */
+  cutRelease: (
+    o: string,
+    n: string,
+    body: { headSha: string; version?: string; title?: string; notes?: string }
+  ) => {
+    const json: {
+      headSha: string;
+      version?: string;
+      title?: string;
+      notes?: string;
+    } = { headSha: body.headSha };
+    const version = body.version?.trim();
+    const title = body.title?.trim();
+    if (version) json.version = version;
+    if (title) json.title = title;
+    if (body.notes?.trim()) json.notes = body.notes;
+    return apiFetch<Release>(`${r(o, n)}/releases`, { method: 'POST', json });
+  },
+  updateRelease: (
+    o: string,
+    n: string,
+    tag: string,
+    body: { title?: string; notes?: string }
+  ) =>
+    apiFetch<Release>(`${r(o, n)}/releases/${encodeURIComponent(tag)}`, {
+      method: 'PATCH',
+      json: body,
+    }),
+  tags: (o: string, n: string) => apiFetch<Tag[]>(`${r(o, n)}/tags`),
 };
 
 export const qk = {
@@ -1754,4 +1856,10 @@ export const qk = {
   health: (o: string, n: string) => ['repo', o, n, 'health'] as const,
   repoAudit: (o: string, n: string, cursor = '') =>
     ['repo', o, n, 'audit', cursor] as const,
+  releases: (o: string, n: string) => ['repo', o, n, 'releases'] as const,
+  unreleased: (o: string, n: string) =>
+    ['repo', o, n, 'releases', 'unreleased'] as const,
+  release: (o: string, n: string, tag: string) =>
+    ['repo', o, n, 'release', tag] as const,
+  tags: (o: string, n: string) => ['repo', o, n, 'tags'] as const,
 };

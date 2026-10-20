@@ -49,6 +49,9 @@ export const AUDIT_ACTIONS = [
   'repository.created',
   'repository.deleted',
   'instance.settings',
+  'release.created',
+  'release.updated',
+  'pull.version_bump',
 ] as const;
 
 type Data = Record<string, unknown>;
@@ -174,7 +177,7 @@ export function auditParts(
   const repoPart = (): AuditPart | null =>
     e.repo ? { kind: 'repo', text: e.repo, to: `/${e.repo}` } : null;
   /** " on owner/name": the repository the event was in, when the log is not that repository's own. */
-  const tail = (prep: 'on' | 'in') => {
+  const tail = (prep: 'on' | 'in' | 'of') => {
     const r = here ? repoPart() : null;
     return r ? [` ${prep} `, r] : [];
   };
@@ -382,6 +385,32 @@ export function auditParts(
     }
     case 'repository.deleted':
       return say(` deleted ${e.target}`, via());
+    case 'release.created':
+      return say(` released ${e.target || 'a version'}`, ...tail('of'), via());
+    case 'release.updated': {
+      const fields = Array.isArray(d.fields)
+        ? d.fields.filter((f): f is string => f === 'title' || f === 'notes')
+        : [];
+      return say(
+        ' edited ',
+        fields.length ? `the ${list(fields)} of ` : '',
+        `release ${e.target || ''}`.trimEnd(),
+        ...tail('in'),
+        via()
+      );
+    }
+    case 'pull.version_bump': {
+      const from = str(d.from);
+      const to = str(d.to);
+      if (!to) return say(' cleared the version bump', ...on(), via());
+      return say(
+        from
+          ? ` changed the version bump from ${from} to ${to}`
+          : ` set the version bump to ${to}`,
+        ...on(),
+        via()
+      );
+    }
     case 'instance.settings':
       return d.reset === true
         ? say(
@@ -552,6 +581,10 @@ export function auditDetail(e: AuditEvent): string | null {
     }
     case 'pull.merged':
       return d.automatic === true ? 'Merged automatically' : null;
+    case 'release.created': {
+      const n = num(d.pulls);
+      return n ? `${n} pull ${n === 1 ? 'request' : 'requests'}` : null;
+    }
     case 'pull.state_changed': {
       const reasons = Array.isArray(d.reasons)
         ? d.reasons.filter(
@@ -574,9 +607,11 @@ export function auditDetail(e: AuditEvent): string | null {
   return null;
 }
 
-/** Where the event leads: its pull request, else its repository, else nowhere. */
+/** Where the event leads: its pull request or release, else its repository, else nowhere. */
 export function auditLink(e: AuditEvent): string | null {
   if (!e.repo) return null;
+  if (e.action.startsWith('release.') && e.target)
+    return `/${e.repo}/releases/${encodeURIComponent(e.target)}`;
   return e.pull !== null ? `/${e.repo}/pull/${e.pull}` : `/${e.repo}`;
 }
 
@@ -596,6 +631,8 @@ export function auditCategory(action: string): AuditCategory {
   switch (action) {
     case 'pull.merged':
     case 'pull.reverted':
+    case 'release.created':
+    case 'release.updated':
     case 'merging.paused':
     case 'merging.resumed':
     case 'branch.deleted':

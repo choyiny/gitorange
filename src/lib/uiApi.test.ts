@@ -381,3 +381,132 @@ describe('query keys', () => {
     expect(qk.branchMap('o', 'r')).not.toEqual(qk.branchMap('o', 'r', 10));
   });
 });
+
+describe('releases and tags', () => {
+  it.each<[string, () => Promise<unknown>, string]>([
+    ['releases', () => api.releases('o', 'r'), '/api/repos/o/r/releases'],
+    [
+      'unreleased',
+      () => api.unreleased('o', 'r'),
+      '/api/repos/o/r/releases/unreleased',
+    ],
+    [
+      'release',
+      () => api.release('o', 'r', 'v1.2.0'),
+      '/api/repos/o/r/releases/v1.2.0',
+    ],
+    [
+      'release (an odd tag name is escaped)',
+      () => api.release('o', 'r', 'a/b'),
+      '/api/repos/o/r/releases/a%2Fb',
+    ],
+    ['tags', () => api.tags('o', 'r'), '/api/repos/o/r/tags'],
+  ])('%s asks for the right URL with GET', async (_n, call, url) => {
+    expect(await sent(call)).toEqual({ url, method: 'GET', body: undefined });
+  });
+
+  it('cuts a release with the head it saw, a trimmed version and the notes', async () => {
+    expect(
+      await sent(() =>
+        api.cutRelease('o', 'r', {
+          headSha: 'abc123',
+          version: ' v0.1.0 ',
+          notes: 'First release.',
+        })
+      )
+    ).toEqual({
+      url: '/api/repos/o/r/releases',
+      method: 'POST',
+      body: { headSha: 'abc123', version: 'v0.1.0', notes: 'First release.' },
+    });
+  });
+
+  it('leaves out a blank version, title or notes, so the server computes them', async () => {
+    expect(
+      (
+        await sent(() =>
+          api.cutRelease('o', 'r', {
+            headSha: 'abc123',
+            version: '  ',
+            title: '',
+            notes: ' ',
+          })
+        )
+      ).body
+    ).toEqual({ headSha: 'abc123' });
+  });
+
+  it('reads the new head from a 409 on a moved default branch', async () => {
+    reply = {
+      status: 409,
+      json: { error: 'The default branch moved', head: 'def456' },
+    };
+    const failure = await api
+      .cutRelease('o', 'r', { headSha: 'abc123' })
+      .catch((e) => e);
+    expect(failure).toBeInstanceOf(ApiError);
+    expect(failure.status).toBe(409);
+    expect(failure.message).toBe('The default branch moved');
+    expect(failure.body.head).toBe('def456');
+  });
+
+  it('edits a release title and notes by tag', async () => {
+    expect(
+      await sent(() =>
+        api.updateRelease('o', 'r', 'v1.2.0', {
+          title: 'Spring',
+          notes: '- a',
+        })
+      )
+    ).toEqual({
+      url: '/api/repos/o/r/releases/v1.2.0',
+      method: 'PATCH',
+      body: { title: 'Spring', notes: '- a' },
+    });
+  });
+
+  it('opens a pull request with a version bump, or none', async () => {
+    const body = { title: 't', body: '', base: 'main', head: 'feat' };
+    expect(
+      await sent(() =>
+        api.createPull('o', 'r', { ...body, versionBump: 'minor' })
+      )
+    ).toEqual({
+      url: '/api/repos/o/r/pulls',
+      method: 'POST',
+      body: { ...body, versionBump: 'minor' },
+    });
+    calls = [];
+    expect((await sent(() => api.createPull('o', 'r', body))).body).toEqual(
+      body
+    );
+  });
+
+  it('changes or clears a pull request bump', async () => {
+    expect(
+      await sent(() => api.updatePull('o', 'r', 4, { versionBump: 'major' }))
+    ).toEqual({
+      url: '/api/repos/o/r/pulls/4',
+      method: 'PATCH',
+      body: { versionBump: 'major' },
+    });
+    calls = [];
+    expect(
+      (await sent(() => api.updatePull('o', 'r', 4, { versionBump: null })))
+        .body
+    ).toEqual({ versionBump: null });
+  });
+
+  it('keeps every key under the repository, so live pings refresh them', () => {
+    for (const key of [
+      qk.releases('o', 'r'),
+      qk.unreleased('o', 'r'),
+      qk.release('o', 'r', 'v1.0.0'),
+      qk.tags('o', 'r'),
+    ])
+      expect(key.slice(0, 3)).toEqual(['repo', 'o', 'r']);
+    expect(qk.release('o', 'r', 'v1.0.0')).not.toEqual(
+      qk.release('o', 'r', 'v1.0.1')
+    );
+  });
+});

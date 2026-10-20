@@ -38,6 +38,9 @@ import Session from './pages/Session';
 import RepoSettings from './pages/RepoSettings';
 import RepoActions from './pages/RepoActions';
 import RepoInsights from './pages/RepoInsights';
+import RepoReleases from './pages/RepoReleases';
+import ReleaseView from './pages/ReleaseView';
+import RepoTags from './pages/RepoTags';
 import { useDocumentTitle } from './lib/appName';
 import SettingsMcp from './pages/SettingsMcp';
 import OAuthConsent from './pages/OAuthConsent';
@@ -173,6 +176,9 @@ const App = () => (
                 <Route path="pull/:number" element={<PullView />} />
                 <Route path="pull/:number/:tab" element={<PullView />} />
                 <Route path="session/:id" element={<Session />} />
+                <Route path="releases" element={<RepoReleases />} />
+                <Route path="releases/:tag" element={<ReleaseView />} />
+                <Route path="tags" element={<RepoTags />} />
                 <Route path="actions" element={<RepoActions />} />
                 <Route path="actions/runs/:number" element={<RunView />} />
                 <Route path="actions/agent/:id" element={<AgentRunView />} />

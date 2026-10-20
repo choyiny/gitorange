@@ -16,6 +16,7 @@ export type PageIconName =
   | 'pull'
   | 'commit'
   | 'branch'
+  | 'tag'
   | 'play'
   | 'graph'
   | 'pulse'

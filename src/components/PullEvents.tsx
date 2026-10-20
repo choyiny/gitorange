@@ -7,6 +7,7 @@ import {
   GitBranchIcon,
   LightBulbIcon,
   ShieldCheckIcon,
+  TagIcon,
   XIcon,
 } from '@primer/octicons-react';
 import type { PullEvent, PullReason } from '@/lib/uiApi';
@@ -189,6 +190,28 @@ export function PullEventItem({
             short
           )}
         </span>
+        {when}
+      </Row>
+    );
+  }
+  if (e.kind === 'version_bump') {
+    const from = str(d.from);
+    const to = str(d.to);
+    return (
+      <Row icon={<TagIcon />}>
+        {e.actor ? <strong>{e.actor.username}</strong> : 'A former user'}{' '}
+        {!to ? (
+          <>cleared the version bump (it counts as patch)</>
+        ) : from ? (
+          <>
+            changed the version bump from <strong>{from}</strong> to{' '}
+            <strong>{to}</strong>
+          </>
+        ) : (
+          <>
+            set the version bump to <strong>{to}</strong>
+          </>
+        )}
         {when}
       </Row>
     );
