@@ -13,6 +13,11 @@ describe('version arithmetic', () => {
   it('parses vX.Y.Z tags only', () => {
     expect(parseVersion('v1.2.3')).toEqual({ major: 1, minor: 2, patch: 3 });
     expect(parseVersion('v0.0.0')).toEqual({ major: 0, minor: 0, patch: 0 });
+    expect(parseVersion('v12345678.0.0')).toEqual({
+      major: 12345678,
+      minor: 0,
+      patch: 0,
+    });
     for (const bad of [
       '1.2.3',
       'v1.2',
@@ -21,6 +26,9 @@ describe('version arithmetic', () => {
       'v1.2.3+b',
       'v-1.0.0',
       'vx.y.z',
+      'v123456789.0.0',
+      'v0.123456789.0',
+      'v0.0.123456789',
     ])
       expect(parseVersion(bad)).toBeNull();
   });

@@ -1,6 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import { eq } from 'drizzle-orm';
 import { repositories } from '../db/app.schema';
+import { onRefsUpdated } from '../actions/trigger';
+import { ZERO_SHA } from '../git/remote';
 import { gitFor } from '../lib/repos';
 import {
   cutRelease,
@@ -68,6 +70,27 @@ async function cut(
     version: opts.version,
     title: opts.title,
   });
+}
+
+const RELEASE_WORKFLOW = `name: Release
+on:
+  push:
+    tags: ['v*']
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - run: echo publish
+`;
+
+async function workflowRuns(s: CrewRepo) {
+  return (
+    await s.t.env.DB.prepare(
+      'SELECT ref, head_sha FROM workflow_runs WHERE repository_id = ?'
+    )
+      .bind(s.repoId)
+      .all<{ ref: string; head_sha: string }>()
+  ).results;
 }
 
 async function releaseRows(s: CrewRepo) {
@@ -316,9 +339,15 @@ describe('cutting a release', () => {
   });
 
   it('retry after a half-finished cut', async () => {
-    const s = await crewRepo();
+    const s = await crewRepo({ actions: true });
+    await commitPaths(
+      s.repo,
+      'main',
+      { ...FILES, '.github/workflows/release.yml': RELEASE_WORKFLOW },
+      'Add the release workflow'
+    );
     await landed(s, 1, null);
-    // The tag went out but the row did not.
+    // The tag went out but the row did not (and no runs were queued for it).
     await gitFor(s.t.env, await repoRow(s)).createRef(
       'refs/tags/v0.1.0',
       head(s)
@@ -326,6 +355,80 @@ describe('cutting a release', () => {
     const r = await cut(s, { version: 'v0.1.0' });
     expect(r.ok && r.release.tag).toBe('v0.1.0');
     expect(await releaseRows(s)).toEqual(['v0.1.0']);
+    expect(await workflowRuns(s)).toEqual([
+      { ref: 'refs/tags/v0.1.0', head_sha: head(s) },
+    ]);
+  });
+
+  it('a hand-pushed tag at the head that queued its runs is not adopted', async () => {
+    const s = await crewRepo({ actions: true });
+    await commitPaths(
+      s.repo,
+      'main',
+      { ...FILES, '.github/workflows/release.yml': RELEASE_WORKFLOW },
+      'Add the release workflow'
+    );
+    await landed(s, 1, null);
+    // Pushed with git at the head: the push queued the tag's runs.
+    s.repo.refs.set('refs/tags/v0.1.0', head(s));
+    const admin = await s.t.env.DB.prepare(
+      "SELECT id FROM users WHERE username = 'octocat'"
+    ).first<{ id: string }>();
+    await onRefsUpdated(
+      s.t.env,
+      s.db,
+      await repoRow(s),
+      NAME,
+      [{ ref: 'refs/tags/v0.1.0', old: ZERO_SHA, new: head(s) }],
+      admin!.id
+    );
+    expect(await workflowRuns(s)).toHaveLength(1);
+    expect(await cut(s, { version: 'v0.1.0' })).toEqual({
+      ok: false,
+      status: 409,
+      message: 'Tag v0.1.0 already exists; type a version',
+    });
+    expect(await releaseRows(s)).toEqual([]);
+    expect(await workflowRuns(s)).toHaveLength(1);
+  });
+
+  it('a pull request that has pushed but is not yet marked merged blocks the cut', async () => {
+    const s = await crewRepo();
+    await landed(s, 1, null);
+    // landPull pushed the default branch and refs/pull/2/head to the same commit, and has not recorded it yet.
+    await s.mergedRow(2, 'topic-2', (at += 60_000));
+    await s.t.env.DB.prepare(
+      "UPDATE pull_requests SET state = 'open', merged_at = NULL, closed_at = NULL, merge_commit_sha = NULL WHERE repository_id = ? AND number = 2"
+    )
+      .bind(s.repoId)
+      .run();
+    s.repo.refs.set('refs/pull/2/head', head(s));
+    expect(await cut(s, { version: 'v0.1.0' })).toEqual({
+      ok: false,
+      status: 409,
+      message: 'A pull request is landing; try again in a moment',
+    });
+    expect(s.repo.refs.get('refs/tags/v0.1.0')).toBeUndefined();
+    expect(await releaseRows(s)).toEqual([]);
+  });
+
+  it('concurrent cuts of different versions leave no orphan tag', async () => {
+    const s = await crewRepo();
+    await landed(s, 1, null);
+    const results = await Promise.all([
+      cut(s, { version: 'v0.1.0' }),
+      cut(s, { version: 'v0.2.0' }),
+    ]);
+    const won = results.filter((r) => r.ok);
+    expect(won).toHaveLength(1);
+    expect(results.filter((r) => !r.ok)).toEqual([
+      expect.objectContaining({ ok: false, status: 409 }),
+    ]);
+    const tag = won[0].ok ? won[0].release.tag : '';
+    const lost = tag === 'v0.1.0' ? 'v0.2.0' : 'v0.1.0';
+    expect(await releaseRows(s)).toEqual([tag]);
+    expect(s.repo.refs.get(`refs/tags/${tag}`)).toBe(head(s));
+    expect(s.repo.refs.get(`refs/tags/${lost}`)).toBeUndefined();
   });
 
   it('the tag queues push runs', async () => {
@@ -335,16 +438,7 @@ describe('cutting a release', () => {
       'main',
       {
         ...FILES,
-        '.github/workflows/release.yml': `name: Release
-on:
-  push:
-    tags: ['v*']
-jobs:
-  publish:
-    runs-on: ubuntu-latest
-    steps:
-      - run: echo publish
-`,
+        '.github/workflows/release.yml': RELEASE_WORKFLOW,
       },
       'Add the release workflow'
     );
@@ -396,9 +490,12 @@ jobs:
     expect((await cut(s, { version: 'v0.1.0' })).ok).toBe(true);
     s.repo.refs.set('refs/tags/build-7', s.main);
     s.repo.refs.set('refs/tags/v0.0.9', s.main);
+    s.repo.refs.set('refs/tags/v0.0.10', s.main);
     const tags = await gitFor(s.t.env, await repoRow(s)).tags();
+    // Numbers compare as numbers: v0.0.10 is above v0.0.9.
     expect(tags).toEqual([
       { name: 'v0.1.0', sha: head(s) },
+      { name: 'v0.0.10', sha: s.main },
       { name: 'v0.0.9', sha: s.main },
       { name: 'build-7', sha: s.main },
     ]);

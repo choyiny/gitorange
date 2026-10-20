@@ -118,7 +118,9 @@ export class GitService {
         name: name.slice('refs/tags/'.length),
         sha: this.peeledCache.get(name) ?? sha,
       }))
-      .sort((a, b) => b.name.localeCompare(a.name));
+      .sort((a, b) =>
+        b.name.localeCompare(a.name, undefined, { numeric: true })
+      );
   }
 
   async resolve(ref: string): Promise<string | null> {
@@ -598,6 +600,15 @@ export class GitService {
   async createRef(ref: string, sha: string) {
     try {
       await this.client.push([{ ref, old: ZERO_SHA, new: sha }], []);
+    } finally {
+      this.refsCache = undefined;
+    }
+  }
+
+  /** Deletes `ref` only while it still points at `expected` (compare-and-swap); otherwise the push throws GitPushError. */
+  async deleteRef(ref: string, expected: string) {
+    try {
+      await this.client.push([{ ref, old: expected, new: ZERO_SHA }], []);
     } finally {
       this.refsCache = undefined;
     }

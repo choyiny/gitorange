@@ -4,6 +4,7 @@ import {
   pullRequests,
   releasePulls,
   releases,
+  workflowRuns,
   type Release,
   type Repository,
 } from '../db/app.schema';
@@ -12,6 +13,7 @@ import type { DrizzleDB } from '../db/middleware';
 import { GitPushError, ZERO_SHA } from '../git/remote';
 import { recordAudit } from './audit';
 import { landTargetIs } from './land-target';
+import { pullRef } from '../merge/land';
 import { gitFor } from './repos';
 import { chunks } from '../stack/view';
 import {
@@ -329,6 +331,36 @@ export async function releasedInMany(
   return new Map(rows.map((r) => [r.id, r.tag]));
 }
 
+/** Open pull requests landing on the default branch: their numbers, to find one that has pushed but is not yet merged. */
+async function openPullNumbers(
+  db: DrizzleDB,
+  repo: Repository
+): Promise<number[]> {
+  const rows = await db
+    .select({ number: pullRequests.number })
+    .from(pullRequests)
+    .where(
+      and(
+        eq(pullRequests.repositoryId, repo.id),
+        eq(pullRequests.state, 'open'),
+        landTargetIs(repo.defaultBranch)
+      )
+    );
+  return rows.map((r) => r.number);
+}
+
+/** Whether anything has queued workflow runs for `ref` in the repository (a push of it did). */
+async function hasRuns(db: DrizzleDB, repo: Repository, ref: string) {
+  return !!(await db
+    .select({ id: workflowRuns.id })
+    .from(workflowRuns)
+    .where(
+      and(eq(workflowRuns.repositoryId, repo.id), eq(workflowRuns.ref, ref))
+    )
+    .limit(1)
+    .get());
+}
+
 const refuse = (
   status: 400 | 409,
   message: string,
@@ -357,15 +389,18 @@ export async function cutRelease(opts: {
   notes?: string;
 }): Promise<CutResult> {
   const { env, db, repo } = opts;
-  // D1 before git: landing pushes before it marks a pull request merged, so every pull request read here is in the
-  // head read next (or the head moved and the cut stops).
-  const [rows, latest] = await Promise.all([
+  // D1 before git. Landing pushes the default branch and `refs/pull/<n>/head` to the same commit in one push, then
+  // marks the pull request merged. So a merged pull request read here is in the head read next (or the head moved and
+  // the cut stops), and one still open here whose pull ref is that head has pushed but is not recorded yet: the cut
+  // waits for it rather than ship it unlisted.
+  const [rows, latest, open] = await Promise.all([
     unreleasedRows(db, repo),
     latestRelease(db, repo),
+    openPullNumbers(db, repo),
   ]);
   const git = gitFor(env, repo);
-  const head =
-    (await git.refs()).get(`refs/heads/${repo.defaultBranch}`) ?? null;
+  const refs = await git.refs();
+  const head = refs.get(`refs/heads/${repo.defaultBranch}`) ?? null;
   if (!head) return refuse(409, `${repo.defaultBranch} has no commits`);
   if (head !== opts.headSha)
     return refuse(
@@ -373,6 +408,8 @@ export async function cutRelease(opts: {
       `${repo.defaultBranch} moved to ${head}; check what it adds and cut again`,
       head
     );
+  if (open.some((n) => refs.get(pullRef(n)) === head))
+    return refuse(409, 'A pull request is landing; try again in a moment');
 
   const pulls = rows.map((r) => r.pull);
   let version: Version;
@@ -401,16 +438,21 @@ export async function cutRelease(opts: {
 
   const tag = formatVersion(version);
   const ref = `refs/tags/${tag}`;
+  // Whether this call made the tag (so it may take it back), rather than adopting one already there.
+  let created = true;
   try {
     await git.createRef(ref, head);
   } catch (err) {
     if (!(err instanceof GitPushError)) throw err;
-    // A cut whose tag went out but whose row did not (the retry adopts its own tag); anything else is someone's.
+    // A cut whose tag went out but whose row and runs did not (the retry adopts its own tag). A tag pushed with git
+    // queued its runs on that push, so one with runs is someone's, as is any tag elsewhere or with a release.
     const adoptable =
       (await git.refs()).get(ref) === head &&
-      !(await releaseRow(db, repo, tag));
+      !(await releaseRow(db, repo, tag)) &&
+      !(await hasRuns(db, repo, ref));
     if (!adoptable)
       return refuse(409, `Tag ${tag} already exists; type a version`);
+    created = false;
   }
 
   const id = crypto.randomUUID();
@@ -449,7 +491,12 @@ export async function cutRelease(opts: {
     ]);
   } catch (err) {
     if (!/UNIQUE constraint failed/.test(String(err))) throw err;
-    // Another cut took the tag or these pull requests first; the tag (if this one made it) is that release's too.
+    // Another cut took the tag or these pull requests first. A tag this call made for a version no release took is
+    // an orphan: take it back while it still points at the head (a tag another cut adopted has that cut's row).
+    if (created && !(await releaseRow(db, repo, tag)))
+      await git.deleteRef(ref, head).catch((e: unknown) => {
+        if (!(e instanceof GitPushError)) throw e;
+      });
     return refuse(
       409,
       'Another release was cut at the same time; reload and try again'

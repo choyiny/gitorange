@@ -1,5 +1,6 @@
 // Release versions: `vX.Y.Z` tags, nothing else. No pre-release or build suffixes, and no leading zeros, so a tag
-// has exactly one spelling and one parse. Pure: the tag cutter and the release pages both read it.
+// has exactly one spelling and one parse; each part is at most 8 digits, so it stays an exact integer. Pure: the tag
+// cutter and the release pages both read it (src/lib/versionBump.ts `isVersion` takes the same spellings).
 
 export type Bump = 'major' | 'minor' | 'patch';
 
@@ -8,7 +9,7 @@ export const BUMPS: readonly Bump[] = ['patch', 'minor', 'major'];
 
 export type Version = { major: number; minor: number; patch: number };
 
-const VERSION = /^v(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$/;
+const VERSION = /^v(0|[1-9]\d{0,7})\.(0|[1-9]\d{0,7})\.(0|[1-9]\d{0,7})$/;
 
 /** The version a `vX.Y.Z` tag names, or null for anything else. */
 export function parseVersion(tag: string): Version | null {

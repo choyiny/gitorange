@@ -25,5 +25,10 @@ describe('isVersion', () => {
     expect(isVersion('0.1.0')).toBe(false);
     expect(isVersion('v1.0.0-rc.1')).toBe(false);
     expect(isVersion('v1.0')).toBe(false);
+    // As the server takes them: no leading zeros, at most 8 digits a part.
+    expect(isVersion('v01.0.0')).toBe(false);
+    expect(isVersion('v1.00.0')).toBe(false);
+    expect(isVersion('v12345678.0.0')).toBe(true);
+    expect(isVersion('v123456789.0.0')).toBe(false);
   });
 });

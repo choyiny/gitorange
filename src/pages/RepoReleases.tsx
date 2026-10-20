@@ -12,6 +12,7 @@ import {
 import { ApiError, errorMessage } from '@/lib/api';
 import { fullDate, shortSha, timeAgo } from '@/lib/format';
 import { bumpLabel, isVersion } from '@/lib/versionBump';
+import { refreshDraft, suggestedDraft } from '@/lib/releaseDraft';
 import { Markdown } from '@/components/Markdown';
 import { MarkdownEditor } from '@/components/CommentForm';
 import { QueryError, RowsSkeleton } from '@/components/actions/states';
@@ -20,8 +21,6 @@ import { EmptyState } from '@/components/ui/EmptyState';
 import { PageHead } from '@/components/ui/PageHead';
 import { PendingButton } from '@/components/ui/PendingButton';
 import { Section } from '@/components/ui/Section';
-
-const FIRST_NOTES = 'First release.';
 
 const plural = (n: number, one: string, many: string) =>
   `${n} ${n === 1 ? one : many}`;
@@ -161,8 +160,9 @@ function CutRelease({
   const write = repo.permissions.write;
 
   const start = () => {
-    setVersion(first ? '' : (u.next ?? ''));
-    setNotes(first ? FIRST_NOTES : u.notesPreview);
+    const draft = suggestedDraft(u);
+    setVersion(draft.version);
+    setNotes(draft.notes);
     setError(null);
     setOpen(true);
   };
@@ -181,12 +181,18 @@ function CutRelease({
       await qc.invalidateQueries({ queryKey: qk.repo(o, repo.name) });
     } catch (e) {
       setError(errorMessage(e));
-      // The default branch moved: show what landed since, and cut from the new head.
+      // The default branch moved: show what landed since, and cut from the new head. Fields still at the old
+      // suggestion follow the new one; whatever the person typed stays, next to the server's message.
       if (e instanceof ApiError && e.status === 409 && e.body?.head) {
         const fresh = (await refetch()).data;
-        if (fresh && fresh.latest) {
-          setVersion(fresh.next ?? version);
-          setNotes(fresh.notesPreview);
+        if (fresh) {
+          const draft = refreshDraft(
+            { version, notes },
+            suggestedDraft(u),
+            suggestedDraft(fresh)
+          );
+          setVersion(draft.version);
+          setNotes(draft.notes);
         }
       }
     } finally {
