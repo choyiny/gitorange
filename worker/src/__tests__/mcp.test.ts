@@ -204,6 +204,8 @@ describe('MCP server', () => {
       ['gitorange_rerun_checks', false],
       ['gitorange_request_changes_on_review_flag', false],
       ['gitorange_get_run_logs', true],
+      ['gitorange_list_releases', true],
+      ['gitorange_create_release', false],
       ['gitorange_list_agents', true],
       ['gitorange_list_repository_agents', true],
       ['gitorange_invite_agent', false],
@@ -368,7 +370,7 @@ describe('MCP server', () => {
     const res = await call(t, '/api/mcp', { cookie: admin });
     const body = (await res.json()) as { serverUrl: string; tools: unknown[] };
     expect(body.serverUrl).toBe(`${ORIGIN}/mcp`);
-    expect(body.tools).toHaveLength(20);
+    expect(body.tools).toHaveLength(22);
     expect((await call(t, '/api/mcp')).status).toBe(401);
   });
 });

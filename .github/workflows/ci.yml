@@ -272,6 +272,7 @@ jobs:
           worker/src/__tests__/semver.test.ts
           worker/src/__tests__/releases.test.ts
           worker/src/__tests__/releases-router.test.ts
+          worker/src/__tests__/mcp-releases.test.ts
           worker/src/__tests__/usage.test.ts
           worker/src/__tests__/insights.test.ts
           worker/src/__tests__/ai-gateway.test.ts
