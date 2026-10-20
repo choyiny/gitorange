@@ -403,4 +403,61 @@ jobs:
       { name: 'build-7', sha: s.main },
     ]);
   });
+
+  it('a first release over many landed pull requests records them all', async () => {
+    const s = await crewRepo();
+    for (let n = 1; n <= 120; n++) await landed(s, n, null);
+    const r = await cut(s, { version: 'v0.1.0' });
+    if (!r.ok) throw new Error(r.message);
+    const recorded = await s.t.env.DB.prepare(
+      'SELECT COUNT(*) AS n FROM release_pulls'
+    ).first<{ n: number }>();
+    expect(recorded!.n).toBe(120);
+    expect((await pending(s)).pulls).toEqual([]);
+    // Later releases list theirs, many as they are.
+    for (let n = 121; n <= 180; n++) await landed(s, n, null);
+    const next = await cut(s);
+    if (!next.ok) throw new Error(next.message);
+    expect(next.release.pulls).toHaveLength(60);
+  });
+
+  it('lists a changelog of many releases', async () => {
+    const s = await crewRepo();
+    const admin = (await s.t.env.DB.prepare(
+      "SELECT id FROM users WHERE username = 'octocat'"
+    ).first<{ id: string }>())!.id;
+    await landed(s, 1, 'minor', { title: 'Add search' });
+    const insert = s.t.env.DB.prepare(
+      `INSERT INTO releases (id, repository_id, tag, major, minor, patch, commit_sha, title, notes, created_by_id, previous_release_id, created_at)
+       VALUES (?, ?, ?, 0, ?, 0, ?, ?, '', ?, ?, ?)`
+    );
+    const total = 150;
+    await s.t.env.DB.batch(
+      Array.from({ length: total }, (_, i) =>
+        insert.bind(
+          `rel-${i}`,
+          s.repoId,
+          `v0.${i}.0`,
+          i,
+          s.main,
+          `v0.${i}.0`,
+          admin,
+          i ? `rel-${i - 1}` : null,
+          1_760_000_000_000 + i
+        )
+      )
+    );
+    await s.t.env.DB.prepare(
+      'INSERT INTO release_pulls (release_id, pull_request_id) VALUES (?, ?)'
+    )
+      .bind('rel-140', `${s.repoId}-m1`)
+      .run();
+    const list = await listReleases(s.db, await repoRow(s));
+    expect(list).toHaveLength(total);
+    expect(list[0].tag).toBe('v0.149.0');
+    expect(list.every((r) => r.createdBy === 'octocat')).toBe(true);
+    expect(list.find((r) => r.tag === 'v0.140.0')?.pulls).toEqual([
+      { number: 1, title: 'Add search', bump: 'minor' },
+    ]);
+  });
 });

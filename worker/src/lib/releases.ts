@@ -13,6 +13,7 @@ import { GitPushError, ZERO_SHA } from '../git/remote';
 import { recordAudit } from './audit';
 import { landTargetIs } from './land-target';
 import { gitFor } from './repos';
+import { chunks } from '../stack/view';
 import {
   bumpVersion,
   compareVersions,
@@ -181,6 +182,22 @@ export async function unreleased(
   return { pulls, latest, next, notesPreview };
 }
 
+/** Ids per `IN (...)`, under D1's 100 bound parameters per statement. */
+const IDS_PER_QUERY = 90;
+/** `release_pulls` rows per INSERT (two parameters each). */
+const PULLS_PER_INSERT = 45;
+
+/** Runs `query` over `ids` in chunks and concatenates the results, in chunk order. */
+async function inChunks<T>(
+  ids: string[],
+  query: (part: string[]) => Promise<T[]>
+): Promise<T[]> {
+  const out: T[] = [];
+  for (const part of chunks(ids, IDS_PER_QUERY))
+    out.push(...(await query(part)));
+  return out;
+}
+
 /** Release rows as views: one query for their authors and one for their pull requests, however many there are. */
 async function views(
   db: DrizzleDB,
@@ -190,30 +207,34 @@ async function views(
   const authorIds = [
     ...new Set(rows.map((r) => r.createdById).filter((id) => id !== null)),
   ];
+  // A first release records what came before it without listing it.
+  const listed = rows
+    .filter((r) => r.previousReleaseId !== null)
+    .map((r) => r.id);
+  // D1 binds at most 100 parameters per statement: ask in chunks.
   const [authors, shipped] = await Promise.all([
-    authorIds.length
-      ? db
-          .select({ id: users.id, username: users.username })
-          .from(users)
-          .where(inArray(users.id, authorIds))
-      : Promise.resolve([]),
-    db
-      .select({
-        releaseId: releasePulls.releaseId,
-        number: pullRequests.number,
-        title: pullRequests.title,
-        bump: pullRequests.versionBump,
-      })
-      .from(releasePulls)
-      .innerJoin(pullRequests, eq(pullRequests.id, releasePulls.pullRequestId))
-      .where(
-        inArray(
-          releasePulls.releaseId,
-          // A first release records what came before it without listing it.
-          rows.filter((r) => r.previousReleaseId !== null).map((r) => r.id)
+    inChunks(authorIds, (part) =>
+      db
+        .select({ id: users.id, username: users.username })
+        .from(users)
+        .where(inArray(users.id, part))
+    ),
+    inChunks(listed, (part) =>
+      db
+        .select({
+          releaseId: releasePulls.releaseId,
+          number: pullRequests.number,
+          title: pullRequests.title,
+          bump: pullRequests.versionBump,
+        })
+        .from(releasePulls)
+        .innerJoin(
+          pullRequests,
+          eq(pullRequests.id, releasePulls.pullRequestId)
         )
-      )
-      .orderBy(asc(pullRequests.number)),
+        .where(inArray(releasePulls.releaseId, part))
+        .orderBy(asc(pullRequests.number))
+    ),
   ]);
   const login = new Map(authors.map((a) => [a.id, a.username]));
   return rows.map((r) => ({
@@ -419,9 +440,12 @@ export async function cutRelease(opts: {
         previousReleaseId: latest?.id ?? null,
         createdAt: new Date(),
       }),
-      db
-        .insert(releasePulls)
-        .values(rows.map((r) => ({ releaseId: id, pullRequestId: r.id }))),
+      // One statement per chunk, all in the same batch, so the release and its pull requests land together.
+      ...chunks(rows, PULLS_PER_INSERT).map((part) =>
+        db
+          .insert(releasePulls)
+          .values(part.map((r) => ({ releaseId: id, pullRequestId: r.id })))
+      ),
     ]);
   } catch (err) {
     if (!/UNIQUE constraint failed/.test(String(err))) throw err;
