@@ -192,6 +192,7 @@ jobs:
           worker/src/__tests__/agent-runs.test.ts
           worker/src/__tests__/queue.test.ts
           worker/src/__tests__/revert.test.ts
+          worker/src/__tests__/release-bump.test.ts
 
   test-actions:
     name: Test (actions and git)

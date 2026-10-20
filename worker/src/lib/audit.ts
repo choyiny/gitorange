@@ -240,6 +240,8 @@ export async function listAudit(
         and(
           repo === null ? undefined : eq(prEvents.repositoryId, repo),
           ne(prEvents.kind, 'approved'),
+          // Recorded with an audit row of its own (pull.version_bump).
+          ne(prEvents.kind, 'version_bump'),
           cursor ? after(cursor, 'p', prEvents) : undefined
         )
       )

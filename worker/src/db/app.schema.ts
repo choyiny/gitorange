@@ -268,6 +268,9 @@ export const pullRequests = sqliteTable(
     createdVia: text('created_via'),
     sessionLabel: text('session_label'),
     request: text('request'),
+    // The release this change calls for, set by its author or a writer until it lands (see worker/src/lib/semver.ts).
+    // NULL: no say; the repository's next release decides.
+    versionBump: text('version_bump', { enum: ['major', 'minor', 'patch'] }),
     createdAt: integer('created_at', { mode: 'timestamp' }).notNull(),
     updatedAt: integer('updated_at', { mode: 'timestamp' }).notNull(),
   },
@@ -281,6 +284,58 @@ export const pullRequests = sqliteTable(
     ),
     // The Approvals inbox: every open pull request across repositories, newest first.
     index('pull_requests_state_updated_idx').on(t.state, t.updatedAt),
+  ]
+);
+
+// ── Releases ─────────────────────────────────────────────────────────────────
+// A release is a tag on a commit of the default branch with a semantic version; the pull requests it ships are
+// release_pulls rows, and a pull request is in at most one release.
+
+export const releases = sqliteTable(
+  'releases',
+  {
+    id: text('id').primaryKey(),
+    repositoryId: text('repository_id')
+      .notNull()
+      .references(() => repositories.id, { onDelete: 'cascade' }),
+    tag: text('tag').notNull(),
+    major: integer('major').notNull(),
+    minor: integer('minor').notNull(),
+    patch: integer('patch').notNull(),
+    commitSha: text('commit_sha').notNull(),
+    title: text('title').notNull(),
+    notes: text('notes').notNull(),
+    createdById: text('created_by_id').references(() => users.id, {
+      onDelete: 'set null',
+    }),
+    previousReleaseId: text('previous_release_id'),
+    createdAt: integer('created_at', { mode: 'timestamp_ms' }).notNull(),
+  },
+  (t) => [
+    uniqueIndex('releases_repo_tag_uq').on(t.repositoryId, t.tag),
+    index('releases_repo_version_idx').on(
+      t.repositoryId,
+      t.major,
+      t.minor,
+      t.patch
+    ),
+  ]
+);
+export type Release = typeof releases.$inferSelect;
+
+export const releasePulls = sqliteTable(
+  'release_pulls',
+  {
+    releaseId: text('release_id')
+      .notNull()
+      .references(() => releases.id, { onDelete: 'cascade' }),
+    pullRequestId: text('pull_request_id')
+      .notNull()
+      .references(() => pullRequests.id, { onDelete: 'cascade' }),
+  },
+  (t) => [
+    primaryKey({ columns: [t.releaseId, t.pullRequestId] }),
+    uniqueIndex('release_pulls_pull_uq').on(t.pullRequestId),
   ]
 );
 
@@ -760,7 +815,9 @@ export type PrEventKind =
   // An agent committed what it learned from this pull request's dismissed change requests.
   | 'learned'
   // GitOrange rebased the pull request's branch onto its base.
-  | 'rebased';
+  | 'rebased'
+  // The version bump the pull request calls for changed (data: { from, to }).
+  | 'version_bump';
 
 export const prEvents = sqliteTable(
   'pr_events',
@@ -785,6 +842,7 @@ export const prEvents = sqliteTable(
         'withdrawn',
         'learned',
         'rebased',
+        'version_bump',
       ],
     }).notNull(),
     // state_changed: the state it changed to.
@@ -841,6 +899,9 @@ export const auditActions = [
   'repository.created',
   'repository.deleted',
   'instance.settings',
+  'release.created',
+  'release.updated',
+  'pull.version_bump',
 ] as const;
 export type AuditAction = (typeof auditActions)[number];
 /** person: a member. agent: a reviewer agent. ai: GitOrange AI deciding for `actor_id`. system: GitOrange itself. */

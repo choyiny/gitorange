@@ -16,6 +16,7 @@ import { ensureHeadReview } from '../review/head';
 import { publishChange } from '../live/publish';
 import { ensureStacking } from '../stack/discover';
 import { landTargetIs, landTargetOf } from './land-target';
+import type { Bump } from './semver';
 
 /**
  * The commits a PR compares: live branches while open; once merged, the landed commits (or, for a squash-era merge,
@@ -77,6 +78,8 @@ export async function openPull(opts: {
   createdVia?: string | null;
   sessionLabel?: string | null;
   request?: string | null;
+  /** The release this change calls for; null/absent: none said. */
+  versionBump?: Bump | null;
   /** Runs follow-up work after the response. */
   after: (work: Promise<unknown>) => void;
 }): Promise<OpenPullResult> {
@@ -145,6 +148,7 @@ export async function openPull(opts: {
       createdVia: opts.createdVia ?? null,
       sessionLabel: opts.sessionLabel ?? null,
       request: opts.request ?? null,
+      versionBump: opts.versionBump ?? null,
       createdAt: now,
       updatedAt: now,
     }),

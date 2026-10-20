@@ -11,6 +11,7 @@ import {
 import { findRepo, gitFor, permissionsFor } from '../lib/repos';
 import { usersById } from '../lib/users';
 import { addComment, openPull, pullShas } from '../lib/pulls';
+import { BUMPS, type Bump } from '../lib/semver';
 import { actionsConfigured, rerun } from '../actions/trigger';
 import { landPull } from '../merge/land';
 import { rebaseTips, rebaseView, retryRebase } from '../merge/rebase';
@@ -539,6 +540,9 @@ const getPullRequest: ToolModule = {
           created_via: pr.createdVia,
           session: pr.sessionLabel,
           request: pr.request,
+          version_bump: pr.versionBump,
+          // Filled in with the releases lookup.
+          released_in: null,
           commits: commits.map((c) => ({
             sha: c.hash.slice(0, 7),
             message: c.message.split('\n')[0],
@@ -679,6 +683,13 @@ const createPullRequest: ToolModule = {
             "The person's original request that led to this change, in their own words (at most 4000 characters), " +
             'not your summary of it.',
         },
+        version_bump: {
+          type: 'string',
+          enum: [...BUMPS],
+          description:
+            'The release this change calls for: "major" (breaking), "minor" (a new feature) or "patch" (a fix). ' +
+            'Optional; leave it out when unsure.',
+        },
       },
       required: ['repository', 'head', 'title'],
     },
@@ -690,6 +701,14 @@ const createPullRequest: ToolModule = {
     // Checked before anything is opened: a refused call leaves no pull request behind.
     const sessionLabel = optionalText(args, 'session', SESSION_MAX, true);
     const request = optionalText(args, 'request', REQUEST_MAX);
+    const versionBump = args.version_bump ?? null;
+    if (
+      versionBump !== null &&
+      !BUMPS.includes(versionBump as (typeof BUMPS)[number])
+    )
+      throw new McpToolError(
+        `version_bump must be one of ${BUMPS.join(', ')}.`
+      );
     const result = await openPull({
       env: ctx.env,
       db: ctx.db,
@@ -705,6 +724,7 @@ const createPullRequest: ToolModule = {
       createdVia: ctx.clientId ? await appName(ctx.db, ctx.clientId) : null,
       sessionLabel,
       request,
+      versionBump: versionBump as Bump | null,
       after: ctx.after,
     });
     if (!result.ok) throw new McpToolError(result.error);

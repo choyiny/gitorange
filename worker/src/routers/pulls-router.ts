@@ -84,6 +84,9 @@ import {
   withdrawApproval,
 } from '../review/approvals';
 import { landShas, landTargetOf } from '../lib/land-target';
+import { recordAudit } from '../lib/audit';
+import { BUMPS } from '../lib/semver';
+import { recordEvent } from '../pulls/events';
 
 export const pullsRouter = new OpenAPIHono<RepoEnv>({
   defaultHook: validationHook,
@@ -119,6 +122,10 @@ const pullSchema = z
     createdAt: z.string(),
     updatedAt: z.string(),
     commentCount: z.number(),
+    /** The release this change calls for; null: it does not say. */
+    versionBump: z.enum(BUMPS).nullable(),
+    /** The tag of the release that shipped it; null until one does. */
+    releasedIn: z.string().nullable(),
   })
   .openapi('PullRequest');
 
@@ -157,6 +164,9 @@ function serializePull(
     createdAt: pr.createdAt.toISOString(),
     updatedAt: pr.updatedAt.toISOString(),
     commentCount,
+    versionBump: pr.versionBump,
+    // Filled in with the releases lookup.
+    releasedIn: null as string | null,
   };
 }
 
@@ -590,6 +600,7 @@ const createPullRoute = createRoute({
             body: z.string().max(65536).default(''),
             base: z.string().min(1),
             head: z.string().min(1),
+            versionBump: z.enum(BUMPS).nullable().optional(),
           }),
         },
       },
@@ -622,6 +633,7 @@ pullsRouter.openapi(createPullRoute, async (c) => {
     body: body.body,
     base: body.base,
     head: body.head,
+    versionBump: body.versionBump ?? null,
     after: (work) => c.executionCtx.waitUntil(work),
   });
   if (!result.ok) return c.json({ error: result.error }, result.status);
@@ -899,6 +911,7 @@ const updatePullRoute = createRoute({
             title: z.string().min(1).max(256).optional(),
             body: z.string().max(65536).optional(),
             state: z.enum(['open', 'closed']).optional(),
+            versionBump: z.enum(BUMPS).nullable().optional(),
           }),
         },
       },
@@ -918,12 +931,15 @@ pullsRouter.openapi(updatePullRoute, async (c) => {
   if (!c.get('perms').write && pr.authorId !== user.id)
     return c.json({ error: 'Forbidden' }, 403);
   const body = c.req.valid('json');
-  if (pr.state === 'merged' && body.state)
+  if (pr.state === 'merged' && (body.state || body.versionBump !== undefined))
     return c.json({ error: 'This pull request is already merged' }, 400);
   const now = new Date();
   const patch: Partial<PullRequest> = { updatedAt: now };
   if (body.title !== undefined) patch.title = body.title.trim();
   if (body.body !== undefined) patch.body = body.body;
+  const bumpChanged =
+    body.versionBump !== undefined && body.versionBump !== pr.versionBump;
+  if (bumpChanged) patch.versionBump = body.versionBump;
   if (body.state === 'closed' && pr.state === 'open') {
     patch.state = 'closed';
     patch.closedAt = now;
@@ -945,6 +961,24 @@ pullsRouter.openapi(updatePullRoute, async (c) => {
     .update(pullRequests)
     .set(patch)
     .where(eq(pullRequests.id, pr.id));
+  if (bumpChanged) {
+    const change = { from: pr.versionBump, to: body.versionBump ?? null };
+    await recordAudit(c.get('db'), {
+      repositoryId: pr.repositoryId,
+      actorId: user.id,
+      action: 'pull.version_bump',
+      target: `#${pr.number}`,
+      pull: pr.number,
+      data: change,
+    });
+    await recordEvent(c.get('db'), {
+      repositoryId: pr.repositoryId,
+      pullRequestId: pr.id,
+      kind: 'version_bump',
+      data: change,
+      actorId: user.id,
+    });
+  }
   if (patch.state === 'closed') {
     // Children stacked on its branch go back to the land target; a reconcile restacks them.
     c.executionCtx.waitUntil(onPullClosed(c.env, c.get('db'), pr, 'closed'));
