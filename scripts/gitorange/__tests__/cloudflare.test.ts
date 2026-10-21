@@ -196,9 +196,15 @@ describe('restCloudflare', () => {
     expect(hit.calls[0]!.url.pathname).toMatch(/\/objects\/k\/x$/);
   });
 
-  it('dnsRecords filters by exact name and returns type and content', async () => {
-    const { fetch, calls } = fakeFetch(() =>
-      ok([{ name: 'git.example.com', type: 'A', content: '192.0.2.1' }])
+  it('dns reads go to cloudflare-dns.com without a token', async () => {
+    const { fetch, calls } = fakeFetch((c) =>
+      Response.json({
+        Status: 0,
+        Answer:
+          c.url.searchParams.get('type') === 'A'
+            ? [{ name: 'git.example.com.', type: 1, data: '192.0.2.1' }]
+            : [],
+      })
     );
     expect(
       await restCloudflare('t', fetch, noSleep).dnsRecords(
@@ -206,10 +212,10 @@ describe('restCloudflare', () => {
         'git.example.com'
       )
     ).toEqual([{ type: 'A', content: '192.0.2.1' }]);
-    expect(calls[0]!.url.pathname).toBe('/client/v4/zones/z1/dns_records');
-    expect(calls[0]!.url.searchParams.get('name.exact')).toBe(
-      'git.example.com'
-    );
+    for (const c of calls) {
+      expect(c.url.origin).toBe('https://cloudflare-dns.com');
+      expect(c.url.searchParams.get('name')).toBe('git.example.com');
+    }
   });
 
   it('workerRoutes lists the zone routes with their script', async () => {

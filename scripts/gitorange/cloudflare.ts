@@ -1,5 +1,6 @@
 // Typed Cloudflare REST client for the installer. Never logs or echoes the token.
 
+import { publicDns } from './public-dns.ts';
 export class CloudflareError extends Error {
   status: number;
   codes: number[];
@@ -93,6 +94,7 @@ export function restCloudflare(
   const sleep =
     options.sleep ?? ((ms: number) => new Promise((r) => setTimeout(r, ms)));
   const timeoutMs = options.timeoutMs ?? 30_000;
+  const dns = publicDns(fetchImpl, { sleep: options.sleep });
 
   /** One HTTP exchange. GETs retry up to 3 times on 429/5xx; everything else is sent once. */
   async function send(
@@ -261,14 +263,10 @@ export function restCloudflare(
       return rows.map((r) => ({ hostname: r.hostname, service: r.service }));
     },
 
-    // GET /zones/{z}/dns_records?name.exact= (wrangler cloudflare@5.2 resources/dns/records list; `name.exact`
-    // per developers.cloudflare.com/api/resources/dns/subresources/records/methods/list/).
-    async dnsRecords(zoneId, name) {
-      const rows = await list<{ type: string; content: string }>(
-        `/zones/${enc(zoneId)}/dns_records`,
-        { perPage: 100, query: { 'name.exact': name } }
-      );
-      return rows.map((r) => ({ type: r.type, content: r.content }));
+    // Public DNS (cloudflare-dns.com), not the zone's records API: `wrangler login` cannot grant
+    // `dns_records:read`. The zone id is unused; what resolvers answer is what the internet sees.
+    async dnsRecords(_zoneId, name) {
+      return dns.records(name);
     },
 
     // GET /zones/{z}/workers/routes -> [{ id, pattern, script? }] (wrangler cloudflare@5.2 resources/workers/routes
