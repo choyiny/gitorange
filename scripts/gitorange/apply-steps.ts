@@ -12,7 +12,7 @@ import {
   isGenerated,
 } from './config.ts';
 import type { Runner } from './runner.ts';
-import { checkR2Keys, withSecretsFile } from './secrets.ts';
+import { checkR2Keys, generateAuthSecret, withSecretsFile } from './secrets.ts';
 import type { Source } from './source.ts';
 import type { InstallState } from './state.ts';
 
@@ -36,19 +36,48 @@ export type Optional = {
   analytics?: string;
 };
 
-/** Optional credentials, as recorded in `state.skipped` when not supplied. */
+/**
+ * Optional credentials the operator types, as recorded in `state.skipped` when not supplied, and
+ * the worker secrets each one sets.
+ */
 export const OPTIONAL_ITEMS = [
   {
     id: 'r2-keys',
     label: 'R2 upload keys (Git LFS, Actions cache)',
     has: (o: Optional) => Boolean(o.r2),
+    secrets: ['R2_ACCESS_KEY_ID', 'R2_SECRET_ACCESS_KEY'],
   },
   {
     id: 'analytics-token',
     label: 'Usage & cost analytics token',
     has: (o: Optional) => Boolean(o.analytics),
+    secrets: ['CF_ANALYTICS_TOKEN'],
   },
 ] as const;
+
+/** The optional items whose secrets the worker (`have`) lacks, by id. */
+export function missingOptional(have: string[]): string[] {
+  return OPTIONAL_ITEMS.filter((i) =>
+    i.secrets.some((n) => !have.includes(n))
+  ).map((i) => i.id);
+}
+
+/** The secret names of the optional items `ids`. */
+export const optionalSecretNames = (ids: string[]): string[] =>
+  OPTIONAL_ITEMS.filter((i) => ids.includes(i.id)).flatMap((i) => [
+    ...i.secrets,
+  ]);
+
+/**
+ * The generated secrets the worker (`have`) lacks. Never `SETUP_CODE_HASH`: the setup code belongs
+ * to a fresh install, and install adds it itself.
+ */
+export function generatedSecrets(have: string[]): Record<string, string> {
+  const out: Record<string, string> = {};
+  if (!have.includes('BETTER_AUTH_SECRET'))
+    out.BETTER_AUTH_SECRET = generateAuthSecret();
+  return out;
+}
 
 /** `prev` minus what `o` supplies; `null` means every optional item was offered. */
 export function skippedAfter(prev: string[] | null, o: Optional): string[] {
@@ -258,6 +287,10 @@ export async function readDoNamespaceIds(
   return found;
 }
 
+/** Whether `ids` holds every Durable Object namespace id the worker reads. */
+export const doIdsComplete = (ids: Record<string, string>): boolean =>
+  Object.values(DO_VARS).every((v) => Boolean(ids[v]));
+
 export function sameIds(
   a: Record<string, string>,
   b: Record<string, string>
@@ -317,12 +350,14 @@ export async function setupStatus(
 
 /**
  * `/.well-known/gitorange` must report this installation at `version` (retried every 5 s for
- * 60 s), then setup must not be open without a code. Returns the setup status.
+ * 60 s), then setup must not be open without a code. Returns the setup status. `resume` is the
+ * command a failure tells the person to run (default: `install --resume`).
  */
 export async function verifyAt(
   ctx: Ctx,
   s: InstallState,
-  version: string
+  version: string,
+  resume: string = resumeCommand(s, ctx.source)
 ): Promise<SetupStatus> {
   const url = `${s.baseUrl}/.well-known/gitorange`;
   let last = '';
@@ -346,7 +381,7 @@ export async function verifyAt(
     }
     if (attempt >= VERIFY_TRIES) {
       const cert = s.inputs.hostname
-        ? ` A custom domain's certificate can take several minutes to issue; wait, then run: ${resumeCommand(s, ctx.source)}`
+        ? ` A custom domain's certificate can take several minutes to issue; wait, then run: ${resume}`
         : '';
       throw new Error(
         `${url} did not report installation ${s.installationId} at version ${version} within 60 s. Last response: ${last}${cert}`
@@ -358,7 +393,7 @@ export async function verifyAt(
   const st = await setupStatus(ctx, s);
   if (st.setupRequired && !st.codeRequired) {
     throw new Error(
-      `${s.baseUrl}/api/setup/status reports setup open without a setup code: anyone could claim this instance. Run ${resumeCommand(s, ctx.source)}.`
+      `${s.baseUrl}/api/setup/status reports setup open without a setup code: anyone could claim this instance. Run ${resume}.`
     );
   }
   return st;

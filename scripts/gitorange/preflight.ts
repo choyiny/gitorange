@@ -92,6 +92,32 @@ export function routeCovers(pattern: string, host: string): boolean {
   return h.startsWith('*') ? want.endsWith(h.slice(1)) : h === want;
 }
 
+export const DOCKER_NOT_INSTALLED =
+  'Docker is not installed. GitOrange runs Actions jobs in containers, and deploying builds the runner image with Docker. Install Docker Desktop (https://docs.docker.com/get-docker/), start it, then run the same command again.';
+export const DOCKER_NOT_RUNNING =
+  'Docker is installed but not running. Start Docker Desktop (or the Docker daemon), then run the same command again.';
+
+/** Every deploy builds the runner image: what is wrong with Docker here, or null when it answers. */
+export async function dockerProblem(runner: Runner): Promise<string | null> {
+  try {
+    const v = await runner.run('docker', ['--version']);
+    if (v.code !== 0) return DOCKER_NOT_INSTALLED;
+  } catch {
+    return DOCKER_NOT_INSTALLED;
+  }
+  try {
+    const res = await runner.run('docker', [
+      'info',
+      '--format',
+      '{{.ServerVersion}}',
+    ]);
+    if (res.code === 0) return null;
+  } catch {
+    // falls through: the daemon did not answer
+  }
+  return DOCKER_NOT_RUNNING;
+}
+
 const one = (check: string, message: string, fix: string): Outcome => ({
   failures: [{ check, message, fix }],
 });
@@ -295,31 +321,10 @@ export async function preflight(
 
   // Two failures, each with the whole text in `message` (no separate fix line).
   const docker = async (): Promise<Outcome> => {
-    const fail = (message: string): Outcome => ({
-      failures: [{ check: 'docker', message, fix: '' }],
-    });
-    const notInstalled = fail(
-      'Docker is not installed. GitOrange runs Actions jobs in containers, and deploying builds the runner image with Docker. Install Docker Desktop (https://docs.docker.com/get-docker/), start it, then run the same command again.'
-    );
-    try {
-      const v = await runner.run('docker', ['--version']);
-      if (v.code !== 0) return notInstalled;
-    } catch {
-      return notInstalled;
-    }
-    try {
-      const res = await runner.run('docker', [
-        'info',
-        '--format',
-        '{{.ServerVersion}}',
-      ]);
-      if (res.code === 0) return { failures: [] };
-    } catch {
-      // falls through: the daemon did not answer
-    }
-    return fail(
-      'Docker is installed but not running. Start Docker Desktop (or the Docker daemon), then run the same command again.'
-    );
+    const problem = await dockerProblem(runner);
+    return problem
+      ? { failures: [{ check: 'docker', message: problem, fix: '' }] }
+      : { failures: [] };
   };
 
   const noop = async (): Promise<Outcome> => ({ failures: [] });

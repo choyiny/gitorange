@@ -45,6 +45,13 @@ export interface FakeCloudflareSeed {
   >;
   /** zone id -> Workers routes */
   routes?: Record<string, { pattern: string; script: string | null }[]>;
+  /**
+   * D1 uuid -> names in its `d1_migrations` table, answered to `SELECT name FROM d1_migrations`;
+   * a uuid without an entry has no such table (the query fails like D1's).
+   */
+  d1Migrations?: Record<string, string[]>;
+  /** D1 uuid -> its other table names, answered to `SELECT name FROM sqlite_master …`. */
+  d1Tables?: Record<string, string[]>;
 }
 
 export type FakeCloudflare = Cloudflare & {
@@ -139,6 +146,15 @@ export function fakeCloudflare(seed: FakeCloudflareSeed = {}): FakeCloudflare {
       const db = state.d1.find((d) => d.uuid === id);
       if (!db) throw new Error(`fakeCloudflare: no D1 ${id}`);
       db.queries.push(sql);
+      if (/^SELECT name FROM d1_migrations/.test(sql)) {
+        const names = seed.d1Migrations?.[id];
+        if (!names)
+          throw new Error('no such table: d1_migrations: SQLITE_ERROR');
+        return names.map((name) => ({ name }));
+      }
+      if (/^SELECT name FROM sqlite_master/.test(sql)) {
+        return (seed.d1Tables?.[id] ?? []).map((name) => ({ name }));
+      }
       return [];
     },
     async listR2(a) {

@@ -34,6 +34,7 @@ import {
   type InstallState,
 } from './state.ts';
 import { findState, status, UsageError } from './status.ts';
+import { upgrade } from './upgrade.ts';
 
 export const usage = (
   source: Source
@@ -42,6 +43,7 @@ export const usage = (
 Commands:
   install    Create or update a GitOrange installation on Cloudflare
   status     Show a recorded installation and check that it answers
+  upgrade    Move an installation to this package's version (npx only)
 
 install options:
   --name <name>          Installation name (default: gitorange)
@@ -62,6 +64,15 @@ install options:
 
 status options:
   --name <name>          Which installation (default: the only one recorded)
+
+upgrade options:
+  --name <name>          Which installation (default: the only one recorded)
+  --plan                 Only show what would change, then print the apply command
+  --expect-plan <digest> Apply only if the plan still has this digest
+  --resume               Continue a failed upgrade
+  --replace-custom-code  Replace a running version that is not a release with this one
+  --yes                  Apply without asking (required when not in a terminal); credentials
+                         the worker lacks are then left out and listed (add them later)
 `;
 
 const DEFAULT_NAME = 'gitorange';
@@ -102,6 +113,27 @@ const INSTALL_OPTIONS = {
   'new-setup-code': { type: 'boolean' },
   yes: { type: 'boolean' },
 } as const;
+
+type UpgradeFlags = {
+  name?: string;
+  plan?: boolean;
+  'expect-plan'?: string;
+  resume?: boolean;
+  yes?: boolean;
+  'replace-custom-code'?: boolean;
+};
+
+const UPGRADE_OPTIONS = {
+  name: { type: 'string' },
+  plan: { type: 'boolean' },
+  'expect-plan': { type: 'string' },
+  resume: { type: 'boolean' },
+  yes: { type: 'boolean' },
+  'replace-custom-code': { type: 'boolean' },
+} as const;
+
+const NOT_A_TERMINAL =
+  'Not running in a terminal: pass --yes to apply (or --plan to only review).';
 
 const HOST_RE = /^(?=.{1,253}$)([a-z0-9]([a-z0-9-]*[a-z0-9])?\.)+[a-z]{2,}$/i;
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
@@ -174,6 +206,15 @@ export async function main(argv: string[], deps: Deps): Promise<number> {
       const picked = deps.home ? pickInstall(deps.home, values.name) : null;
       const dir = picked ? installDir(deps.home!, picked.slug) : deps.dir;
       return await status(values, { ...deps, dir });
+    }
+    if (command === 'upgrade') {
+      const { values } = parseArgs({
+        args: rest,
+        options: UPGRADE_OPTIONS,
+        strict: true,
+        allowPositionals: false,
+      });
+      return await runUpgrade(values, deps);
     }
   } catch (e) {
     if (e instanceof UsageError || isParseArgsError(e)) {
@@ -401,10 +442,17 @@ function toOffer(s: InstallState): Set<string> {
   );
 }
 
-/** Spec §2: env first, else (in a terminal) a link and masked prompts; empty skips. */
-async function collectOptional(deps: Deps, s: InstallState): Promise<Optional> {
+/**
+ * Spec §2: env first, else (when `prompt`, a terminal) a link and masked prompts; empty skips.
+ * Only the items in `offer` are collected.
+ */
+async function collectOptional(
+  deps: Deps,
+  s: InstallState,
+  offer: Set<string> = toOffer(s),
+  prompt: boolean = deps.io.tty
+): Promise<Optional> {
   const { io, env } = deps;
-  const offer = toOffer(s);
   const optional: Optional = {};
   const later = `add it later with: ${deps.source.command(`install --resume --name ${s.inputs.name}`)}`;
 
@@ -418,7 +466,7 @@ async function collectOptional(deps: Deps, s: InstallState): Promise<Optional> {
         );
       }
       optional.r2 = { id, secret };
-    } else if (io.tty) {
+    } else if (prompt) {
       const n = s.names;
       io.print(
         [
@@ -445,7 +493,7 @@ async function collectOptional(deps: Deps, s: InstallState): Promise<Optional> {
       const problem = await check(fromEnv);
       if (problem) throw new Error(`GITORANGE_CF_ANALYTICS_TOKEN: ${problem}`);
       optional.analytics = fromEnv;
-    } else if (io.tty) {
+    } else if (prompt) {
       io.print(
         [
           '',
@@ -478,9 +526,7 @@ async function runInstall(f: InstallFlags, deps: Deps): Promise<number> {
   checkFlags(f);
   // Review Focus 4: before the token or any Cloudflare call.
   if (!io.tty && !f.plan && !f.yes) {
-    io.print(
-      'Not running in a terminal: pass --yes to apply (or --plan to only review).'
-    );
+    io.print(NOT_A_TERMINAL);
     return 2;
   }
 
@@ -511,6 +557,15 @@ async function runInstall(f: InstallFlags, deps: Deps): Promise<number> {
           f.name === undefined
             ? `No installation found to resume in ${ctx.dir}.`
             : `No installation named ${f.name} found in ${ctx.dir}.`
+        );
+        return 1;
+      }
+      if (
+        found.status === 'upgrading' ||
+        (found.status === 'failed' && found.upgradeTarget !== undefined)
+      ) {
+        io.print(
+          `An upgrade to ${found.upgradeTarget} is unfinished; run ${deps.source.command(`upgrade --resume --name ${found.inputs.name}`)}.`
         );
         return 1;
       }
@@ -652,6 +707,49 @@ async function runInstall(f: InstallFlags, deps: Deps): Promise<number> {
   } catch (e) {
     if (e instanceof UsageError) throw e;
     // A PlanStop's message is the text meant for the person, like every other failure here.
+    io.print((e as Error).message);
+    return 1;
+  }
+}
+
+/** `upgrade` (spec §6): package mode only; a checkout points at npx. */
+async function runUpgrade(f: UpgradeFlags, deps: Deps): Promise<number> {
+  const { io, home } = deps;
+  if (home === null) {
+    io.print(
+      `Upgrades run from npm: npx gitorange adopt --from ${deps.configDir}, then npx gitorange upgrade.`
+    );
+    return 2;
+  }
+  if (!io.tty && !f.plan && !f.yes) {
+    io.print(NOT_A_TERMINAL);
+    return 2;
+  }
+  const picked = pickInstall(home, f.name);
+  let token: string;
+  try {
+    token = await deps.token();
+  } catch (e) {
+    io.print((e as Error).message);
+    return 1;
+  }
+  const { env: _env, token: _t, cloudflare, home: _h, ...rest } = deps;
+  const d = installDir(home, picked.slug);
+  const ctx: Ctx = { ...rest, cf: cloudflare(token), dir: d, configDir: d };
+  try {
+    await upgrade(ctx, {
+      state: picked.state,
+      yes: Boolean(f.yes),
+      expectPlan: f['expect-plan'],
+      replaceCustomCode: Boolean(f['replace-custom-code']),
+      resume: Boolean(f.resume),
+      plan: Boolean(f.plan),
+      // Credentials the worker lacks: from the env, else masked prompts unless --yes. Never a stop.
+      askOptional: (missing) =>
+        collectOptional(deps, picked.state, new Set(missing), io.tty && !f.yes),
+    });
+    return 0;
+  } catch (e) {
     io.print((e as Error).message);
     return 1;
   }

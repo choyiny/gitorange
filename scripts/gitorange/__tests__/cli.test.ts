@@ -4,6 +4,7 @@ import {
   mkdirSync,
   mkdtempSync,
   readdirSync,
+  readFileSync,
   rmSync,
   statSync,
   writeFileSync,
@@ -22,6 +23,7 @@ import {
 } from '../cli.ts';
 import type { Io } from '../collect.ts';
 import { installationIdOf, resourceNames } from '../names.ts';
+import { R2_MARKER_KEY } from '../observe.ts';
 import type { RunResult } from '../runner.ts';
 import { checkoutSource, packageSource } from '../source.ts';
 import {
@@ -90,6 +92,10 @@ function harness(
     setupStatus?: { setupRequired: boolean; codeRequired: boolean };
     onCloudflare?: (cf: FakeCloudflare) => void;
     docker?: Record<string, () => RunResult | Promise<RunResult>>;
+    /** What `wrangler secret list` answers (default: exit 1, no such worker). */
+    secretList?: RunResult;
+    /** What a deploy answers (default: success). */
+    deployResult?: RunResult;
     /** Package mode: state and config go under this home. */
     pkg?: { home: string; source: ReturnType<typeof packageSource> };
   } = {}
@@ -97,20 +103,35 @@ function harness(
   let cf: FakeCloudflare | null = null;
   let tokenCalls = 0;
   const ok = (stdout = ''): RunResult => ({ code: 0, stdout, stderr: '' });
+  const notFound: RunResult = { code: 1, stdout: '', stderr: 'not found' };
+  /** Each deploy's secrets file (null: none). */
+  const deploys: (Record<string, string> | null)[] = [];
+  const deployed = (args: string[]): RunResult => {
+    const i = args.indexOf('--secrets-file');
+    deploys.push(
+      i >= 0
+        ? (JSON.parse(readFileSync(args[i + 1]!, 'utf8')) as Record<
+            string,
+            string
+          >)
+        : null
+    );
+    return opts.deployResult ?? ok();
+  };
   const runner = fakeRunner({
     ...(opts.docker ?? { docker: () => ok('27.0.0\n') }),
     'git rev-parse': () => ok(`${VERSION}\n`),
     'git status': () => ok(''),
     [process.execPath]: (args) => {
-      if (args[1] === 'deploy' || args[1] === 'd1') return ok();
-      if (args[1] === 'secret')
-        return { code: 1, stdout: '', stderr: 'not found' };
+      if (args[1] === 'deploy') return deployed(args);
+      if (args[1] === 'd1') return ok();
+      if (args[1] === 'secret') return opts.secretList ?? notFound;
       throw new Error(`unexpected wrangler ${args.join(' ')}`);
     },
     yarn: (args) => {
-      if (args[1] === 'deploy') return ok();
+      if (args[1] === 'deploy') return deployed(args);
       if (args[1] === 'wrangler' && args[2] === 'secret')
-        return { code: 1, stdout: '', stderr: 'not found' };
+        return opts.secretList ?? notFound;
       if (args[1] === 'wrangler' && args[2] === 'd1') return ok();
       throw new Error(`unexpected yarn ${args.join(' ')}`);
     },
@@ -161,6 +182,9 @@ function harness(
         opts.setupStatus ?? { setupRequired: true, codeRequired: true }
       );
     }
+    if (url.startsWith(`https://${ACCOUNT}.r2.cloudflarestorage.com/`)) {
+      return new Response('', { status: 200 });
+    }
     throw new Error(`unexpected fetch ${url}`);
   }) as typeof fetch;
   const deps: Deps = {
@@ -191,6 +215,7 @@ function harness(
   };
   return {
     deps,
+    deploys,
     out,
     asked,
     confirms,
@@ -868,4 +893,289 @@ describe('docker', () => {
     expect(await main(['status'], h.deps)).toBe(0);
     expect(h.runner.calls.filter((c) => c.cmd === 'docker')).toEqual([]);
   });
+});
+
+describe('upgrade', () => {
+  const home = () => join(root, 'home');
+  const idir = () => join(home(), 'acme');
+  const seedInstall = (over: Partial<InstallState> = {}) => {
+    const s = {
+      ...installedState(),
+      deployedVersion: '1.2.0',
+      doNamespaceIds: {
+        JOB_RUNNER_NAMESPACE_ID: 'ns-job',
+        MERGE_RESOLVER_NAMESPACE_ID: 'ns-merge',
+        AGENT_REVIEWER_NAMESPACE_ID: 'ns-review',
+        LIVE_NAMESPACE_ID: 'ns-live',
+      },
+      ...over,
+    };
+    writeState(idir(), s);
+    return s;
+  };
+  const seedFor = (s: InstallState): FakeCloudflareSeed => {
+    const marker = (key: string) => ({
+      [R2_MARKER_KEY]: JSON.stringify({
+        installationId: s.installationId,
+        ownershipNonce: s.ownershipNonce,
+        key,
+      }),
+    });
+    return {
+      d1: [{ uuid: 'd1-x', name: 'acme-db' }],
+      d1Migrations: { 'd1-x': ['0000_init.sql'] },
+      r2: {
+        'acme-lfs': marker('lfs'),
+        'acme-actions-logs': marker('actionsLogs'),
+        'acme-actions-cache': marker('actionsCache'),
+      },
+      workflows: [
+        { name: 'acme-actions-run', scriptName: 'acme' },
+        { name: 'acme-merge-resolution', scriptName: 'acme' },
+      ],
+      workerVars: {
+        acme: {
+          GITORANGE_INSTALLATION: JSON.stringify({
+            installationId: s.installationId,
+            ownershipNonce: s.ownershipNonce,
+          }),
+        },
+      },
+    };
+  };
+  const secretList = (names: string[]): RunResult => ({
+    code: 0,
+    stdout: JSON.stringify(names.map((name) => ({ name }))),
+    stderr: '',
+  });
+  const ALL = [
+    'BETTER_AUTH_SECRET',
+    'SETUP_CODE_HASH',
+    'R2_ACCESS_KEY_ID',
+    'R2_SECRET_ACCESS_KEY',
+    'CF_ANALYTICS_TOKEN',
+  ];
+  const pkg130 = () => {
+    const pkgRoot = fakePackage(mkdtempSync(join(tmpdir(), 'pkg-')), {
+      version: '1.3.0',
+      commit: 'c'.repeat(40),
+    });
+    copyFileSync(
+      join(cwd, 'wrangler.jsonc.example'),
+      join(pkgRoot, 'wrangler.jsonc.example')
+    );
+    mkdirSync(join(pkgRoot, 'migrations'), { recursive: true });
+    writeFileSync(
+      join(pkgRoot, 'migrations', '0000_init.sql'),
+      'CREATE TABLE a;'
+    );
+    writeFileSync(
+      join(pkgRoot, 'migrations', '0001_more.sql'),
+      'CREATE TABLE b;'
+    );
+    return { home: home(), source: packageSource(pkgRoot) };
+  };
+  /** An installed acme at 1.2.0 under home; the site reports 1.3.0 once a deploy succeeded. */
+  const upgradeHarness = (
+    o: {
+      tty?: boolean;
+      secrets?: string[];
+      prompts?: (string | null)[];
+      running?: () => string;
+      deployResult?: RunResult;
+      state?: Partial<InstallState>;
+      /** Keep the state already under home (a second run). */
+      keep?: boolean;
+    } = {}
+  ) => {
+    const s = o.keep ? readState(idir(), ID)! : seedInstall(o.state);
+    let deployedOk = false;
+    const h = harness({
+      pkg: pkg130(),
+      tty: o.tty,
+      prompts: o.prompts,
+      secretList: secretList(o.secrets ?? ALL),
+      deployResult: o.deployResult,
+      seed: seedFor(s),
+      setupStatus: { setupRequired: false, codeRequired: false },
+      wellKnown: () => {
+        deployedOk = h.deploys.length > 0 && o.deployResult?.code !== 1;
+        return Response.json({
+          installationId: ID,
+          version: deployedOk ? '1.3.0' : (o.running?.() ?? '1.2.0'),
+        });
+      },
+    });
+    return h;
+  };
+
+  it('--help lists upgrade and its options', async () => {
+    const h = harness();
+    expect(await main(['--help'], h.deps)).toBe(0);
+    expect(h.text()).toContain('upgrade');
+    expect(h.text()).toContain('--replace-custom-code');
+  });
+
+  it('upgrade --plan prints the apply command and writes nothing', async () => {
+    const h = upgradeHarness();
+    const before = readFileSync(join(idir(), `${ID}.json`), 'utf8');
+    expect(await main(['upgrade', '--plan'], h.deps)).toBe(0);
+    const text = h.text();
+    expect(text).toContain('Upgrade acme: 1.2.0 → 1.3.0');
+    const digest = /Plan ([0-9a-f]{12})/.exec(text)?.[1];
+    expect(digest).toBeDefined();
+    expect(text).toContain(
+      `npx gitorange@1.3.0 upgrade --name acme --expect-plan ${digest} --yes`
+    );
+    expect(h.deploys).toHaveLength(0);
+    expect(readFileSync(join(idir(), `${ID}.json`), 'utf8')).toBe(before);
+    expect(readdirSync(idir())).toEqual([`${ID}.json`]);
+  });
+
+  it('the printed apply command applies with no digest mismatch', async () => {
+    const p = upgradeHarness();
+    expect(await main(['upgrade', '--plan'], p.deps)).toBe(0);
+    const cmd = p.out.at(-1)!;
+    const h = upgradeHarness();
+    expect(await main(cmd.split(' ').slice(2), h.deps)).toBe(0);
+    expect(h.text()).not.toContain('The plan changed');
+    expect(h.text()).toContain('Upgraded acme to 1.3.0');
+    const s = readState(idir(), ID)!;
+    expect(s.status).toBe('installed');
+    expect(s.deployedVersion).toBe('1.3.0');
+  });
+
+  it('upgrade without tty needs --yes or --plan', async () => {
+    const h = upgradeHarness();
+    expect(await main(['upgrade'], h.deps)).toBe(2);
+    expect(h.text()).toContain(
+      'Not running in a terminal: pass --yes to apply (or --plan to only review).'
+    );
+    expect(h.tokenCalls()).toBe(0);
+  });
+
+  it('a failed deploy prints the upgrade resume command, which completes it', async () => {
+    const first = upgradeHarness({
+      deployResult: { code: 1, stdout: '', stderr: 'boom' },
+    });
+    expect(await main(['upgrade', '--yes', '--name', 'acme'], first.deps)).toBe(
+      1
+    );
+    const printed = /Run: (npx gitorange@1\.3\.0 (.+))$/m.exec(first.text());
+    expect(printed?.[1]).toBe(
+      'npx gitorange@1.3.0 upgrade --resume --name acme'
+    );
+    const failed = readState(idir(), ID)!;
+    expect(failed.status).toBe('failed');
+    expect(failed.upgradeTarget).toBe('1.3.0');
+
+    const again = upgradeHarness({ keep: true, tty: true });
+    expect(await main(printed![2]!.split(' '), again.deps)).toBe(0);
+    expect(again.confirms).toEqual(['Apply this upgrade?']);
+    const s = readState(idir(), ID)!;
+    expect(s.status).toBe('installed');
+    expect(s.deployedVersion).toBe('1.3.0');
+    expect(again.deploys).toHaveLength(1);
+  });
+
+  it('missing R2 keys do not block --yes, and say how to add them', async () => {
+    const h = upgradeHarness({
+      secrets: ['BETTER_AUTH_SECRET', 'SETUP_CODE_HASH', 'CF_ANALYTICS_TOKEN'],
+    });
+    expect(await main(['upgrade', '--yes'], h.deps)).toBe(0);
+    expect(h.asked).toEqual([]);
+    expect(h.deploys).toEqual([null]);
+    const text = h.text();
+    expect(text).toContain(
+      'Missing (you add them): R2_ACCESS_KEY_ID, R2_SECRET_ACCESS_KEY\n'
+    );
+    expect(text).toContain(
+      'Missing (you add them): R2_ACCESS_KEY_ID, R2_SECRET_ACCESS_KEY. Add them with: npx gitorange@1.3.0 install --resume --name acme'
+    );
+    expect(readState(idir(), ID)!.skipped).toEqual(['r2-keys']);
+  });
+
+  it('in a terminal, missing typed credentials are asked for (masked) and deployed', async () => {
+    const h = upgradeHarness({
+      tty: true,
+      secrets: ['BETTER_AUTH_SECRET', 'SETUP_CODE_HASH'],
+      prompts: ['kid', 'ksecret', 'tok'],
+    });
+    expect(await main(['upgrade'], h.deps)).toBe(0);
+    expect(h.confirms).toEqual(['Apply this upgrade?']);
+    expect(h.asked).toEqual([
+      'R2 access key ID',
+      'R2 secret access key',
+      'Analytics API token',
+    ]);
+    expect(h.deploys).toEqual([
+      {
+        R2_ACCESS_KEY_ID: 'kid',
+        R2_SECRET_ACCESS_KEY: 'ksecret',
+        CF_ANALYTICS_TOKEN: 'tok',
+      },
+    ]);
+    expect(h.text()).not.toContain('ksecret');
+    expect(h.text()).not.toContain('Add them with');
+    expect(readState(idir(), ID)!.skipped).toEqual([]);
+  });
+
+  it('in a terminal with --yes, nothing is asked', async () => {
+    const h = upgradeHarness({
+      tty: true,
+      secrets: ['BETTER_AUTH_SECRET', 'SETUP_CODE_HASH'],
+      prompts: ['kid', 'ksecret', 'tok'],
+    });
+    expect(await main(['upgrade', '--yes'], h.deps)).toBe(0);
+    expect(h.asked).toEqual([]);
+    expect(h.deploys).toEqual([null]);
+    expect(readState(idir(), ID)!.skipped).toEqual([
+      'r2-keys',
+      'analytics-token',
+    ]);
+  });
+
+  it('docker missing stops before planning', async () => {
+    seedInstall();
+    const h = harness({
+      pkg: pkg130(),
+      docker: {
+        docker: () => Promise.reject(new Error('spawn docker ENOENT')),
+      },
+    });
+    const before = readFileSync(join(idir(), `${ID}.json`), 'utf8');
+    expect(await main(['upgrade', '--yes'], h.deps)).toBe(1);
+    expect(h.text()).toContain('Docker is not installed.');
+    expect(h.text()).not.toContain('Upgrade acme');
+    expect(h.cf()!.calls).toEqual([]);
+    expect(readFileSync(join(idir(), `${ID}.json`), 'utf8')).toBe(before);
+    expect(readdirSync(idir())).toEqual([`${ID}.json`]);
+  });
+
+  it('checkout mode points at npx', async () => {
+    const h = harness();
+    expect(await main(['upgrade', '--yes'], h.deps)).toBe(2);
+    expect(h.text()).toContain(
+      `Upgrades run from npm: npx gitorange adopt --from ${cwd}, then npx gitorange upgrade.`
+    );
+    expect(h.tokenCalls()).toBe(0);
+  });
+
+  it.each([
+    ['upgrading', {}],
+    ['failed', { upgradeTarget: '1.3.0' }],
+  ] as const)(
+    'install --resume refuses an unfinished upgrade (%s)',
+    async (status, extra) => {
+      seedInstall({ status, upgradeTarget: '1.3.0', ...extra });
+      const h = harness({ pkg: pkg130() });
+      expect(
+        await main(['install', '--resume', '--yes', '--name', 'acme'], h.deps)
+      ).toBe(1);
+      expect(h.text()).toContain(
+        'An upgrade to 1.3.0 is unfinished; run npx gitorange@1.3.0 upgrade --resume --name acme.'
+      );
+      expect(h.deploys).toHaveLength(0);
+    }
+  );
 });
