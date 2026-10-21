@@ -5,6 +5,7 @@ import { basename, dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { parseArgs } from 'node:util';
 import { adoptFromCheckout, pickCheckoutState } from './adopt.ts';
+import { adoptWorker, planAdoptWorker } from './adopt-worker.ts';
 import { install, resumeInstalled, type Ctx, type Optional } from './apply.ts';
 import { assertConfigWritable, OPTIONAL_ITEMS } from './apply-steps.ts';
 import { restCloudflare, type Cloudflare } from './cloudflare.ts';
@@ -45,7 +46,7 @@ Commands:
   install    Create or update a GitOrange installation on Cloudflare
   status     Show a recorded installation and check that it answers
   upgrade    Move an installation to this package's version (npx only)
-  adopt      Take over an installation made from a checkout (npx only)
+  adopt      Take over an installation made from a checkout or by hand (npx only)
 
 install options:
   --name <name>          Installation name (default: gitorange)
@@ -79,7 +80,12 @@ upgrade options:
 adopt options:
   --from <checkout>      The checkout whose installation moves under ~/.gitorange
   --name <name>          Which installation, when the checkout holds several
-  --yes                  Move without asking (required when not in a terminal)
+  --worker <name>        Or: the deployed worker of an installation made without this CLI
+                         (read from Cloudflare; nothing there changes)
+  --account <id|name>    With --worker: its Cloudflare account
+  --plan                 With --worker: only show what would be recorded
+  --expect-plan <digest> With --worker: adopt only if the plan still has this digest
+  --yes                  Adopt without asking (required when not in a terminal)
 `;
 
 const DEFAULT_NAME = 'gitorange';
@@ -143,16 +149,24 @@ type AdoptFlags = {
   from?: string;
   name?: string;
   worker?: string;
+  account?: string;
+  plan?: boolean;
+  'expect-plan'?: string;
   yes?: boolean;
 };
 
-// `worker` is parsed so that `adopt --worker` can say it is not available yet (Task 9 replaces that).
 const ADOPT_OPTIONS = {
   from: { type: 'string' },
   name: { type: 'string' },
   worker: { type: 'string' },
+  account: { type: 'string' },
+  plan: { type: 'boolean' },
+  'expect-plan': { type: 'string' },
   yes: { type: 'boolean' },
 } as const;
+
+/** adopt flags that only `--worker` takes. */
+const WORKER_ONLY = ['account', 'plan', 'expect-plan'] as const;
 
 const movedMessage = (movedTo: string) =>
   `This install moved to ${movedTo}. Run npx gitorange upgrade --name ${basename(movedTo)}.`;
@@ -754,21 +768,27 @@ async function runInstall(f: InstallFlags, deps: Deps): Promise<number> {
   }
 }
 
-/** `adopt --from <checkout>` (spec §7): package mode only. `--worker` comes with Task 9. */
+/** `adopt --from <checkout>` / `adopt --worker <name>` (spec §7): package mode only. */
 async function runAdopt(f: AdoptFlags, deps: Deps): Promise<number> {
   const { io, home } = deps;
   if (home === null) {
     io.print(
-      `Adopting runs from npm: npx gitorange adopt --from ${deps.configDir}.`
+      f.worker !== undefined
+        ? `Adopting runs from npm: npx gitorange adopt --worker ${f.worker}.`
+        : `Adopting runs from npm: npx gitorange adopt --from ${deps.configDir}.`
     );
     return 2;
   }
-  if (f.worker !== undefined) {
-    io.print('adopt --worker is not available yet.');
-    return 2;
+  if (f.from !== undefined && f.worker !== undefined) {
+    throw new UsageError('Pass either --from or --worker, not both.');
+  }
+  if (f.worker !== undefined) return runAdoptWorker(f, f.worker, deps, home);
+  const workerOnly = WORKER_ONLY.find((k) => f[k] !== undefined);
+  if (workerOnly !== undefined) {
+    throw new UsageError(`--${workerOnly} is only for adopt --worker.`);
   }
   if (f.from === undefined) {
-    throw new UsageError('adopt needs --from <checkout>.');
+    throw new UsageError('adopt needs --from <checkout> or --worker <name>.');
   }
   if (f.name !== undefined) {
     const bad = validateName(f.name);
@@ -802,6 +822,83 @@ async function runAdopt(f: AdoptFlags, deps: Deps): Promise<number> {
     io.print(
       `Moved ${picked.inputs.name} to ${r.dir}.\nCheck it: npx gitorange status --name ${r.slug}\nUpgrade it: npx gitorange upgrade --name ${r.slug}`
     );
+    return 0;
+  } catch (e) {
+    if (e instanceof UsageError) throw e;
+    io.print((e as Error).message);
+    return 1;
+  }
+}
+
+/** The apply command for a reviewed `adopt --worker` plan. */
+export function adoptCommand(
+  s: InstallState,
+  digest: string,
+  source: Source
+): string {
+  return source.command(
+    [
+      `adopt --worker ${shellQuote(s.inputs.name)}`,
+      `--account ${shellQuote(s.accountId)}`,
+      `--expect-plan ${digest}`,
+      '--yes',
+    ].join(' ')
+  );
+}
+
+/**
+ * `adopt --worker <name>`: reads the worker from Cloudflare and records it under <home>/<name>/.
+ * Every input comes from the worker; nothing is prompted for but the account and the confirm.
+ */
+async function runAdoptWorker(
+  f: AdoptFlags,
+  worker: string,
+  deps: Deps,
+  home: string
+): Promise<number> {
+  const { io } = deps;
+  if (f.name !== undefined) {
+    throw new UsageError(
+      '--name is only for adopt --from; with --worker the install is named after the worker.'
+    );
+  }
+  const badName = validateName(worker);
+  if (badName) throw new UsageError(`--worker ${worker}: ${badName}`);
+  if (!io.tty && !f.plan && !f.yes) {
+    io.print(NOT_A_TERMINAL);
+    return 2;
+  }
+  let token: string;
+  try {
+    token = await deps.token();
+  } catch (e) {
+    io.print((e as Error).message);
+    return 1;
+  }
+  const { env: _env, token: _t, cloudflare, home: _h, ...rest } = deps;
+  const dir = installDir(home, worker);
+  const ctx: Ctx = { ...rest, cf: cloudflare(token), dir, configDir: dir };
+  try {
+    const accountId = await resolveAccount(ctx.cf, io, f.account);
+    if (f.plan) {
+      if (listStates(dir).length > 0) {
+        io.print(`${dir} already has an install. Nothing was changed.`);
+        return 1;
+      }
+      const p = await planAdoptWorker(ctx, { accountId, worker });
+      io.print(p.report);
+      for (const n of p.notes) io.print(`\n${n}`);
+      io.print(`\nPlan ${p.digest}\n\nTo apply it:`);
+      io.print(adoptCommand(p.state, p.digest, deps.source));
+      return 0;
+    }
+    await adoptWorker(ctx, {
+      accountId,
+      worker,
+      yes: Boolean(f.yes),
+      expectPlan: f['expect-plan'],
+      home,
+    });
     return 0;
   } catch (e) {
     if (e instanceof UsageError) throw e;

@@ -1253,10 +1253,12 @@ describe('adopt', () => {
     expect(h.text()).toContain('adopt needs --from');
   });
 
-  it('--worker is not available yet', async () => {
+  it('worker-only flags with --from are usage errors', async () => {
     const h = pkgHarness();
-    expect(await main(['adopt', '--worker', 'acme', '--yes'], h.deps)).toBe(2);
-    expect(h.text()).toContain('not available yet');
+    expect(
+      await main(['adopt', '--from', cwd, '--plan', '--yes'], h.deps)
+    ).toBe(2);
+    expect(h.text()).toContain('--plan is only for adopt --worker.');
   });
 
   it('checkout mode points at npx', async () => {
@@ -1274,5 +1276,93 @@ describe('adopt', () => {
     expect(await main(['adopt', '--from', cwd, '--yes'], h.deps)).toBe(1);
     expect(h.text()).toContain(`${MOVED()} already has an install`);
     expect(readState(dir, ID)!.movedTo).toBeUndefined();
+  });
+});
+
+describe('adopt --worker', () => {
+  const home = () => join(root, 'home');
+  const seed: FakeCloudflareSeed = {
+    workers: {
+      acme: [
+        { type: 'd1', name: 'DB', id: 'd1-acme' },
+        { type: 'plain_text', name: 'BASE_URL', text: BASE },
+        { type: 'secret_text', name: 'BETTER_AUTH_SECRET' },
+      ],
+    },
+    d1: [{ uuid: 'd1-acme', name: 'acme-db' }],
+    doNamespaces: [],
+  };
+  const pkgHarness = (o: Parameters<typeof harness>[0] = {}) => {
+    const pkgRoot = fakePackage(mkdtempSync(join(tmpdir(), 'pkg-')), {
+      version: '1.2.0',
+      commit: 'abc123def456',
+    });
+    copyFileSync(
+      new URL('../../../wrangler.jsonc.example', import.meta.url),
+      join(pkgRoot, 'wrangler.jsonc.example')
+    );
+    return harness({
+      seed,
+      wellKnown: () => new Response('', { status: 404 }),
+      ...o,
+      pkg: { home: home(), source: packageSource(pkgRoot) },
+    });
+  };
+
+  it('--plan prints the report and the apply command, which applies; nothing deploys', async () => {
+    const h = pkgHarness();
+    expect(await main(['adopt', '--worker', 'acme', '--plan'], h.deps)).toBe(0);
+    const text = h.text();
+    expect(text).toContain('Adopt worker acme');
+    const digest = /Plan ([0-9a-f]{12})/.exec(text)![1]!;
+    const command = `npx gitorange@1.2.0 adopt --worker acme --account ${ACCOUNT} --expect-plan ${digest} --yes`;
+    expect(text).toContain(command);
+    expect(existsSync(home())).toBe(false);
+
+    const apply = pkgHarness();
+    expect(await main(command.split(' ').slice(2), apply.deps)).toBe(0);
+    const s = listStates(join(home(), 'acme'))[0]!;
+    expect(s.resources.every((r) => r.ownership === 'adopted')).toBe(true);
+    expect(s.adoptedAt).toBe('2026-10-17T00:00:00.000Z');
+    expect(apply.runner.calls).toHaveLength(0);
+    expect(apply.deploys).toHaveLength(0);
+  });
+
+  it('--from and --worker together exit 2', async () => {
+    const h = pkgHarness();
+    expect(
+      await main(['adopt', '--from', cwd, '--worker', 'acme', '--yes'], h.deps)
+    ).toBe(2);
+    expect(h.text()).toContain('Pass either --from or --worker, not both.');
+  });
+
+  it('without a terminal and --yes exits 2; checkout mode points at npx', async () => {
+    const h = pkgHarness();
+    expect(await main(['adopt', '--worker', 'acme'], h.deps)).toBe(2);
+    expect(h.text()).toContain('Not running in a terminal');
+    const c = harness({ seed });
+    expect(await main(['adopt', '--worker', 'acme', '--yes'], c.deps)).toBe(2);
+    expect(c.text()).toContain('npx gitorange adopt --worker acme');
+    expect(c.tokenCalls()).toBe(0);
+  });
+
+  it('a wrong worker name exits 1 and writes nothing', async () => {
+    const h = pkgHarness();
+    expect(await main(['adopt', '--worker', 'nope', '--yes'], h.deps)).toBe(1);
+    expect(h.text()).toContain(`No worker named nope on account ${ACCOUNT}`);
+    expect(existsSync(home())).toBe(false);
+  });
+
+  it('--name with --worker and a bad worker name are usage errors', async () => {
+    const h = pkgHarness();
+    expect(
+      await main(['adopt', '--worker', 'acme', '--name', 'x', '--yes'], h.deps)
+    ).toBe(2);
+    expect(h.text()).toContain(
+      '--name is only for adopt --from; with --worker the install is named after the worker.'
+    );
+    const bad = pkgHarness();
+    expect(await main(['adopt', '--worker', 'A_B', '--yes'], bad.deps)).toBe(2);
+    expect(bad.text()).toContain('--worker A_B:');
   });
 });

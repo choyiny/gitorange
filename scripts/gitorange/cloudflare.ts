@@ -20,6 +20,40 @@ export interface LifecycleRule {
   days: number;
 }
 
+/** One binding from a worker's settings, as the API returns it (fields per binding type). */
+export type WorkerBinding = {
+  type: string;
+  name: string;
+  /** d1 */
+  id?: string;
+  database_id?: string;
+  /** r2_bucket */
+  bucket_name?: string;
+  /** workflow */
+  workflow_name?: string;
+  /** workflow, durable_object_namespace */
+  class_name?: string;
+  script_name?: string;
+  /** durable_object_namespace */
+  namespace_id?: string;
+  /** artifacts */
+  namespace?: string;
+  /** plain_text */
+  text?: string;
+};
+
+/** The `plain_text` bindings of a worker's settings, as name -> value. */
+export function plainTextVars(
+  bindings: WorkerBinding[]
+): Record<string, string> {
+  const vars: Record<string, string> = {};
+  for (const b of bindings) {
+    if (b.type === 'plain_text' && typeof b.text === 'string')
+      vars[b.name] = b.text;
+  }
+  return vars;
+}
+
 export interface Cloudflare {
   listAccounts(): Promise<{ id: string; name: string }[]>;
   workersSubdomain(a: string): Promise<string | null>;
@@ -60,10 +94,20 @@ export interface Cloudflare {
     body: string
   ): Promise<void>;
   listWorkflows(a: string): Promise<{ name: string; scriptName: string }[]>;
+  /** Every binding of the worker (vars, secrets by name, resources); null when it does not exist. */
+  workerSettings(
+    a: string,
+    script: string
+  ): Promise<{ bindings: WorkerBinding[] } | null>;
   workerVars(a: string, script: string): Promise<Record<string, string> | null>;
+  /** `sqlite`: the namespace's storage backend, when the API says. */
   durableObjectNamespaces(
     a: string
-  ): Promise<{ id: string; script: string; class: string }[]>;
+  ): Promise<{ id: string; script: string; class: string; sqlite?: boolean }[]>;
+  /** Containers applications; `namespaceId` links a Durable Object-managed one to its class. */
+  listContainerApps(
+    a: string
+  ): Promise<{ id: string; name: string; namespaceId: string | null }[]>;
 }
 
 export interface RestOptions {
@@ -220,6 +264,14 @@ export function restCloudflare(
       throw e;
     }
   }
+
+  // GET /accounts/{a}/workers/scripts/{s}/settings -> { bindings } (wrangler cloudflare@5.2 resources/workers/scripts/settings); 404 -> null.
+  const workerSettings = async (a: string, script: string) => {
+    const r = await orNull<{ bindings?: WorkerBinding[] }>(
+      `/accounts/${a}/workers/scripts/${enc(script)}/settings`
+    );
+    return r ? { bindings: r.bindings ?? [] } : null;
+  };
 
   const objectPath = (a: string, bucket: string, key: string) =>
     `/accounts/${a}/r2/buckets/${enc(bucket)}/objects/${key.split('/').map(enc).join('/')}`;
@@ -398,27 +450,49 @@ export function restCloudflare(
       return rows.map((r) => ({ name: r.name, scriptName: r.script_name }));
     },
 
-    // GET /accounts/{a}/workers/scripts/{s}/settings -> { bindings: [{ type: 'plain_text', name, text }] } (wrangler cloudflare@5.2 resources/workers/scripts/settings); 404 -> null. Only plain_text vars are returned, so GITORANGE_INSTALLATION must be written as a string var.
+    workerSettings,
+
+    // The `plain_text` bindings of workerSettings. Only plain_text vars are returned, so GITORANGE_INSTALLATION must
+    // be written as a string var.
     async workerVars(a, script) {
-      const r = await orNull<{
-        bindings?: { type: string; name: string; text?: string }[];
-      }>(`/accounts/${a}/workers/scripts/${enc(script)}/settings`);
-      if (!r) return null;
-      const vars: Record<string, string> = {};
-      for (const b of r.bindings ?? []) {
-        if (b.type === 'plain_text' && typeof b.text === 'string')
-          vars[b.name] = b.text;
-      }
-      return vars;
+      const r = await workerSettings(a, script);
+      return r ? plainTextVars(r.bindings) : null;
     },
 
     // GET /accounts/{a}/workers/durable_objects/namespaces (wrangler listDurableObjects; mapped to vars in apply-steps.ts DO_VARS).
+    // `use_sqlite` is the storage backend (wrangler reads it to refuse KV-backed container classes).
     async durableObjectNamespaces(a) {
-      const rows = await list<{ id: string; script: string; class: string }>(
-        `/accounts/${a}/workers/durable_objects/namespaces`,
-        { perPage: 1000 }
-      );
-      return rows.map((r) => ({ id: r.id, script: r.script, class: r.class }));
+      const rows = await list<{
+        id: string;
+        script: string;
+        class: string;
+        use_sqlite?: boolean;
+      }>(`/accounts/${a}/workers/durable_objects/namespaces`, {
+        perPage: 1000,
+      });
+      return rows.map((r) => ({
+        id: r.id,
+        script: r.script,
+        class: r.class,
+        ...(typeof r.use_sqlite === 'boolean' ? { sqlite: r.use_sqlite } : {}),
+      }));
+    },
+
+    // GET /accounts/{a}/containers/applications -> [{ id, name, durable_objects?: { namespace_id } }] (wrangler
+    // ApplicationsService.listApplications, OpenAPI.BASE `/accounts/{a}/containers`, v4 envelope; not paged).
+    async listContainerApps(a) {
+      const rows = await call<
+        {
+          id: string;
+          name: string;
+          durable_objects?: { namespace_id?: string } | null;
+        }[]
+      >('GET', `/accounts/${a}/containers/applications`);
+      return rows.map((r) => ({
+        id: r.id,
+        name: r.name,
+        namespaceId: r.durable_objects?.namespace_id ?? null,
+      }));
     },
   };
 }

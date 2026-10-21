@@ -1,6 +1,10 @@
 import { mkdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
-import type { Cloudflare } from '../cloudflare.ts';
+import {
+  plainTextVars,
+  type Cloudflare,
+  type WorkerBinding,
+} from '../cloudflare.ts';
 import type { RunOptions, RunResult, Runner } from '../runner.ts';
 
 type Handler = (args: string[]) => RunResult | Promise<RunResult>;
@@ -33,9 +37,21 @@ export interface FakeCloudflareSeed {
   workflows?: { name: string; scriptName: string }[];
   /** script name -> plain_text vars; absent script = 404 */
   workerVars?: Record<string, Record<string, string>>;
+  /**
+   * script name -> every binding of its settings (vars come from its plain_text ones). A script
+   * with only `workerVars` has those as its plain_text bindings; absent from both = 404.
+   */
+  workers?: Record<string, WorkerBinding[]>;
+  /** Containers applications; absent = none. */
+  containerApps?: { id: string; name: string; namespaceId: string | null }[];
   zones?: { id: string; name: string; status: string }[];
   subdomain?: string | null;
-  doNamespaces?: { id: string; script: string; class: string }[];
+  doNamespaces?: {
+    id: string;
+    script: string;
+    class: string;
+    sqlite?: boolean;
+  }[];
   workerDomains?: { hostname: string; service: string }[];
   artifactsNamespaces?: string[];
   /** zone id -> DNS records */
@@ -183,13 +199,35 @@ export function fakeCloudflare(seed: FakeCloudflareSeed = {}): FakeCloudflare {
       await enter('listWorkflows', [a]);
       return seed.workflows ?? [];
     },
+    async workerSettings(a, script) {
+      await enter('workerSettings', [a, script]);
+      const bindings = seed.workers?.[script];
+      if (bindings) return { bindings: structuredClone(bindings) };
+      const vars = seed.workerVars?.[script];
+      return vars
+        ? {
+            bindings: Object.entries(vars).map(([name, text]) => ({
+              type: 'plain_text',
+              name,
+              text,
+            })),
+          }
+        : null;
+    },
     async workerVars(a, script) {
       await enter('workerVars', [a, script]);
-      return seed.workerVars?.[script] ?? null;
+      const bindings = seed.workers?.[script];
+      return (
+        seed.workerVars?.[script] ?? (bindings ? plainTextVars(bindings) : null)
+      );
     },
     async durableObjectNamespaces(a) {
       await enter('durableObjectNamespaces', [a]);
       return seed.doNamespaces ?? [];
+    },
+    async listContainerApps(a) {
+      await enter('listContainerApps', [a]);
+      return structuredClone(seed.containerApps ?? []);
     },
   };
   return fake;

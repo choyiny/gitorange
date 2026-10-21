@@ -269,6 +269,74 @@ describe('restCloudflare', () => {
       await restCloudflare('t', miss.fetch, noSleep).workerVars('a', 's')
     ).toBeNull();
   });
+
+  it('workerSettings returns all bindings', async () => {
+    const bindings = [
+      { type: 'plain_text', name: 'A', text: '1' },
+      { type: 'd1', name: 'DB', id: 'uuid-1' },
+      { type: 'secret_text', name: 'S' },
+      { type: 'r2_bucket', name: 'LFS', bucket_name: 'b' },
+      { type: 'artifacts', name: 'ARTIFACTS', namespace: 'n' },
+      {
+        type: 'durable_object_namespace',
+        name: 'LIVE',
+        class_name: 'LiveHub',
+      },
+    ];
+    const { fetch, calls } = fakeFetch(() => ok({ bindings }));
+    expect(
+      await restCloudflare('t', fetch, noSleep).workerSettings('a', 'my worker')
+    ).toEqual({ bindings });
+    expect(calls[0]!.url.pathname).toBe(
+      '/client/v4/accounts/a/workers/scripts/my%20worker/settings'
+    );
+  });
+
+  it('workerSettings: 404 is null', async () => {
+    const miss = fakeFetch(() =>
+      Response.json({ success: false, errors: [] }, { status: 404 })
+    );
+    expect(
+      await restCloudflare('t', miss.fetch, noSleep).workerSettings('a', 's')
+    ).toBeNull();
+  });
+
+  it('durableObjectNamespaces carries use_sqlite when the API gives it', async () => {
+    const { fetch } = fakeFetch(() =>
+      ok([
+        { id: 'n1', script: 'w', class: 'A', use_sqlite: true },
+        { id: 'n2', script: 'w', class: 'B' },
+      ])
+    );
+    expect(
+      await restCloudflare('t', fetch, noSleep).durableObjectNamespaces('a')
+    ).toEqual([
+      { id: 'n1', script: 'w', class: 'A', sqlite: true },
+      { id: 'n2', script: 'w', class: 'B' },
+    ]);
+  });
+
+  it('listContainerApps maps the Durable Object namespace', async () => {
+    const { fetch, calls } = fakeFetch(() =>
+      ok([
+        {
+          id: 'app1',
+          name: 'w-jobrunner',
+          durable_objects: { namespace_id: 'ns1' },
+        },
+        { id: 'app2', name: 'plain' },
+      ])
+    );
+    expect(
+      await restCloudflare('t', fetch, noSleep).listContainerApps('a')
+    ).toEqual([
+      { id: 'app1', name: 'w-jobrunner', namespaceId: 'ns1' },
+      { id: 'app2', name: 'plain', namespaceId: null },
+    ]);
+    expect(calls[0]!.url.pathname).toBe(
+      '/client/v4/accounts/a/containers/applications'
+    );
+  });
 });
 
 describe('fakeCloudflare', () => {

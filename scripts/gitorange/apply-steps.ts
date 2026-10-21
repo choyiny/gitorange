@@ -275,7 +275,7 @@ export const resumeCommand = (s: InstallState, source: Source) =>
   source.command(`install --resume --name ${s.inputs.name}`);
 
 /** Durable Object class -> var name (the four classes whose namespace IDs the worker reads). */
-const DO_VARS: Record<string, string> = {
+export const DO_VARS: Record<string, string> = {
   JobRunner: 'JOB_RUNNER_NAMESPACE_ID',
   MergeResolver: 'MERGE_RESOLVER_NAMESPACE_ID',
   AgentReviewer: 'AGENT_REVIEWER_NAMESPACE_ID',
