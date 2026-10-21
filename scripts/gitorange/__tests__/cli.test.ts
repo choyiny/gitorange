@@ -87,6 +87,8 @@ function harness(
     seed?: FakeCloudflareSeed;
     prompts?: (string | null)[];
     wellKnown?: () => Response;
+    /** The npm registry's dist-tags.latest; null = the registry answers 500. */
+    latest?: string | null;
     analyticsOk?: boolean;
     confirm?: boolean;
     setupStatus?: { setupRequired: boolean; codeRequired: boolean };
@@ -176,6 +178,11 @@ function harness(
     if (url === `${BASE}/.well-known/gitorange`) {
       if (opts.wellKnown) return opts.wellKnown();
       return Response.json({ installationId: ID, version: VERSION });
+    }
+    if (url === 'https://registry.npmjs.org/gitorange') {
+      if (opts.latest === undefined || opts.latest === null)
+        return new Response('down', { status: 500 });
+      return Response.json({ 'dist-tags': { latest: opts.latest } });
     }
     if (url === `${BASE}/api/setup/status`) {
       return Response.json(
@@ -624,10 +631,53 @@ describe('status', () => {
     expect(text).toContain('installed');
     expect(text).toContain(BASE);
     expect(text).toContain('acme-db');
-    expect(h.fetched).toEqual([`${BASE}/.well-known/gitorange`]);
+    expect(h.fetched).toEqual([
+      'https://registry.npmjs.org/gitorange',
+      `${BASE}/.well-known/gitorange`,
+    ]);
     expect(h.cf()).toBeNull();
     expect(h.runner.calls).toEqual([]);
     expect(listStates(dir)).toEqual([s]);
+  });
+
+  it('at the latest prints no upgrade hint', async () => {
+    const h = harness({ latest: VERSION });
+    writeState(dir, installedState());
+    expect(await main(['status'], h.deps)).toBe(0);
+    expect(h.text()).toMatch(new RegExp(`Latest\\s+${VERSION}\\n`));
+    expect(h.text()).not.toContain('upgrade --name');
+  });
+
+  it('offline prints latest unknown and exits 0', async () => {
+    const h = harness({ latest: null });
+    writeState(dir, installedState());
+    expect(await main(['status'], h.deps)).toBe(0);
+    expect(h.text()).toMatch(/Latest\s+unknown/);
+  });
+
+  it('status --from in a checkout is a usage error', async () => {
+    const h = harness();
+    expect(await main(['status', '--from', '/x'], h.deps)).toBe(2);
+  });
+
+  it('a moved install shows where', async () => {
+    const h = harness();
+    writeState(dir, {
+      ...installedState(),
+      movedTo: '/home/me/.gitorange/acme',
+    });
+    await main(['status'], h.deps);
+    expect(h.text()).toMatch(/Moved\s+\/home\/me\/\.gitorange\/acme/);
+  });
+
+  it('live line compares running and state', async () => {
+    const h = harness({
+      wellKnown: () => Response.json({ installationId: ID, version: 'zzz' }),
+    });
+    writeState(dir, installedState());
+    expect(await main(['status'], h.deps)).toBe(1);
+    expect(h.text()).toContain('version zzz');
+    expect(h.text()).toContain(`version ${VERSION}`);
   });
 
   it('exits 1 when the well-known answer disagrees', async () => {
@@ -826,6 +876,41 @@ describe('package mode', () => {
     expect(await main(['install', '--plan', ...FLAGS], h.deps)).toBe(0);
     const c = join(pkgOpts.home, 'acme', 'wrangler.jsonc');
     expect(h.text()).toContain(`\`mv ${c} ${c}.hand\``);
+  });
+
+  it('status prints latest, and the npx upgrade command when running is older', async () => {
+    const pkgOpts = pkg();
+    writeState(join(pkgOpts.home, 'acme'), {
+      ...installedState(),
+      deployedVersion: '1.0.0',
+    });
+    const h = harness({
+      pkg: pkgOpts,
+      latest: '9.9.9',
+      wellKnown: () => Response.json({ installationId: ID, version: '1.0.0' }),
+    });
+    expect(await main(['status'], h.deps)).toBe(0);
+    expect(h.text()).toMatch(/Latest\s+9\.9\.9/);
+    expect(h.text()).toContain('(npx gitorange@9.9.9 upgrade --name acme)');
+  });
+
+  it('status --from reads a checkout, read-only, and hints adopt then upgrade', async () => {
+    const checkout = join(root, 'checkout');
+    const cdir = join(checkout, '.gitorange');
+    writeState(cdir, { ...installedState(), deployedVersion: '1.0.0' });
+    const pkgOpts = pkg();
+    const h = harness({
+      pkg: pkgOpts,
+      latest: '9.9.9',
+      wellKnown: () => Response.json({ installationId: ID, version: '1.0.0' }),
+    });
+    expect(await main(['status', '--from', checkout], h.deps)).toBe(0);
+    expect(h.text()).toContain('acme-db');
+    expect(h.text()).toContain(
+      `(npx gitorange@9.9.9 adopt --from ${checkout} --name acme, then npx gitorange@9.9.9 upgrade --name acme)`
+    );
+    expect(listStates(cdir)).toHaveLength(1);
+    expect(existsSync(join(pkgOpts.home, 'acme'))).toBe(false);
   });
 
   it('status reads the only install under home', async () => {

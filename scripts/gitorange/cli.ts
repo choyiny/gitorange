@@ -37,6 +37,7 @@ import {
 } from './state.ts';
 import { findState, status, UsageError } from './status.ts';
 import { upgrade } from './upgrade.ts';
+import { latestOnNpm } from './versions.ts';
 
 export const usage = (
   source: Source
@@ -67,6 +68,7 @@ install options:
 
 status options:
   --name <name>          Which installation (default: the only one recorded)
+  --from <checkout>      Read an install still in a checkout (from the installed package)
 
 upgrade options:
   --name <name>          Which installation (default: the only one recorded)
@@ -237,14 +239,39 @@ export async function main(argv: string[], deps: Deps): Promise<number> {
     if (command === 'status') {
       const { values } = parseArgs({
         args: rest,
-        options: { name: { type: 'string' } },
+        options: { name: { type: 'string' }, from: { type: 'string' } },
         strict: true,
         allowPositionals: false,
       });
+      const latest = () => latestOnNpm(deps.fetchImpl);
+      if (values.from !== undefined) {
+        if (deps.home === null) {
+          deps.io.print(
+            'status --from reads a checkout from the installed package; in a checkout, run yarn gitorange status.'
+          );
+          return 2;
+        }
+        // Read-only: the checkout's own .gitorange, never moved or written.
+        let picked: InstallState;
+        try {
+          picked = pickCheckoutState(values.from, values.name);
+        } catch (e) {
+          if (e instanceof UsageError) throw e;
+          deps.io.print((e as Error).message);
+          return 1;
+        }
+        return await status(
+          { name: picked.inputs.name, checkout: resolve(values.from) },
+          { ...deps, dir: join(values.from, '.gitorange'), latest }
+        );
+      }
       // Package mode: the install's own directory under home.
       const picked = deps.home ? pickInstall(deps.home, values.name) : null;
       const dir = picked ? installDir(deps.home!, picked.slug) : deps.dir;
-      return await status(values, { ...deps, dir });
+      return await status(
+        { name: values.name, slug: picked?.slug },
+        { ...deps, dir, latest }
+      );
     }
     if (command === 'upgrade') {
       const { values } = parseArgs({
