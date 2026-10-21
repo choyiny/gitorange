@@ -445,7 +445,9 @@ export async function resumeInstalled(
     if (!upToDate) {
       ctx.io.print(
         `${ctx.source.kind === 'checkout' ? 'This checkout' : 'This package'} (${head}) differs from the deployed version (${s.deployedVersion ?? 'unknown'}). ` +
-          'Upgrades come in a later release; wrangler.jsonc was left as it is.'
+          (ctx.source.kind === 'package'
+            ? `Run ${ctx.source.command(`upgrade --name ${s.names.worker}`)} to move it to ${head}. wrangler.jsonc was left as it is.`
+            : `Upgrades: run npx gitorange adopt --from ${ctx.configDir}, then npx gitorange upgrade. wrangler.jsonc was left as it is.`)
       );
       if (changed) {
         throw new Error(

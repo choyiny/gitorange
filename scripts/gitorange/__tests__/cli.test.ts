@@ -1179,3 +1179,100 @@ describe('upgrade', () => {
     }
   );
 });
+
+describe('adopt', () => {
+  const home = () => join(root, 'home');
+  const MOVED = () => join(home(), resourceNames('acme').worker);
+  const seedCheckout = (over: Partial<InstallState> = {}) => {
+    const s = { ...installedState(), ...over };
+    writeState(dir, s);
+    writeFileSync(join(cwd, 'wrangler.jsonc'), '// generated\n{}\n');
+    return s;
+  };
+  const MOVED_LINE = () =>
+    `This install moved to ${MOVED()}. Run npx gitorange upgrade --name ${resourceNames('acme').worker}.`;
+  const pkgHarness = (o: { tty?: boolean; confirm?: boolean } = {}) =>
+    harness({
+      ...o,
+      pkg: {
+        home: home(),
+        source: packageSource(
+          fakePackage(mkdtempSync(join(tmpdir(), 'pkg-')), {
+            version: '1.2.0',
+            commit: 'abc123def456',
+          })
+        ),
+      },
+    });
+
+  it('moves the install, then the checkout refuses install and --resume', async () => {
+    seedCheckout();
+    const h = pkgHarness();
+    expect(await main(['adopt', '--from', cwd, '--yes'], h.deps)).toBe(0);
+    expect(h.text()).toContain(`Moved acme to ${MOVED()}`);
+    expect(readState(MOVED(), ID)!.adoptedAt).toBe('2026-10-17T00:00:00.000Z');
+    expect(readState(dir, ID)!.movedTo).toBe(MOVED());
+    expect(h.tokenCalls()).toBe(0);
+
+    const fresh = harness({});
+    expect(await main(['install', ...FLAGS, '--yes'], fresh.deps)).toBe(1);
+    expect(fresh.text()).toContain(MOVED_LINE());
+    expect(fresh.deploys).toHaveLength(0);
+
+    const resume = harness({});
+    expect(
+      await main(
+        ['install', '--resume', '--name', 'acme', '--yes'],
+        resume.deps
+      )
+    ).toBe(1);
+    expect(resume.text()).toContain(MOVED_LINE());
+    expect(resume.deploys).toHaveLength(0);
+  });
+
+  it('asks before moving, and a no changes nothing', async () => {
+    seedCheckout();
+    const h = pkgHarness({ tty: true, confirm: false });
+    expect(await main(['adopt', '--from', cwd], h.deps)).toBe(1);
+    expect(h.confirms).toEqual(['Move this install?']);
+    expect(existsSync(MOVED())).toBe(false);
+    expect(readState(dir, ID)!.movedTo).toBeUndefined();
+  });
+
+  it('without a terminal and --yes exits 2', async () => {
+    seedCheckout();
+    const h = pkgHarness();
+    expect(await main(['adopt', '--from', cwd], h.deps)).toBe(2);
+    expect(h.text()).toContain('Not running in a terminal');
+    expect(existsSync(MOVED())).toBe(false);
+  });
+
+  it('needs --from', async () => {
+    const h = pkgHarness();
+    expect(await main(['adopt', '--yes'], h.deps)).toBe(2);
+    expect(h.text()).toContain('adopt needs --from');
+  });
+
+  it('--worker is not available yet', async () => {
+    const h = pkgHarness();
+    expect(await main(['adopt', '--worker', 'acme', '--yes'], h.deps)).toBe(2);
+    expect(h.text()).toContain('not available yet');
+  });
+
+  it('checkout mode points at npx', async () => {
+    seedCheckout();
+    const h = harness({});
+    expect(await main(['adopt', '--from', cwd, '--yes'], h.deps)).toBe(2);
+    expect(h.text()).toContain(`npx gitorange adopt --from ${cwd}`);
+    expect(readState(dir, ID)!.movedTo).toBeUndefined();
+  });
+
+  it('a taken destination exits 1 and leaves the checkout alone', async () => {
+    const s = seedCheckout();
+    writeState(MOVED(), s);
+    const h = pkgHarness();
+    expect(await main(['adopt', '--from', cwd, '--yes'], h.deps)).toBe(1);
+    expect(h.text()).toContain(`${MOVED()} already has an install`);
+    expect(readState(dir, ID)!.movedTo).toBeUndefined();
+  });
+});

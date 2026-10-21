@@ -1,9 +1,10 @@
 // `gitorange <command>`: the user-facing installer (spec §2–§6). Every outside effect comes in
 // through `Deps`, so tests drive `main` with fakes; the real wiring is at the bottom.
 import { realpathSync } from 'node:fs';
-import { dirname, join, resolve } from 'node:path';
+import { basename, dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { parseArgs } from 'node:util';
+import { adoptFromCheckout, pickCheckoutState } from './adopt.ts';
 import { install, resumeInstalled, type Ctx, type Optional } from './apply.ts';
 import { assertConfigWritable, OPTIONAL_ITEMS } from './apply-steps.ts';
 import { restCloudflare, type Cloudflare } from './cloudflare.ts';
@@ -44,6 +45,7 @@ Commands:
   install    Create or update a GitOrange installation on Cloudflare
   status     Show a recorded installation and check that it answers
   upgrade    Move an installation to this package's version (npx only)
+  adopt      Take over an installation made from a checkout (npx only)
 
 install options:
   --name <name>          Installation name (default: gitorange)
@@ -73,6 +75,11 @@ upgrade options:
   --replace-custom-code  Replace a running version that is not a release with this one
   --yes                  Apply without asking (required when not in a terminal); credentials
                          the worker lacks are then left out and listed (add them later)
+
+adopt options:
+  --from <checkout>      The checkout whose installation moves under ~/.gitorange
+  --name <name>          Which installation, when the checkout holds several
+  --yes                  Move without asking (required when not in a terminal)
 `;
 
 const DEFAULT_NAME = 'gitorange';
@@ -131,6 +138,24 @@ const UPGRADE_OPTIONS = {
   yes: { type: 'boolean' },
   'replace-custom-code': { type: 'boolean' },
 } as const;
+
+type AdoptFlags = {
+  from?: string;
+  name?: string;
+  worker?: string;
+  yes?: boolean;
+};
+
+// `worker` is parsed so that `adopt --worker` can say it is not available yet (Task 9 replaces that).
+const ADOPT_OPTIONS = {
+  from: { type: 'string' },
+  name: { type: 'string' },
+  worker: { type: 'string' },
+  yes: { type: 'boolean' },
+} as const;
+
+const movedMessage = (movedTo: string) =>
+  `This install moved to ${movedTo}. Run npx gitorange upgrade --name ${basename(movedTo)}.`;
 
 const NOT_A_TERMINAL =
   'Not running in a terminal: pass --yes to apply (or --plan to only review).';
@@ -215,6 +240,15 @@ export async function main(argv: string[], deps: Deps): Promise<number> {
         allowPositionals: false,
       });
       return await runUpgrade(values, deps);
+    }
+    if (command === 'adopt') {
+      const { values } = parseArgs({
+        args: rest,
+        options: ADOPT_OPTIONS,
+        strict: true,
+        allowPositionals: false,
+      });
+      return await runAdopt(values, deps);
     }
   } catch (e) {
     if (e instanceof UsageError || isParseArgsError(e)) {
@@ -569,6 +603,10 @@ async function runInstall(f: InstallFlags, deps: Deps): Promise<number> {
         );
         return 1;
       }
+      if (found.movedTo !== undefined) {
+        io.print(movedMessage(found.movedTo));
+        return 1;
+      }
       const diff = await differences(f, found, ctx.cf);
       if (diff.length > 0) {
         io.print(
@@ -588,6 +626,10 @@ async function runInstall(f: InstallFlags, deps: Deps): Promise<number> {
       );
       const existing = readState(ctx.dir, id);
       if (existing) {
+        if (existing.movedTo !== undefined) {
+          io.print(movedMessage(existing.movedTo));
+          return 1;
+        }
         if (existing.status === 'installed') {
           io.print(
             `${r.name} is already installed at ${existing.baseUrl}. Nothing was changed.\n` +
@@ -707,6 +749,62 @@ async function runInstall(f: InstallFlags, deps: Deps): Promise<number> {
   } catch (e) {
     if (e instanceof UsageError) throw e;
     // A PlanStop's message is the text meant for the person, like every other failure here.
+    io.print((e as Error).message);
+    return 1;
+  }
+}
+
+/** `adopt --from <checkout>` (spec §7): package mode only. `--worker` comes with Task 9. */
+async function runAdopt(f: AdoptFlags, deps: Deps): Promise<number> {
+  const { io, home } = deps;
+  if (home === null) {
+    io.print(
+      `Adopting runs from npm: npx gitorange adopt --from ${deps.configDir}.`
+    );
+    return 2;
+  }
+  if (f.worker !== undefined) {
+    io.print('adopt --worker is not available yet.');
+    return 2;
+  }
+  if (f.from === undefined) {
+    throw new UsageError('adopt needs --from <checkout>.');
+  }
+  if (f.name !== undefined) {
+    const bad = validateName(f.name);
+    if (bad) throw new UsageError(bad);
+  }
+  if (!io.tty && !f.yes) {
+    io.print(NOT_A_TERMINAL);
+    return 2;
+  }
+  const checkout = resolve(f.from);
+  try {
+    const picked = pickCheckoutState(checkout, f.name);
+    const dir = installDir(home, picked.names.worker);
+    io.print(
+      `Move ${picked.inputs.name} (${picked.baseUrl}) from ${checkout} to ${dir}:\n` +
+        `  copy  ${join(checkout, '.gitorange', `${picked.installationId}.json`)}\n` +
+        `  copy  ${join(checkout, 'wrangler.jsonc')}\n` +
+        'The checkout keeps a marker and refuses to install or resume it afterwards. Nothing on Cloudflare changes.'
+    );
+    if (!f.yes && !(await io.confirm('Move this install?', true))) {
+      io.print('Nothing was changed.');
+      return 1;
+    }
+    const r = await adoptFromCheckout({
+      checkout,
+      home,
+      name: f.name,
+      io,
+      now: deps.now,
+    });
+    io.print(
+      `Moved ${picked.inputs.name} to ${r.dir}.\nCheck it: npx gitorange status --name ${r.slug}\nUpgrade it: npx gitorange upgrade --name ${r.slug}`
+    );
+    return 0;
+  } catch (e) {
+    if (e instanceof UsageError) throw e;
     io.print((e as Error).message);
     return 1;
   }
