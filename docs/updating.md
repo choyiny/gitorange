@@ -66,14 +66,14 @@ If you run a fork or prefer a clone, the original flow works: `git pull && yarn 
 
 Releases come from the GitOrange instance that hosts the repository, and are published to npm from your own machine. npm asks for a one-time code, so this is never automated.
 
-1. Cut a release in GitOrange (the Releases tab, or `gitorange_create_release`). The tag lands on `main`.
+1. Cut a release in GitOrange (the Releases tab, or `gitorange_create_release`) from `main`. The Releases tab cuts from the default branch; `release:publish` refuses a tag that is not on `main`.
 2. From a clone with `origin` and `main` up to date, run:
 
    ```bash
    yarn release:publish vX.Y.Z
    ```
 
-   It checks with git, not the GitHub REST API, that the tag is on `origin` and on `main`, and that the version is not already on npm. It then builds that exact commit in a fresh worktree, runs the tests, packs the package, shows what it is about to publish, and asks you to confirm. `npm publish` follows, and npm asks for your 2FA code.
+   It checks with git, not the GitHub REST API, that the tag is on `origin` and on `main`, and that the version is not already on npm. It then builds that exact commit in a fresh worktree, runs the tests, packs the package, and checks the packed package as CI's Package job does: a dry-run deploy of the config an install would generate, and `gitorange --help` from the installed tarball. Any failure stops it before anything is asked. It then shows what it is about to publish and asks you to confirm. `npm publish` of that tarball follows, and npm asks for your 2FA code.
 
 3. Upgrade the instance that runs this repository from the published package:
 
@@ -81,4 +81,4 @@ Releases come from the GitOrange instance that hosts the repository, and are pub
    npx --prefer-online gitorange@X.Y.Z upgrade --name gitorange
    ```
 
-Only do the upgrade when a person says so.
+Cut, publish and upgrade only when a person says so.

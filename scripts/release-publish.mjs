@@ -1,8 +1,11 @@
 // Publishes a GitOrange release to npm from this machine:
 //   yarn release:publish vX.Y.Z
-// Builds from a throwaway worktree of the tag, never the working copy. The tag must be on origin's main. npm asks for the 2FA code itself.
+// Builds from a throwaway worktree of the tag, never the working copy. The tag must be on origin's main. Before asking, it
+// runs CI's Package job on the packed build (dry-run deploy of a generated config, `gitorange --help` from the installed
+// tarball), then publishes that tarball. npm asks for the 2FA code itself.
 import { execFileSync, spawnSync } from 'node:child_process';
 import {
+  mkdirSync,
   mkdtempSync,
   readdirSync,
   readFileSync,
@@ -15,6 +18,8 @@ import { createInterface } from 'node:readline/promises';
 import { fileURLToPath } from 'node:url';
 import {
   checkTag,
+  missingCommands,
+  packageSmoke,
   preflight,
   worktreeAddArgs,
 } from './gitorange/release-publish.ts';
@@ -54,6 +59,8 @@ async function main() {
     runner: processRunner,
   });
   const tmp = mkdtempSync(join(tmpdir(), 'gitorange-release-'));
+  // Outside the worktree, so the tarball installs into an app of its own (as CI's RUNNER_TEMP).
+  const scratch = mkdtempSync(join(tmpdir(), 'gitorange-release-smoke-'));
   try {
     execFileSync('git', worktreeAddArgs(REPO, tmp, commit), {
       stdio: 'inherit',
@@ -74,6 +81,30 @@ async function main() {
     const name = JSON.parse(
       readFileSync(join(out, 'package.json'), 'utf8')
     ).name;
+    // CI's Package job, on the packed build: any failure stops before the confirm.
+    const smoke = packageSmoke({
+      worktree: tmp,
+      pkgDir: out,
+      scratch,
+      name,
+      version,
+      node: process.execPath,
+    });
+    mkdirSync(dirname(smoke.tarball), { recursive: true });
+    for (const s of smoke.steps) {
+      mkdirSync(s.cwd, { recursive: true });
+      step(s.cmd, s.args, s.cwd);
+    }
+    const help = spawnSync(smoke.help.cmd, smoke.help.args, {
+      cwd: smoke.help.cwd,
+      encoding: 'utf8',
+      stdio: ['ignore', 'pipe', 'inherit'],
+    });
+    if (help.status !== 0) throw new Error('gitorange --help failed');
+    const missing = missingCommands(help.stdout);
+    if (missing.length > 0) {
+      throw new Error(`gitorange --help does not list ${missing.join(', ')}`);
+    }
     console.log(
       `\n${name}@${version}\ncommit ${commit}\n${files} files, ${(bytes / 1048576).toFixed(1)} MB`
     );
@@ -88,13 +119,15 @@ async function main() {
       console.log('Not published.');
       return;
     }
-    step('npm', ['publish', out, '--access', 'public'], tmp);
+    // The tarball the smoke installed, so what was checked is what is published.
+    step('npm', ['publish', smoke.tarball, '--access', 'public'], tmp);
     console.log(`Published gitorange@${version}.`);
   } finally {
     spawnSync('git', ['-C', REPO, 'worktree', 'remove', '--force', tmp], {
       stdio: 'ignore',
     });
     rmSync(tmp, { recursive: true, force: true });
+    rmSync(scratch, { recursive: true, force: true });
   }
 }
 

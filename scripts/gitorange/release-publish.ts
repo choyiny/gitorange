@@ -1,3 +1,4 @@
+import { join } from 'node:path';
 import type { Runner } from './runner.ts';
 
 export const NPM_REGISTRY = 'https://registry.npmjs.org/gitorange';
@@ -70,3 +71,69 @@ export function worktreeAddArgs(
 ): string[] {
   return ['-C', repo, 'worktree', 'add', '--detach', dir, commit];
 }
+
+export type SmokeStep = { cmd: string; args: string[]; cwd: string };
+
+/**
+ * CI's Package job, for the packed build in `pkgDir`: pack the tarball, render an install's config
+ * for it (smoke-config.ts), dry-run deploy it with the worktree's pinned wrangler (no Docker:
+ * `--containers-rollout=none`), and install the tarball in a fresh directory. `help` then runs the
+ * installed CLI. Argv only, never a shell. Everything it writes is under `scratch`.
+ */
+export function packageSmoke(o: {
+  worktree: string;
+  pkgDir: string;
+  scratch: string;
+  name: string;
+  version: string;
+  node: string;
+}): { tarball: string; steps: SmokeStep[]; help: SmokeStep } {
+  const pkg = join(o.scratch, 'pkg');
+  const smoke = join(o.scratch, 'smoke');
+  const app = join(o.scratch, 'app');
+  // npm pack names an unscoped package's tarball <name>-<version>.tgz.
+  const tarball = join(pkg, `${o.name}-${o.version}.tgz`);
+  const wt = o.worktree;
+  return {
+    tarball,
+    steps: [
+      {
+        cmd: 'npm',
+        args: ['pack', o.pkgDir, '--pack-destination', pkg],
+        cwd: wt,
+      },
+      {
+        cmd: o.node,
+        args: ['scripts/gitorange/smoke-config.ts', o.pkgDir, smoke],
+        cwd: wt,
+      },
+      {
+        cmd: o.node,
+        args: [
+          join(wt, 'node_modules', 'wrangler', 'bin', 'wrangler.js'),
+          'deploy',
+          '--dry-run',
+          '--containers-rollout=none',
+          '--outdir',
+          join(o.scratch, 'o'),
+          '--config',
+          join(smoke, 'wrangler.jsonc'),
+        ],
+        cwd: wt,
+      },
+      { cmd: 'npm', args: ['init', '-y'], cwd: app },
+      { cmd: 'npm', args: ['install', tarball], cwd: app },
+    ],
+    help: {
+      cmd: join(app, 'node_modules', '.bin', 'gitorange'),
+      args: ['--help'],
+      cwd: app,
+    },
+  };
+}
+
+/** The commands `gitorange --help` must list (as CI checks: a line starting `  <command> `). */
+export const HELP_COMMANDS = ['install', 'upgrade', 'adopt', 'status'];
+
+export const missingCommands = (help: string): string[] =>
+  HELP_COMMANDS.filter((c) => !new RegExp(`^  ${c} `, 'm').test(help));
