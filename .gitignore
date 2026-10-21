@@ -14,3 +14,7 @@ wrangler.jsonc
 
 # GitOrange installer state
 .gitorange/
+
+# yarn pack:npm output (the npm package and its build). build/ also holds tracked build code.
+/build/*
+!/build/license-banners.ts

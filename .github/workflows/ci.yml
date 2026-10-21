@@ -299,3 +299,62 @@ jobs:
           worker/src/__tests__/live-feed.test.ts
           worker/src/__tests__/install-wellknown.test.ts
           src/lib/
+
+  # The npm package (scripts/gitorange/pack.mjs): pack it, prove the shipped build deploys from a
+  # generated config, then install the tarball like a user would (npm/npx on purpose) and run it.
+  # Independent of the build: it builds from a placeholder config of its own.
+  package:
+    name: Package
+    runs-on: ${{ github.server_url == 'https://github.com' && 'ubuntu-latest' || 'gitorange-standard-4' }}
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: yarn
+      - name: Install dependencies
+        run: yarn install --frozen-lockfile
+      - name: Build the package
+        run: yarn pack:npm
+      - name: Pack the tarball
+        run: |
+          mkdir -p "$RUNNER_TEMP/pkg"
+          file=$(npm pack ./build/npm --pack-destination "$RUNNER_TEMP/pkg" | tail -n 1)
+          echo "TARBALL=$RUNNER_TEMP/pkg/$file" >> "$GITHUB_ENV"
+      - name: Generate an install's config for the package
+        run: node scripts/gitorange/smoke-config.ts build/npm "$RUNNER_TEMP/smoke"
+      # No Docker here: --containers-rollout=none makes wrangler skip building the runner image.
+      - name: The shipped build deploys with the generated config (dry run)
+        run: yarn -s wrangler deploy --dry-run --containers-rollout=none --outdir "$RUNNER_TEMP/o" --config "$RUNNER_TEMP/smoke/wrangler.jsonc"
+      # The package's Node floor (engines: >=22.0.0). GitOrange runners use the image's Node.js
+      # whatever node-version asks for, so the floor is checked on GitHub only.
+      - name: Use Node.js 22.0.0 (GitHub only)
+        if: github.server_url == 'https://github.com'
+        uses: actions/setup-node@v7
+        with:
+          node-version: 22.0.0
+      - name: Install the tarball
+        run: |
+          node --version
+          mkdir -p "$RUNNER_TEMP/app"
+          cd "$RUNNER_TEMP/app"
+          npm init -y > /dev/null
+          npm install "$TARBALL"
+      - name: gitorange --help
+        run: |
+          cd "$RUNNER_TEMP/app"
+          npx gitorange --help | tee help.txt
+          for c in install upgrade adopt status; do
+            grep -E "^  $c " help.txt || { echo "::error::--help does not list $c"; exit 1; }
+          done
+      - name: gitorange install --plan stops without a Cloudflare login
+        run: |
+          cd "$RUNNER_TEMP/app"
+          set +e
+          env -u CLOUDFLARE_API_TOKEN GITORANGE_HOME="$RUNNER_TEMP/h" npx gitorange install --plan --name smoke < /dev/null > out.txt 2>&1
+          code=$?
+          set -e
+          cat out.txt
+          if [ "$code" -ne 1 ]; then echo "::error::expected exit 1, got $code"; exit 1; fi
+          grep -q 'login first' out.txt || { echo "::error::expected the no-token message"; exit 1; }

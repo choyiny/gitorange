@@ -65,6 +65,7 @@ describe('CI workflow (.github/workflows/ci.yml)', () => {
       'build',
       'gate',
       ...testJobs.map((j) => j.key),
+      'package',
     ]);
   });
 
@@ -83,10 +84,25 @@ describe('CI workflow (.github/workflows/ci.yml)', () => {
         plan(server).map((j) => [j.key, instanceTypeFor(j.runsOn)])
       );
       expect(sizes.build, server).toBe('standard-4');
+      expect(sizes.package, server).toBe('standard-4');
       for (const j of testJobs) expect(sizes[j.key], j.key).toBe('standard-4');
     }
     for (const j of plan('https://github.com'))
       expect(j.runsOn, j.key).toBe('ubuntu-latest');
+  });
+
+  it('the package job checks the Node 22.0.0 floor on GitHub only (GitOrange runners use their own Node.js)', () => {
+    const pkg = job('package');
+    expect(pkg.needs).toEqual([]);
+    const floor = pkg.steps.find(
+      (s) =>
+        s.uses?.startsWith('actions/setup-node@') &&
+        s.with['node-version'] === '22.0.0'
+    );
+    const on = (server_url: string) =>
+      evaluateCondition(floor!.if, { github: { server_url } });
+    expect(on('https://github.com')).toBe(true);
+    expect(on('https://git.xyspace.dev')).toBe(false);
   });
 
   it('sees the test files (import.meta.glob works here)', () => {
