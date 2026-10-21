@@ -11,6 +11,7 @@
     "seed:demo": "node scripts/seed-demo.mjs",
     "gitorange": "node scripts/gitorange/cli.ts",
     "pack:npm": "node scripts/gitorange/pack.mjs",
+    "release:publish": "node scripts/release-publish.mjs",
     "build": "vite build",
     "preview": "vite preview",
     "deploy": "vite build && wrangler deploy",
