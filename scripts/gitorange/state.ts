@@ -194,7 +194,7 @@ export function acquireLock(
     startedAt: new Date().toISOString(),
   };
   const heldMessage = (h: LockInfo) =>
-    `Another yarn gitorange run is using this installation (pid ${h.pid} on ${h.host}).`;
+    `Another gitorange run is using this installation (pid ${h.pid} on ${h.host}).`;
 
   // The lock file appears only fully written: write a private file, then link it into place.
   const tryCreate = (): boolean => {
@@ -244,7 +244,7 @@ export function acquireLock(
       held = JSON.parse(raw) as LockInfo;
     } catch {
       throw new Error(
-        `Another yarn gitorange run is using this installation (lock file ${path} is unreadable). ` +
+        `Another gitorange run is using this installation (lock file ${path} is unreadable). ` +
           'If that run is gone, delete the file.'
       );
     }

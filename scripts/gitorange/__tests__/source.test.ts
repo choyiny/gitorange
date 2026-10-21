@@ -16,6 +16,10 @@ describe('checkoutSource', () => {
       args: ['-s', 'wrangler', 'secret', 'list'],
     });
     expect(s.wranglerCommand('d1 list')).toBe('yarn wrangler d1 list');
+    expect(s.wranglerBare(['auth', 'token'])).toEqual({
+      cmd: 'yarn',
+      args: ['-s', 'wrangler', 'auth', 'token'],
+    });
   });
   it('deploy', () => {
     expect(s.deploy('/r', null)).toEqual({
@@ -83,6 +87,13 @@ describe.each(['nested', 'hoisted'] as const)(
         ],
       });
       expect(s.wranglerCommand('tail')).toBe('npx wrangler@4.127.0 tail');
+    });
+    it('wranglerBare runs its own bin without --config', () => {
+      const { root, s } = setup();
+      expect(s.wranglerBare(['auth', 'token'])).toEqual({
+        cmd: process.execPath,
+        args: [realpathSync(binOf(root)), 'auth', 'token'],
+      });
     });
     it('deploy', () => {
       const { root, s } = setup();

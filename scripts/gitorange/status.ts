@@ -1,12 +1,14 @@
-// `yarn gitorange status` (spec §6): prints the recorded state and asks the deployed worker who it
+// `gitorange status` (spec §6): prints the recorded state and asks the deployed worker who it
 // is, once. Read-only: no Cloudflare API call, no subprocess, no file written.
 import type { Io } from './collect.ts';
+import type { Source } from './source.ts';
 import { listStates, type InstallState } from './state.ts';
 
 export type StatusDeps = {
   io: Io;
   dir: string;
   fetchImpl: typeof fetch;
+  source: Source;
 };
 
 export class UsageError extends Error {}
@@ -63,7 +65,7 @@ export async function status(
   if (!s) {
     io.print(
       opts.name === undefined
-        ? `No installation found in ${deps.dir}. Install one with: yarn gitorange install`
+        ? `No installation found in ${deps.dir}. Install one with: ${deps.source.command('install')}`
         : `No installation named ${opts.name} found in ${deps.dir}.`
     );
     return 1;

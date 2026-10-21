@@ -26,6 +26,8 @@ export type Source = {
   build: BuildPaths | null;
   /** How to run wrangler with `args`, for a config in `configDir`. */
   wrangler(args: string[], configDir: string): { cmd: string; args: string[] };
+  /** How to run a wrangler command that reads no config (`auth token`): never passes `--config`. */
+  wranglerBare(args: string[]): { cmd: string; args: string[] };
   /** The deploy command (checkout: `yarn -s deploy`, which builds; package: wrangler deploy, no build). */
   deploy(
     configDir: string,
@@ -65,6 +67,10 @@ export function checkoutSource(root: string): Source {
     commit: null,
     build: null,
     wrangler: (args) => ({ cmd: 'yarn', args: ['-s', 'wrangler', ...args] }),
+    wranglerBare: (args) => ({
+      cmd: 'yarn',
+      args: ['-s', 'wrangler', ...args],
+    }),
     deploy: (_configDir, secretsFile) => ({
       cmd: 'yarn',
       args: [
@@ -129,6 +135,11 @@ export function packageSource(root: string): Source {
     wrangler: (args, configDir) => ({
       cmd: process.execPath,
       args: [wranglerBin, ...args, ...configArgs(configDir)],
+    }),
+    // An explicit --config that does not exist is a hard error in wrangler, even for `auth token`.
+    wranglerBare: (args) => ({
+      cmd: process.execPath,
+      args: [wranglerBin, ...args],
     }),
     deploy: (configDir, secretsFile) => ({
       cmd: process.execPath,

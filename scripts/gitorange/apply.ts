@@ -4,7 +4,6 @@
 import {
   applyMigrations,
   assertConfigWritable,
-  buildVersion,
   confirmR2Keys,
   deploy,
   existingSecretNames,
@@ -12,6 +11,7 @@ import {
   optionalSecrets,
   readDoNamespaceIds,
   renderConfig,
+  resumeCommand,
   sameIds,
   setupStatus,
   skippedAfter,
@@ -27,6 +27,7 @@ import {
 import { observe, R2_MARKER_KEY, type Observed } from './observe.ts';
 import { withEnv } from './runner.ts';
 import { computePlan, formatPlan, type Desired } from './plan.ts';
+import type { Source } from './source.ts';
 import {
   generateAuthSecret,
   generateSetupCode,
@@ -89,10 +90,10 @@ function keepCode(ctx: Ctx, s: InstallState, code: string | null) {
   }
 }
 
-function wrap(e: unknown, step: string, s: InstallState): Error {
+function wrap(e: unknown, step: string, s: InstallState, ctx: Ctx): Error {
   const msg = e instanceof Error ? e.message : String(e);
   return new Error(
-    `${msg}\n\nStep ${step} failed. Nothing after it ran. Run: yarn gitorange install --resume --name ${s.inputs.name}`,
+    `${msg}\n\nStep ${step} failed. Nothing after it ran. Run: ${resumeCommand(s, ctx.source)}`,
     { cause: e }
   );
 }
@@ -234,12 +235,12 @@ export async function install(
 
     // 3. wrangler.jsonc
     step = 'config';
-    const version = await buildVersion(ctx);
+    const version = await ctx.source.version(ctx.runner);
     const configHash = writeConfig(ctx, s, version);
     save(recordStep(s, `config:${configHash}`));
 
     // 4. Migrations, then the install_state row (the D1 ownership marker).
-    const digest = migrationsDigest(ctx.cwd);
+    const digest = migrationsDigest(ctx.source.migrationsDir);
     if (!hasStep(s, `migrations:${digest}`)) {
       step = `migrations:${digest}`;
       await applyMigrations(ctx);
@@ -324,21 +325,21 @@ export async function install(
     if (s.status !== 'installed') s = transition(s, 'failed');
     writeState(ctx.dir, s);
     if (codeDeployed) keepCode(ctx, s, code);
-    throw wrap(e, step, s);
+    throw wrap(e, step, s, ctx);
   } finally {
     release();
   }
-  ctx.io.print(summary(s, code, optional));
+  ctx.io.print(summary(s, code, optional, ctx.source));
   if (!code && setup.setupRequired && setup.codeRequired) {
     ctx.io.print(
-      `The first admin still needs a setup code. If you no longer have it, run: ${newCodeCommand(s)}`
+      `The first admin still needs a setup code. If you no longer have it, run: ${newCodeCommand(s, ctx.source)}`
     );
   }
   return s;
 }
 
-const newCodeCommand = (s: InstallState) =>
-  `yarn gitorange install --resume --name ${s.inputs.name} --new-setup-code`;
+const newCodeCommand = (s: InstallState, source: Source) =>
+  `${resumeCommand(s, source)} --new-setup-code`;
 
 /**
  * `--resume` on an installed instance (spec §6): adds supplied optional credentials and, while no
@@ -381,7 +382,7 @@ export async function resumeInstalled(
       secrets.SETUP_CODE_HASH = setupCodeHash(code);
     } else if (setupRequired && !ctx.io.tty) {
       ctx.io.print(
-        `The first admin still needs the setup code. If it is lost, issue a new one (the old one stops working): ${newCodeCommand(s)}`
+        `The first admin still needs the setup code. If it is lost, issue a new one (the old one stops working): ${newCodeCommand(s, ctx.source)}`
       );
     }
     const changed = Object.keys(secrets).length > 0;
@@ -389,16 +390,18 @@ export async function resumeInstalled(
     // Never an upgrade: wrangler.jsonc is rewritten and deployed only when it would come out
     // exactly as the configuration already deployed.
     step = 'config';
-    const head = await buildVersion(ctx);
+    const head = await ctx.source.version(ctx.runner);
     const upToDate = renderConfig(ctx, s, head).hash === s.deployedConfigHash;
     if (!upToDate) {
       ctx.io.print(
-        `This checkout (${head}) differs from the deployed version (${s.deployedVersion ?? 'unknown'}). ` +
+        `${ctx.source.kind === 'checkout' ? 'This checkout' : 'This package'} (${head}) differs from the deployed version (${s.deployedVersion ?? 'unknown'}). ` +
           'Upgrades come in a later release; wrangler.jsonc was left as it is.'
       );
       if (changed) {
         throw new Error(
-          `Adding credentials or a setup code needs a deploy, which from this checkout would be an upgrade. Check out ${s.deployedVersion ?? 'the deployed commit'} and run again.`
+          ctx.source.kind === 'checkout'
+            ? `Adding credentials or a setup code needs a deploy, which from this checkout would be an upgrade. Check out ${s.deployedVersion ?? 'the deployed commit'} and run again.`
+            : `Adding credentials or a setup code needs a deploy, which from this package would be an upgrade. Run the deployed version again (${s.deployedVersion ?? 'unknown'}).`
         );
       }
     }
@@ -417,12 +420,14 @@ export async function resumeInstalled(
 
     step = 'verify';
     await verifyAt(ctx, s, s.deployedVersion ?? head);
-    ctx.io.print(changed ? summary(s, code, opt) : 'Nothing to do.');
+    ctx.io.print(
+      changed ? summary(s, code, opt, ctx.source) : 'Nothing to do.'
+    );
     return s;
   } catch (e) {
     writeState(ctx.dir, s);
     if (codeDeployed) keepCode(ctx, s, code);
-    throw wrap(e, step, s);
+    throw wrap(e, step, s, ctx);
   } finally {
     release();
   }

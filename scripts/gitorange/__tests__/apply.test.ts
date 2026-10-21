@@ -17,9 +17,11 @@ import { resourceNames } from '../names.ts';
 import { R2_MARKER_KEY } from '../observe.ts';
 import type { RunResult } from '../runner.ts';
 import { setupCodeHash } from '../secrets.ts';
+import { checkoutSource, packageSource } from '../source.ts';
 import { newState, readState, type InstallState } from '../state.ts';
 import {
   fakeCloudflare,
+  fakePackage,
   fakeRunner,
   type FakeCloudflareSeed,
 } from './fakes.ts';
@@ -201,35 +203,64 @@ function harness(
     tty?: boolean;
     prompts?: (string | null)[];
     confirm?: boolean;
+    /** Run from an npm package (fakePackage) instead of the checkout. */
+    pkg?: boolean;
   } = {}
 ) {
   const cf = fakeCloudflare({ doNamespaces: DO_NAMESPACES, ...opts.seed });
   const deploys: Deploy[] = [];
   const ok = (stdout = ''): RunResult => ({ code: 0, stdout, stderr: '' });
+  let source = checkoutSource(cwd);
+  let configDir = cwd;
+  if (opts.pkg) {
+    const pkgRoot = fakePackage(join(root, 'pkg'), {
+      version: '1.0.0',
+      commit: 'c'.repeat(40),
+    });
+    mkdirSync(join(pkgRoot, 'migrations'), { recursive: true });
+    copyFileSync(
+      join(cwd, 'wrangler.jsonc.example'),
+      join(pkgRoot, 'wrangler.jsonc.example')
+    );
+    for (const f of ['0000_init.sql', '0001_more.sql'])
+      copyFileSync(join(cwd, 'migrations', f), join(pkgRoot, 'migrations', f));
+    source = packageSource(pkgRoot);
+    configDir = join(root, 'home', 'acme');
+    mkdirSync(configDir, { recursive: true });
+  }
+  // Both sources reach wrangler through one handler: yarn as `-s [wrangler] …`, a package as `<bin> …`.
+  const wrangler = (args: string[]) => {
+    const a = args.slice(1);
+    if (a[0] === 'wrangler') a.shift();
+    return a;
+  };
+  const handle = (args: string[]): RunResult => {
+    const w = wrangler(args);
+    if (w[0] === 'deploy') {
+      const i = args.indexOf('--secrets-file');
+      deploys.push({
+        args,
+        secrets:
+          i >= 0
+            ? (JSON.parse(readFileSync(args[i + 1], 'utf8')) as Record<
+                string,
+                string
+              >)
+            : null,
+      });
+      return opts.deploy ?? ok();
+    }
+    if (w[0] === 'secret') {
+      return opts.secretList ?? { code: 1, stdout: '', stderr: 'not found' };
+    }
+    if (w[0] === 'd1') return ok();
+    throw new Error(`unexpected wrangler ${args.join(' ')}`);
+  };
   const runner = fakeRunner({
     'git rev-parse': () => ok(`${opts.version ?? VERSION}\n`),
     'git status': () => ok(''),
-    yarn: (args) => {
-      if (args[1] === 'deploy') {
-        const i = args.indexOf('--secrets-file');
-        deploys.push({
-          args,
-          secrets:
-            i >= 0
-              ? (JSON.parse(readFileSync(args[i + 1], 'utf8')) as Record<
-                  string,
-                  string
-                >)
-              : null,
-        });
-        return opts.deploy ?? ok();
-      }
-      if (args[1] === 'wrangler' && args[2] === 'secret') {
-        return opts.secretList ?? { code: 1, stdout: '', stderr: 'not found' };
-      }
-      if (args[1] === 'wrangler' && args[2] === 'd1') return ok();
-      throw new Error(`unexpected yarn ${args.join(' ')}`);
-    },
+    yarn: handle,
+    [process.execPath]: handle,
   });
   const printed: string[] = [];
   const prompts = [...(opts.prompts ?? [])];
@@ -266,7 +297,7 @@ function harness(
       if (opts.wellKnown) return opts.wellKnown();
       return Response.json({
         installationId: ID,
-        version: opts.version ?? VERSION,
+        version: opts.version ?? (opts.pkg ? '1.0.0' : VERSION),
         schemaDigest: 'x',
       });
     }
@@ -284,7 +315,8 @@ function harness(
     runner,
     io,
     dir,
-    cwd,
+    source,
+    configDir,
     fetchImpl,
     sleep: async (ms) => {
       slept.push(ms);
@@ -298,6 +330,39 @@ function harness(
 const noOptional = { yes: true, optional: {} };
 
 describe('install', () => {
+  it('package source runs wrangler directly', async () => {
+    const h = harness({ pkg: true });
+    await install(h.ctx, { state: freshState(), ...noOptional });
+
+    const config = join(h.ctx.configDir, 'wrangler.jsonc');
+    const wranglerCalls = h.runner.calls.filter(
+      (c) => c.cmd === process.execPath
+    );
+    expect(wranglerCalls.length).toBeGreaterThanOrEqual(3);
+    expect(h.runner.calls.every((c) => c.cmd === process.execPath)).toBe(true);
+    for (const c of wranglerCalls) {
+      if (c.args.includes('deploy')) {
+        expect(c.args.join(' ')).toContain(`--config ${config}`);
+      } else {
+        expect(c.args.slice(-2)).toEqual(['--config', config]);
+      }
+      expect(c.opts?.cwd).toBe(h.ctx.configDir);
+    }
+    expect(wranglerCalls.some((c) => c.args.includes('deploy'))).toBe(true);
+    expect(wranglerCalls.some((c) => c.args.includes('migrations'))).toBe(true);
+    expect(
+      h.runner.calls.some((c) => c.cmd === 'yarn' || c.cmd === 'git')
+    ).toBe(false);
+    expect(existsSync(config)).toBe(true);
+    expect(readFileSync(config, 'utf8').split('\n')[0]).toContain(
+      'Edit inputs with npx gitorange@1.0.0 install, not by hand.'
+    );
+    expect(existsSync(join(cwd, 'wrangler.jsonc'))).toBe(false);
+    expect(h.printed.join('\n')).toContain(
+      'npx gitorange@1.0.0 install --resume --name acme'
+    );
+  });
+
   it('fresh install creates everything once, deploys, verifies, ends installed', async () => {
     const h = harness();
     const out = await install(h.ctx, { state: freshState(), ...noOptional });
@@ -576,7 +641,7 @@ describe('install', () => {
     const h = harness();
     await expect(
       install(h.ctx, { state: freshState(), ...noOptional })
-    ).rejects.toThrow(/was not generated by yarn gitorange install/);
+    ).rejects.toThrow(/was not generated by gitorange/);
     expect(
       h.count('createD1') + h.count('createR2') + h.count('putR2Object')
     ).toBe(0);
@@ -950,7 +1015,7 @@ describe('resumeInstalled', () => {
     const { s, seed } = installedFixture();
     const h = harness({ seed });
     await expect(resumeInstalled(h.ctx, s, {})).rejects.toThrow(
-      /was not generated by yarn gitorange install/
+      /was not generated by gitorange/
     );
     expect(h.fetched).toEqual([]);
   });

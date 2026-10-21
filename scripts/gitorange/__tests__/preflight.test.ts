@@ -1,7 +1,11 @@
+import { mkdtempSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { CloudflareError } from '../cloudflare.ts';
 import { preflight } from '../preflight.ts';
-import { fakeCloudflare, fakeRunner } from './fakes.ts';
+import { checkoutSource, packageSource } from '../source.ts';
+import { fakeCloudflare, fakePackage, fakeRunner } from './fakes.ts';
 
 const table = (rows: [string, string, string][]) =>
   [
@@ -28,6 +32,7 @@ const input = {
   workersDev: true,
   fromEmail: 'noreply@mail.example.com',
   workerName: 'gitorange',
+  source: checkoutSource('/repo'),
 };
 
 describe('preflight', () => {
@@ -167,7 +172,30 @@ describe('preflight', () => {
     const runner = okRunner();
     await preflight(fakeCloudflare({ subdomain: 'me' }), runner, input);
     const email = runner.calls.find((c) => c.cmd === 'yarn');
+    expect(email?.args).toEqual(['-s', 'wrangler', 'email', 'sending', 'list']);
     expect(email?.opts?.env).toEqual({ CLOUDFLARE_ACCOUNT_ID: 'acc' });
+  });
+
+  it('a package lists Email Sending with its own wrangler, without --config', async () => {
+    const source = packageSource(
+      fakePackage(mkdtempSync(join(tmpdir(), 'pre-')), {
+        version: '1.2.0',
+        commit: 'abc123def456',
+      })
+    );
+    const out = table([['example.com', 'mail.example.com', 'yes']]);
+    const runner = fakeRunner({
+      docker: () => ({ code: 0, stdout: '27.0\n', stderr: '' }),
+      [process.execPath]: () => ({ code: 0, stdout: out, stderr: '' }),
+    });
+    const r = await preflight(fakeCloudflare({ subdomain: 'me' }), runner, {
+      ...input,
+      source,
+    });
+    expect(r.failures).toEqual([]);
+    const email = runner.calls.find((c) => c.cmd === process.execPath);
+    expect(email?.args.slice(1)).toEqual(['email', 'sending', 'list']);
+    expect(runner.calls.some((c) => c.cmd === 'yarn')).toBe(false);
   });
 
   it('matches the sender domain as a whole entry, not a substring', async () => {

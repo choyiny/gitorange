@@ -1,5 +1,6 @@
 import { CloudflareError, type Cloudflare } from './cloudflare.ts';
 import { withEnv, type Runner } from './runner.ts';
+import type { Source } from './source.ts';
 
 export type Failure = { check: string; message: string; fix: string };
 
@@ -9,6 +10,8 @@ export interface PreflightInput {
   workersDev: boolean;
   fromEmail: string | null;
   workerName: string;
+  /** Runs wrangler: the checkout's (yarn) or the package's own. */
+  source: Source;
 }
 
 interface Outcome {
@@ -250,13 +253,9 @@ export async function preflight(
       async () => {
         const domain = input.fromEmail!.split('@').pop()!.toLowerCase();
         const fix = `Add ${domain} under Email Sending in the Cloudflare dashboard (Compute & AI → Email Service), verify it, then run the installer again.`;
-        const res = await run.run('yarn', [
-          '-s',
-          'wrangler',
-          'email',
-          'sending',
-          'list',
-        ]);
+        // Bare: the generated config does not exist yet, and this reads none.
+        const c = input.source.wranglerBare(['email', 'sending', 'list']);
+        const res = await run.run(c.cmd, c.args);
         if (res.code !== 0)
           return one(
             'email',

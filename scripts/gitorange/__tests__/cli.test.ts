@@ -21,6 +21,7 @@ import {
 import type { Io } from '../collect.ts';
 import { installationIdOf, resourceNames } from '../names.ts';
 import type { RunResult } from '../runner.ts';
+import { checkoutSource, packageSource } from '../source.ts';
 import {
   listStates,
   newState,
@@ -30,6 +31,7 @@ import {
 } from '../state.ts';
 import {
   fakeCloudflare,
+  fakePackage,
   fakeRunner,
   type FakeCloudflare,
   type FakeCloudflareSeed,
@@ -155,7 +157,8 @@ function harness(
     env: opts.env ?? {},
     runner,
     dir,
-    cwd,
+    source: checkoutSource(cwd),
+    configDir: cwd,
     fetchImpl,
     sleep: async () => {},
     now: () => new Date('2026-10-17T00:00:00Z'),
@@ -511,7 +514,11 @@ describe('install', () => {
     // Deployed from this checkout, so the code can be replaced without an upgrade.
     writeState(dir, {
       ...s,
-      deployedConfigHash: renderConfig({ cwd } as Ctx, s, VERSION).hash,
+      deployedConfigHash: renderConfig(
+        { source: checkoutSource(cwd), configDir: cwd } as Ctx,
+        s,
+        VERSION
+      ).hash,
     });
     expect(
       await main(
@@ -625,12 +632,14 @@ describe('status', () => {
   });
 });
 
+const source = checkoutSource('/repo');
+
 describe('resolveToken', () => {
   it('prefers CLOUDFLARE_API_TOKEN without running wrangler', async () => {
     const r = fakeRunner({});
-    expect(await resolveToken({ CLOUDFLARE_API_TOKEN: 'env-tok' }, r)).toBe(
-      'env-tok'
-    );
+    expect(
+      await resolveToken({ CLOUDFLARE_API_TOKEN: 'env-tok' }, r, source)
+    ).toBe('env-tok');
     expect(r.calls).toEqual([]);
   });
   it("uses the last token-shaped line of wrangler's output, without colour codes", async () => {
@@ -642,8 +651,39 @@ describe('resolveToken', () => {
         stderr: '',
       }),
     });
-    expect(await resolveToken({}, r)).toBe(tok);
+    expect(await resolveToken({}, r, source)).toBe(tok);
     expect(r.calls[0]!.args).toEqual(['-s', 'wrangler', 'auth', 'token']);
+  });
+  it("package mode runs its wrangler's auth token without --config", async () => {
+    const pkgSource = packageSource(
+      fakePackage(mkdtempSync(join(tmpdir(), 'tok-')), {
+        version: '1.2.0',
+        commit: 'abc123def456',
+      })
+    );
+    const tok = 'AbC_def-123.456789012345';
+    const r = fakeRunner({
+      [process.execPath]: () => ({ code: 0, stdout: `${tok}\n`, stderr: '' }),
+    });
+    expect(await resolveToken({}, r, pkgSource)).toBe(tok);
+    expect(r.calls).toHaveLength(1);
+    expect(r.calls[0]!.cmd).toBe(process.execPath);
+    expect(r.calls[0]!.args.slice(1)).toEqual(['auth', 'token']);
+    expect(r.calls[0]!.args).not.toContain('--config');
+  });
+  it('package mode without a login prints its pinned login command', async () => {
+    const pkgSource = packageSource(
+      fakePackage(mkdtempSync(join(tmpdir(), 'tok-')), {
+        version: '1.2.0',
+        commit: 'abc123def456',
+      })
+    );
+    const r = fakeRunner({
+      [process.execPath]: () => ({ code: 1, stdout: '', stderr: 'x' }),
+    });
+    await expect(resolveToken({}, r, pkgSource)).rejects.toThrow(
+      'Run npx wrangler@4.127.0 login first.'
+    );
   });
   it('with no token-shaped line says to run wrangler login', async () => {
     const r = fakeRunner({
@@ -653,7 +693,7 @@ describe('resolveToken', () => {
         stderr: '',
       }),
     });
-    await expect(resolveToken({}, r)).rejects.toThrow(
+    await expect(resolveToken({}, r, source)).rejects.toThrow(
       'Run yarn wrangler login first.'
     );
   });
@@ -662,7 +702,7 @@ describe('resolveToken', () => {
     const r = fakeRunner({
       yarn: () => ({ code: 1, stdout: '', stderr: 'Not logged in' }),
     });
-    await expect(resolveToken({}, r)).rejects.toThrow(
+    await expect(resolveToken({}, r, source)).rejects.toThrow(
       'Run yarn wrangler login first.'
     );
   });
@@ -679,7 +719,7 @@ describe('applyCommand', () => {
         fromEmail: "o'brien+git@example.com",
       },
     };
-    expect(applyCommand(s, false, 'abc')).toBe(
+    expect(applyCommand(s, false, 'abc', false, source)).toBe(
       `yarn gitorange install --name acme --account ${ACCOUNT} --workers-dev --from-email 'o'\\''brien+git@example.com' --expect-plan abc --yes`
     );
   });
