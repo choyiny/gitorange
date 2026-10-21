@@ -14,6 +14,7 @@ import {
 import type { Runner } from './runner.ts';
 import { checkR2Keys, withSecretsFile } from './secrets.ts';
 import type { InstallState } from './state.ts';
+import { checkoutSource } from './source.ts';
 
 export type Ctx = {
   cf: Cloudflare;
@@ -78,18 +79,8 @@ async function mustRun(ctx: Ctx, what: string, cmd: string, args: string[]) {
 }
 
 /** `git rev-parse --short=12 HEAD`, plus `-dirty` with uncommitted changes: what verify expects. */
-export async function buildVersion(ctx: Ctx): Promise<string> {
-  const head = await mustRun(ctx, 'git rev-parse', 'git', [
-    'rev-parse',
-    '--short=12',
-    'HEAD',
-  ]);
-  const status = await mustRun(ctx, 'git status', 'git', [
-    'status',
-    '--porcelain',
-  ]);
-  const sha = head.stdout.trim();
-  return status.stdout.trim() ? `${sha}-dirty` : sha;
+export function buildVersion(ctx: Ctx): Promise<string> {
+  return checkoutSource(ctx.cwd).version(ctx.runner);
 }
 
 const configPath = (ctx: Ctx) => join(ctx.cwd, 'wrangler.jsonc');
