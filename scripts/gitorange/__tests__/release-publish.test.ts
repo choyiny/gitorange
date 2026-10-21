@@ -3,22 +3,29 @@ import { checkTag, preflight } from '../release-publish.ts';
 import type { Runner } from '../runner.ts';
 
 const SHA = 'a'.repeat(40);
-function runner(stdout: string) {
+function runner(o: { tag?: boolean; onMain?: boolean }) {
   const calls: { cmd: string; args: string[]; cwd?: string }[] = [];
   const r: Runner = {
     async run(cmd, args, opts) {
       calls.push({ cmd, args, cwd: opts?.cwd });
-      return { code: 0, stdout, stderr: '' };
+      const sub = args[2];
+      const out = (code: number, stdout = '') => ({
+        code,
+        stdout,
+        stderr: '',
+      });
+      if (sub === 'ls-remote')
+        return out(0, o.tag === false ? '' : `${SHA}\trefs/tags/v1.2.3\n`);
+      if (sub === 'merge-base') return out(o.onMain === false ? 1 : 0);
+      if (sub === 'rev-parse') return out(0, `${SHA}\n`);
+      return out(0);
     },
   };
   return { r, calls };
 }
-const fetchWith = (release: number, npm: number) =>
-  (async (url: string) =>
-    new Response('{}', {
-      status: String(url).includes('npmjs') ? npm : release,
-    })) as unknown as typeof fetch;
-const base = { tag: 'v1.2.3', repo: '/repo', token: 'pat' };
+const npmStatus = (npm: number) =>
+  (async () => new Response('{}', { status: npm })) as unknown as typeof fetch;
+const base = { tag: 'v1.2.3', repo: '/repo' };
 
 describe('checkTag', () => {
   it('bad tag shape', () => {
@@ -30,51 +37,37 @@ describe('checkTag', () => {
 
 describe('preflight', () => {
   it('tag missing on origin', async () => {
-    const { r } = runner('');
+    const { r } = runner({ tag: false });
     await expect(
-      preflight({ ...base, runner: r, fetchImpl: fetchWith(200, 404) })
+      preflight({ ...base, runner: r, fetchImpl: npmStatus(404) })
     ).rejects.toThrow('missing on origin');
   });
-  it('refuses without a token', async () => {
-    const { r } = runner(`${SHA}\trefs/tags/v1.2.3\n`);
+  it('tag not on main', async () => {
+    const { r } = runner({ onMain: false });
     await expect(
-      preflight({
-        ...base,
-        token: undefined,
-        runner: r,
-        fetchImpl: fetchWith(200, 404),
-      })
-    ).rejects.toThrow('GITORANGE_TOKEN');
-  });
-  it('not a release', async () => {
-    const { r } = runner(`${SHA}\trefs/tags/v1.2.3\n`);
-    await expect(
-      preflight({ ...base, runner: r, fetchImpl: fetchWith(404, 404) })
-    ).rejects.toThrow('not a GitOrange release');
+      preflight({ ...base, runner: r, fetchImpl: npmStatus(404) })
+    ).rejects.toThrow('Tag v1.2.3 is not on main; publish only releases cut');
   });
   it('already on npm', async () => {
-    const { r } = runner(`${SHA}\trefs/tags/v1.2.3\n`);
+    const { r } = runner({});
     await expect(
-      preflight({ ...base, runner: r, fetchImpl: fetchWith(200, 200) })
+      preflight({ ...base, runner: r, fetchImpl: npmStatus(200) })
     ).rejects.toThrow('already on npm');
   });
-  it('passes returns the tag commit', async () => {
-    const peeled = 'b'.repeat(40);
-    const { r } = runner(
-      `${SHA}\trefs/tags/v1.2.3\n${peeled}\trefs/tags/v1.2.3^{}\n`
-    );
+  it('passes when the tag is on main', async () => {
+    const { r } = runner({});
     expect(
-      await preflight({ ...base, runner: r, fetchImpl: fetchWith(200, 404) })
-    ).toEqual({ commit: peeled });
+      await preflight({ ...base, runner: r, fetchImpl: npmStatus(404) })
+    ).toEqual({ commit: SHA });
   });
   it('never reads the working copy', async () => {
-    const { r, calls } = runner(`${SHA}\trefs/tags/v1.2.3\n`);
-    await preflight({ ...base, runner: r, fetchImpl: fetchWith(200, 404) });
+    const { r, calls } = runner({});
+    await preflight({ ...base, runner: r, fetchImpl: npmStatus(404) });
     for (const c of calls) {
       expect(c.cmd).toBe('git');
       expect(c.args.slice(0, 2)).toEqual(['-C', '/repo']);
-      expect(c.args).toContain('ls-remote');
       expect(c.cwd).toBeUndefined();
+      expect(c.args.join(' ')).not.toMatch(/checkout|reset|merge |pull|stash/);
     }
   });
 });

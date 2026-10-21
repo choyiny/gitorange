@@ -1,7 +1,6 @@
 // Publishes a GitOrange release to npm from this machine:
 //   yarn release:publish vX.Y.Z
-// Builds from a throwaway worktree of the tag, never the working copy. Needs GITORANGE_TOKEN (a
-// personal access token) to check the release. npm asks for the 2FA code itself.
+// Builds from a throwaway worktree of the tag, never the working copy. The tag must be on origin's main. npm asks for the 2FA code itself.
 import { execFileSync, spawnSync } from 'node:child_process';
 import { mkdtempSync, readdirSync, readFileSync, statSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -41,7 +40,6 @@ async function main() {
   const { commit } = await preflight({
     tag,
     repo: REPO,
-    token: process.env.GITORANGE_TOKEN,
     fetchImpl: fetch,
     runner: processRunner,
   });
@@ -69,6 +67,7 @@ async function main() {
     console.log(
       `\n${name}@${version}\ncommit ${commit}\n${files} files, ${(bytes / 1048576).toFixed(1)} MB`
     );
+    console.log("Publish only tags cut in GitOrange's Releases tab.");
     const rl = createInterface({
       input: process.stdin,
       output: process.stdout,
