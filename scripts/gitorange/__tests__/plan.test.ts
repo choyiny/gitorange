@@ -682,8 +682,18 @@ describe('computePlan: adopted resources', () => {
 
   it('adopted workflows bound elsewhere are reused', () => {
     const s = withRes(
-      adopted('actionsWorkflow', 'workflow', 'gitorange-actions-run', 'x'),
-      adopted('mergeWorkflow', 'workflow', 'gitorange-merge-resolution', 'y')
+      adopted(
+        'actionsWorkflow',
+        'workflow',
+        'gitorange-actions-run',
+        'gitorange-actions-run'
+      ),
+      adopted(
+        'mergeWorkflow',
+        'workflow',
+        'gitorange-merge-resolution',
+        'gitorange-merge-resolution'
+      )
     );
     const o = {
       ...empty(),
@@ -712,6 +722,32 @@ describe('computePlan: adopted resources', () => {
     expect(stopMessage(() => computePlan(desired, o, s))).toContain(
       '`gitorange-db` is recorded as adopted'
     );
+  });
+
+  it('adopted r2, workflow and worker with a different recorded id stop', () => {
+    const cases: [Resource, Partial<Observed>][] = [
+      [
+        adopted('lfs', 'r2', 'gitorange-lfs', 'old-bucket'),
+        { r2: ['gitorange-lfs'] },
+      ],
+      [
+        adopted('actionsWorkflow', 'workflow', 'gitorange-actions-run', 'old'),
+        {
+          workflows: [{ name: 'gitorange-actions-run', scriptName: 'x' }],
+        },
+      ],
+      [
+        adopted('worker', 'worker', 'gitorange', 'old-script'),
+        { worker: { exists: true, vars: {} } },
+      ],
+    ];
+    for (const [r, o] of cases) {
+      expect(
+        stopMessage(() =>
+          computePlan(desired, { ...empty(), ...o }, withRes(r))
+        )
+      ).toContain(`\`${r.name}\` is recorded as adopted`);
+    }
   });
 
   it('an adopted resource missing in Cloudflare stops as missing', () => {

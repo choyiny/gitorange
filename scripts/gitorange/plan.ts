@@ -104,11 +104,13 @@ function decideAdopted(
       }
       return 'reuse';
     }
+    // R2 buckets, Workflows and the worker are identified by name (the recorded id is the name;
+    // Observed exposes nothing finer), so the observed identity is the desired name.
     case 'r2':
       if (!observed.r2.includes(name)) {
         throw recordedButMissing(name);
       }
-      if (recorded.name !== name) {
+      if (recorded.id !== name) {
         throw adoptedMismatch(name);
       }
       return 'reuse';
@@ -116,7 +118,7 @@ function decideAdopted(
       if (!observed.workflows.some((w) => w.name === name)) {
         throw recordedButMissing(name);
       }
-      if (recorded.name !== name) {
+      if (recorded.id !== name) {
         throw adoptedMismatch(name);
       }
       return 'reuse';
@@ -124,7 +126,7 @@ function decideAdopted(
       if (!observed.worker.exists) {
         throw recordedButMissing(name);
       }
-      if (recorded.name !== desired.names.worker) {
+      if (recorded.id !== desired.names.worker) {
         throw adoptedMismatch(name);
       }
       return 'deploy';
