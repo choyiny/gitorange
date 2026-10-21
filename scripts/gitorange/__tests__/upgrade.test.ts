@@ -790,6 +790,82 @@ describe('upgrade', () => {
     expect(s2.deployedVersion).toBe(TO);
   });
 
+  it('a second upgrade to the same version regenerates the config and collects what is missing', async () => {
+    const first = harness();
+    const s = await run(first);
+    expect(s.steps.some((x) => x.key === `upgrade:${TO}:deploy`)).toBe(true);
+    // Since then: the config file differs and the worker lost its auth secret and analytics token.
+    writeFileSync(
+      join(home, 'wrangler.jsonc'),
+      readFileSync(join(home, 'wrangler.jsonc'), 'utf8').replace(
+        '"LIVE_NAMESPACE_ID": "ns-live"',
+        '"LIVE_NAMESPACE_ID": "stale"'
+      )
+    );
+    const again = harness({
+      running: TO,
+      state: { ...s, deployedConfigHash: 'stale' },
+      secrets: ['R2_ACCESS_KEY_ID', 'R2_SECRET_ACCESS_KEY', 'SETUP_CODE_HASH'],
+      seed: {
+        ...seedFor(s),
+        d1Migrations: { 'd1-existing': ['0000_init.sql', '0001_more.sql'] },
+        r2: {
+          ...seedFor(s).r2,
+          'acme-actions-cache': { [R2_MARKER_KEY]: marker(s, 'actionsCache') },
+        },
+      },
+    });
+    const asked: string[][] = [];
+    const s2 = await run(again, {
+      askOptional: async (missing) => {
+        asked.push(missing);
+        return { analytics: 'tok' };
+      },
+    });
+    expect(again.printed.join('\n')).toContain('Config: changes');
+    expect(asked).toEqual([['analytics-token']]);
+    expect(again.deploys).toHaveLength(1);
+    expect(Object.keys(again.deploys[0]!.secrets ?? {}).sort()).toEqual([
+      'BETTER_AUTH_SECRET',
+      'CF_ANALYTICS_TOKEN',
+    ]);
+    expect(readFileSync(join(home, 'wrangler.jsonc'), 'utf8')).toContain(
+      '"LIVE_NAMESPACE_ID": "ns-live"'
+    );
+    expect(s2.deployedConfigHash).toBe(renderConfig(again.ctx, s2, TO).hash);
+  });
+
+  it.each([
+    ['R2_ACCESS_KEY_ID', 'R2_SECRET_ACCESS_KEY'],
+    ['R2_SECRET_ACCESS_KEY', 'R2_ACCESS_KEY_ID'],
+  ])(
+    'a lone %s is reported, never paired with a typed half',
+    async (present, absent) => {
+      const h = harness({
+        secrets: ['BETTER_AUTH_SECRET', 'CF_ANALYTICS_TOKEN', present],
+      });
+      const p = await planUpgrade(h.ctx, h.state);
+      const fix = `Delete it (${h.ctx.source.wranglerCommand(`secret delete ${present} --name acme`)}), then run the upgrade again to add a matching pair.`;
+      const lines = formatUpgradePlan(p).split('\n');
+      expect(lines).toContain(
+        `Problem: the worker has ${present} without ${absent}, so the R2 upload keys are left as they are. ${fix}`
+      );
+      expect(lines.some((l) => l.startsWith('Missing'))).toBe(false);
+      let asked = false;
+      const s = await run(h, {
+        askOptional: async () => {
+          asked = true;
+          return { r2: { id: 'kid', secret: 'ksecret' } };
+        },
+      });
+      expect(asked).toBe(false);
+      expect(h.deploys).toHaveLength(1);
+      expect(h.deploys[0]!.args).not.toContain('--secrets-file');
+      expect(s.status).toBe('installed');
+      expect(h.printed.at(-1)).toContain(`Problem: the worker has ${present}`);
+    }
+  );
+
   it('a corrupt state file fails without leaking the lock', async () => {
     const h = harness();
     const state = h.saved();

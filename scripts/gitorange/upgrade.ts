@@ -23,6 +23,7 @@ import {
   existingSecretNames,
   generatedSecrets,
   missingOptional,
+  partialOptional,
   OPTIONAL_ITEMS,
   optionalSecretNames,
   optionalSecrets,
@@ -63,6 +64,11 @@ export type UpgradePlan = {
   secrets: string[];
   /** Operator-typed secret names the worker lacks: never generated, never a stop. */
   missing: string[];
+  /**
+   * A credential the worker holds only half of (one R2 key): neither half is ever sent; the
+   * operator deletes the stray one and runs the upgrade again.
+   */
+  problems: string[];
   /** The generated config's hash differs from `deployedConfigHash`. */
   configChanged: boolean;
   /** First 12 hex of sha256 over the plan lines. */
@@ -156,6 +162,16 @@ async function pendingMigrations(ctx: Ctx, s: InstallState): Promise<string[]> {
   return files.filter((f) => !applied.includes(f));
 }
 
+/** One line per credential the worker holds only half of. */
+const halfSet = (ctx: Ctx, s: InstallState, have: string[]): string[] =>
+  partialOptional(have).flatMap(({ present, absent }) =>
+    present.map(
+      (n) =>
+        `Problem: the worker has ${n} without ${absent.join(', ')}, so the R2 upload keys are left as they are. ` +
+        `Delete it (${ctx.source.wranglerCommand(`secret delete ${n} --name ${s.names.worker}`)}), then run the upgrade again to add a matching pair.`
+    )
+  );
+
 function planLines(p: Omit<UpgradePlan, 'digest'>): string[] {
   const list = (xs: string[]) => (xs.length > 0 ? xs.join(', ') : 'none');
   const from = p.from ?? 'unknown';
@@ -172,6 +188,7 @@ function planLines(p: Omit<UpgradePlan, 'digest'>): string[] {
   );
   if (p.missing.length > 0)
     lines.push(`Missing (you add them): ${p.missing.join(', ')}`);
+  lines.push(...p.problems);
   lines.push(
     `Config: ${p.configChanged ? 'changes' : 'unchanged'}`,
     '',
@@ -214,6 +231,7 @@ async function planned(
     secrets: Object.keys(generatedSecrets(have)),
     // Names only: what the operator types later is never part of the plan or its digest.
     missing: optionalSecretNames(missingOptional(have)),
+    problems: halfSet(ctx, s, have),
     configChanged: renderConfig(ctx, s, to).hash !== s.deployedConfigHash,
   };
   const digest = createHash('sha256')
@@ -310,6 +328,7 @@ export async function upgrade(
   const prefix = `upgrade:${to}:`;
   let step = 'plan';
   let started = false;
+  let problems: string[] = [];
   try {
     // Lock, then read the state as it is on disk now (inside the try: a corrupt state file must
     // not leak the lock).
@@ -353,6 +372,7 @@ export async function upgrade(
       checkRunning(ctx, s, running, to, opts.replaceCustomCode);
     }
     const { plan, base, obs, have } = await planned(ctx, s, running, to);
+    problems = plan.problems;
     ctx.io.print(formatUpgradePlan(plan));
     if (opts.plan) {
       const args = [
@@ -376,18 +396,17 @@ export async function upgrade(
       throw new Error('Nothing was changed.');
     }
 
-    // Secrets and config whenever the deploy is still to come.
-    const deployPending = !hasStep(s, `${prefix}deploy`);
+    // A fresh upgrade to a version upgraded to before (a same-version redeploy) runs every step.
+    const from = unfinished
+      ? s
+      : { ...s, steps: s.steps.filter((x) => !x.key.startsWith(prefix)) };
+    // Secrets and config whenever the deploy is still to come (judged after that reset).
+    const deployPending = !hasStep(from, `${prefix}deploy`);
     const absent = missingOptional(have);
     let typed: Optional = {};
     if (deployPending && absent.length > 0 && opts.askOptional) {
       typed = onlyMissing(await opts.askOptional(absent), absent);
     }
-
-    // A fresh upgrade to a version upgraded to before (a same-version redeploy) runs every step.
-    const from = unfinished
-      ? s
-      : { ...s, steps: s.steps.filter((x) => !x.key.startsWith(prefix)) };
     save({ ...transition(from, 'upgrading'), upgradeTarget: to });
     started = true;
     const once = async (name: string, fn: () => Promise<void>) => {
@@ -487,6 +506,7 @@ export async function upgrade(
     release();
   }
   ctx.io.print(`Upgraded ${slug} to ${to}: ${s.baseUrl}`);
+  for (const line of problems) ctx.io.print(line);
   const missing = optionalSecretNames(s.skipped);
   if (missing.length > 0) {
     ctx.io.print(

@@ -55,11 +55,24 @@ export const OPTIONAL_ITEMS = [
   },
 ] as const;
 
-/** The optional items whose secrets the worker (`have`) lacks, by id. */
+/**
+ * The optional items whose secrets the worker (`have`) lacks entirely, by id. An item with only
+ * some of its secrets (one R2 key without the other) is not offered: see `partialOptional`.
+ */
 export function missingOptional(have: string[]): string[] {
   return OPTIONAL_ITEMS.filter((i) =>
-    i.secrets.some((n) => !have.includes(n))
+    i.secrets.every((n) => !have.includes(n))
   ).map((i) => i.id);
+}
+
+/** The worker's secrets of each optional item it holds only partly, and the names it lacks. */
+export function partialOptional(
+  have: string[]
+): { present: string[]; absent: string[] }[] {
+  return OPTIONAL_ITEMS.map((i) => ({
+    present: i.secrets.filter((n) => have.includes(n)),
+    absent: i.secrets.filter((n) => !have.includes(n)),
+  })).filter((x) => x.present.length > 0 && x.absent.length > 0);
 }
 
 /** The secret names of the optional items `ids`. */
