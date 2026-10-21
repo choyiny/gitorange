@@ -1,7 +1,8 @@
 # GitOrange from npm: install, upgrade, adopt without a clone
 
-Status: draft for approval, 2026-10-19. Builds on the deterministic installer (spec
-`2026-10-16-deterministic-install-design.md`, branch `install-cli`, not yet merged; this work stacks on it).
+Status: draft for approval, revised 2026-10-21. Builds on the deterministic installer (spec
+`2026-10-16-deterministic-install-design.md`, PR #80) and tags and releases in GitOrange (spec
+`2026-10-20-releases-design.md`, PR #81), both on `main`.
 
 Blueprint: the saasmail npm CLI, already shipped and used on nine live installs (spec
 `~/workspace/saasmail-install/docs/superpowers/specs/2026-10-17-npm-cli-design.md`, code in
@@ -12,7 +13,7 @@ code rather than re-deriving it. Lessons saasmail learned live (section 9) are r
 ## Why
 
 Lower the barrier to running GitOrange, and move existing deploys onto the same path. Today an operator clones the
-repo, installs yarn and dependencies, and runs `yarn gitorange install` from the checkout (once `install-cli` lands).
+repo, installs yarn and dependencies, and runs `yarn gitorange install` from the checkout.
 The goal: someone with Node, Docker, a Cloudflare account and a domain runs `npx gitorange install` and ends with a
 working instance; later `npx gitorange@latest upgrade` moves it to a new release. The operator's own instance
 (`git.xyspace.dev`, deployed by hand from `main`, no installer state) is taken over with `adopt` and upgraded the
@@ -26,7 +27,8 @@ same way. Both audiences matter (operator, 2026-10-19).
 - `npx gitorange adopt` takes over an install made from a clone (`--from <checkout>`) or by hand (`--worker <name>`),
   so `upgrade` works for it afterwards. `git.xyspace.dev` is the first real case.
 - `npx gitorange status` shows the install, as today, plus "running X, latest Y".
-- Each npm version maps to one tagged release of `choyiny/gitorange`, published by CI with provenance.
+- Each npm version maps to one GitOrange release of `choyiny/gitorange` (cut on git.xyspace.dev), published by the
+  operator from their own machine (section 9).
 
 ## Non-goals
 
@@ -93,7 +95,7 @@ saasmail.
 
 As saasmail section 3:
 
-- Package version = release tag (`v1.0.0` → `1.0.0`), stamped by CI; the package deploys `GITORANGE_VERSION` = that
+- Package version = release tag (`v1.0.0` → `1.0.0`), stamped by `release:publish`; the package deploys `GITORANGE_VERSION` = that
   version and records its commit (`gitorangeCommit`).
 - `/.well-known/gitorange` (already reporting `version` on `install-cli`) is how upgrade and status read what runs.
 - Comparison: semver directly; a commit through GitHub's public compare API on `choyiny/gitorange`; diverged, dirty,
@@ -159,18 +161,30 @@ As today, from `~/.gitorange/` (or `--from <checkout>`), plus running version an
 
 ## 9. Publishing and docs
 
-- GitOrange's source of truth is `git.xyspace.dev`; GitHub (`choyiny/gitorange`) is the mirror. npm trusted
-  publishing only works from GitHub Actions or GitLab, so releases are cut and published from the GitHub mirror
-  (operator agreed, 2026-10-19).
-- A GitHub Actions workflow on a published release: check out the tag, install, build, run the CLI tests, set the
-  version from the tag, `npm publish --provenance --access public` via trusted publishing (npm ≥ 11.5.1, `id-token:
-write`; no `NPM_TOKEN`). Never runs on pull requests.
+Operator's decision, 2026-10-21: publish from their own machine for now. GitOrange Actions has no secrets store, so no
+CI job can hold an npm credential safely, and npm trusted publishing only accepts GitHub Actions or GitLab. A later
+"Actions secrets" feature can replace this step without changing anything else here.
+
+- A release is cut in GitOrange (the Releases tab or `gitorange_create_release`), which creates the `vX.Y.Z` tag on
+  git.xyspace.dev. Nothing publishes on its own.
+- `yarn release:publish vX.Y.Z`, run by the operator in their own terminal:
+  1. Refuses unless the tag exists on `origin` (git.xyspace.dev) and is a GitOrange release
+     (`GET /api/repos/choyiny/gitorange/releases/vX.Y.Z`, read with the operator's token or a public read; builder's
+     call), and unless that version is not already on npm.
+  2. Checks out the tag into a fresh temporary worktree (never the operator's working copy), `yarn install
+--frozen-lockfile`, builds, runs the CLI tests and the package smoke test, and packs with `version` = the tag
+     and `gitorangeCommit` = the tag's commit.
+  3. Shows what will be published (name, version, commit, file count, size) and runs `npm publish --access public`
+     from the packed directory. npm asks for the operator's 2FA code in their terminal; the script never reads,
+     stores or passes it.
+  4. Removes the worktree.
+     No provenance (that needs CI); the package records its commit instead.
+- The first real publish creates the `gitorange` package; no placeholder and no trusted-publisher setup.
 - A `pack` script builds the package locally; a CI check runs it and smoke-tests the installed package
-  (`gitorange --help`, `install --plan` against fakes, no Docker). It runs on pull requests on git.xyspace.dev (where
-  review happens) as well as on the mirror. The publish workflow is guarded to GitHub only (`github.server_url`, as
-  `codeql.yml`). _(my call)_
-- The plain `gitorange` name has to exist on npm before trusted publishing can be configured: the operator publishes a
-  placeholder `0.0.1` once from their own account (as done for saasmail), then sets up the trusted publisher.
+  (`gitorange --help`, `install --plan` against fakes, no Docker) on pull requests on git.xyspace.dev and on the
+  mirror. _(my call)_
+- Version comparison (section 4) uses GitHub's public compare API on the mirror, so the mirror's `main` must include a
+  running commit for it to be placed; pushing `main` to the mirror after merges (already the practice) covers it.
 - Docs: `docs/setup.md`, a new `docs/updating.md`, README and the `gitorange-onboarding` skill lead with
   `npx gitorange install|upgrade|adopt`; the clone flow stays for forks. CHANGELOG entry. CLAUDE.md's installer note
   mentions the package.
@@ -195,8 +209,8 @@ Artifacts namespace.
 
 - Package name `gitorange`, unscoped; state in `~/.gitorange/`, `GITORANGE_HOME` override.
 - The first public release is `1.0.0`.
-- Releases are created by hand on the GitHub mirror (GitOrange PRs live on git.xyspace.dev, so saasmail's
-  release-drafter labels have nothing to read).
+- `release:publish` builds from a fresh worktree of the tag, never the working copy, and refuses a tag that is not a
+  GitOrange release or a version already on npm.
 - The runner image is built locally by wrangler from the shipped build context, not pre-built in CI.
 - Adopt never deploys; the first upgrade does.
-- This work stacks on `install-cli` (one more PR on top), not a rewrite.
+- This work extends the installer on `main` (`scripts/gitorange/`), not a rewrite.
