@@ -2,12 +2,22 @@
 //   yarn release:publish vX.Y.Z
 // Builds from a throwaway worktree of the tag, never the working copy. The tag must be on origin's main. npm asks for the 2FA code itself.
 import { execFileSync, spawnSync } from 'node:child_process';
-import { mkdtempSync, readdirSync, readFileSync, statSync } from 'node:fs';
+import {
+  mkdtempSync,
+  readdirSync,
+  readFileSync,
+  rmSync,
+  statSync,
+} from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { createInterface } from 'node:readline/promises';
 import { fileURLToPath } from 'node:url';
-import { checkTag, preflight } from './gitorange/release-publish.ts';
+import {
+  checkTag,
+  preflight,
+  worktreeAddArgs,
+} from './gitorange/release-publish.ts';
 import { processRunner } from './gitorange/runner.ts';
 
 const REPO = resolve(dirname(fileURLToPath(import.meta.url)), '..');
@@ -45,7 +55,7 @@ async function main() {
   });
   const tmp = mkdtempSync(join(tmpdir(), 'gitorange-release-'));
   try {
-    execFileSync('git', ['-C', REPO, 'worktree', 'add', '--detach', tmp, tag], {
+    execFileSync('git', worktreeAddArgs(REPO, tmp, commit), {
       stdio: 'inherit',
     });
     step('yarn', ['install', '--frozen-lockfile'], tmp);
@@ -84,6 +94,7 @@ async function main() {
     spawnSync('git', ['-C', REPO, 'worktree', 'remove', '--force', tmp], {
       stdio: 'ignore',
     });
+    rmSync(tmp, { recursive: true, force: true });
   }
 }
 

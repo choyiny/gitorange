@@ -55,5 +55,18 @@ export async function preflight(o: {
     throw new Error(`gitorange@${version} is already on npm.`);
   }
   const rev = await git('rev-parse', 'refs/release-publish/tag^{commit}');
-  return { commit: rev.stdout.trim() };
+  const commit = rev.stdout.trim();
+  if (rev.code !== 0 || !commit) {
+    throw new Error(`Could not resolve ${o.tag} to a commit.`);
+  }
+  return { commit };
+}
+
+/** The build checks out the commit preflight verified, never a local tag of the same name. */
+export function worktreeAddArgs(
+  repo: string,
+  dir: string,
+  commit: string
+): string[] {
+  return ['-C', repo, 'worktree', 'add', '--detach', dir, commit];
 }

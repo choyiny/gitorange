@@ -1,9 +1,9 @@
 import { describe, expect, it } from 'vitest';
-import { checkTag, preflight } from '../release-publish.ts';
+import { checkTag, preflight, worktreeAddArgs } from '../release-publish.ts';
 import type { Runner } from '../runner.ts';
 
 const SHA = 'a'.repeat(40);
-function runner(o: { tag?: boolean; onMain?: boolean }) {
+function runner(o: { tag?: boolean; onMain?: boolean; revFails?: boolean }) {
   const calls: { cmd: string; args: string[]; cwd?: string }[] = [];
   const r: Runner = {
     async run(cmd, args, opts) {
@@ -17,7 +17,8 @@ function runner(o: { tag?: boolean; onMain?: boolean }) {
       if (sub === 'ls-remote')
         return out(0, o.tag === false ? '' : `${SHA}\trefs/tags/v1.2.3\n`);
       if (sub === 'merge-base') return out(o.onMain === false ? 1 : 0);
-      if (sub === 'rev-parse') return out(0, `${SHA}\n`);
+      if (sub === 'rev-parse')
+        return o.revFails ? out(128) : out(0, `${SHA}\n`);
       return out(0);
     },
   };
@@ -69,5 +70,27 @@ describe('preflight', () => {
       expect(c.cwd).toBeUndefined();
       expect(c.args.join(' ')).not.toMatch(/checkout|reset|merge |pull|stash/);
     }
+  });
+});
+
+describe('worktreeAddArgs', () => {
+  it('builds the verified commit, not the tag', () =>
+    expect(worktreeAddArgs('/repo', '/tmp/x', SHA)).toEqual([
+      '-C',
+      '/repo',
+      'worktree',
+      'add',
+      '--detach',
+      '/tmp/x',
+      SHA,
+    ]));
+});
+
+describe('preflight rev-parse', () => {
+  it('refuses when the commit cannot be resolved', async () => {
+    const { r } = runner({ revFails: true });
+    await expect(
+      preflight({ ...base, runner: r, fetchImpl: npmStatus(404) })
+    ).rejects.toThrow('Could not resolve');
   });
 });
