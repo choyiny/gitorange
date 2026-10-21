@@ -559,17 +559,60 @@ describe('adoptWorker', () => {
     // GitOrange has retired no var yet; the rule is the same as saasmail's.
     expect(
       varChanges(
-        { OLD_LOGO: 'x', FEATURE_X: 'on', APP_NAME: 'Mine' },
-        { APP_NAME: 'GitOrange' },
+        {
+          OLD_LOGO: 'x',
+          FEATURE_X: 'on',
+          WORKER_NAME: 'mine',
+          APP_NAME: 'Mine',
+        },
+        { WORKER_NAME: 'acme', APP_NAME: 'GitOrange' },
         new Set(['OLD_LOGO'])
       )
     ).toEqual({
       stops: [
-        '  APP_NAME  "Mine" -> "GitOrange"',
         '  FEATURE_X  "on" -> removed (GitOrange\'s config does not set it)',
+        '  WORKER_NAME  "mine" -> "acme"',
       ],
       drops: ['  OLD_LOGO  "x" -> removed (GitOrange no longer reads it)'],
     });
+  });
+
+  it('tunable vars are kept as found, not stops', async () => {
+    const h = workerHarness({
+      seed: workerSeed({}, [
+        ...without('APP_NAME'),
+        { type: 'plain_text', name: 'APP_NAME', text: 'XY SPACE GitOrange' },
+        { type: 'plain_text', name: 'AI_GATEWAY', text: 'xyspace-gitorange' },
+        {
+          type: 'plain_text',
+          name: 'REVIEW_MODEL',
+          text: '@cf/zai-org/glm-5.3',
+        },
+      ]),
+    });
+    const s = await run(h);
+    // REVIEW_MODEL equals the template's default: nothing to keep.
+    expect(s.inputs.vars).toEqual({
+      AI_GATEWAY: 'xyspace-gitorange',
+      APP_NAME: 'XY SPACE GitOrange',
+    });
+    const config = readFileSync(join(dest(), 'wrangler.jsonc'), 'utf8');
+    expect(config).toContain('"APP_NAME": "XY SPACE GitOrange"');
+    expect(config).toContain('"AI_GATEWAY": "xyspace-gitorange"');
+    expect(h.text()).toContain(
+      '  Kept: AI_GATEWAY "xyspace-gitorange"\n  Kept: APP_NAME "XY SPACE GitOrange"'
+    );
+    // An unknown changed var still stops, next to kept ones.
+    const stop = workerHarness({
+      seed: workerSeed({}, [
+        ...BINDINGS,
+        { type: 'plain_text', name: 'AI_GATEWAY', text: 'xyspace-gitorange' },
+        { type: 'plain_text', name: 'FEATURE_X', text: 'on' },
+      ]),
+    });
+    const err = (await plan(stop).catch((e: Error) => e)) as Error;
+    expect(err.message).toContain('  FEATURE_X  "on"');
+    expect(err.message).not.toContain('AI_GATEWAY');
   });
 
   it('confirm declined writes nothing', async () => {
@@ -724,10 +767,10 @@ describe('adoptWorker: the report and its stops', () => {
 
   it('a var the generated config sets to another value stops with both values', async () => {
     const h = workerHarness({
-      seed: workerSeed({}, withVar('REVIEW_MODEL', '@cf/other/model')),
+      seed: workerSeed({}, withVar('R2_ACCOUNT_ID', 'c'.repeat(32))),
     });
     await expect(plan(h)).rejects.toThrow(
-      '  REVIEW_MODEL  "@cf/other/model" -> "@cf/zai-org/glm-5.3"'
+      `  R2_ACCOUNT_ID  "${'c'.repeat(32)}" -> "${W_ACCOUNT}"`
     );
   });
 

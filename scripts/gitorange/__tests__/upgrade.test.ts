@@ -404,6 +404,21 @@ describe('upgrade', () => {
     expect(readState(home, ID)!.status).toBe('installed');
   });
 
+  it('kept tunable vars are in the regenerated config', async () => {
+    const base = installedAt120();
+    const h = harness({
+      state: {
+        ...base,
+        inputs: { ...base.inputs, vars: { AI_GATEWAY: 'mine' } },
+      },
+    });
+    const s = await run(h);
+    const config = readFileSync(join(home, 'wrangler.jsonc'), 'utf8');
+    expect(config).toContain('"AI_GATEWAY": "mine"');
+    expect(config).toContain('"APP_NAME": "GitOrange"');
+    expect(s.inputs.vars).toEqual({ AI_GATEWAY: 'mine' });
+  });
+
   it('a missing Durable Object namespace id is read and deployed', async () => {
     const h = harness({
       state: {

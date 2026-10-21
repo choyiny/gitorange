@@ -131,6 +131,21 @@ describe('generateWranglerConfig', () => {
     });
   });
 
+  it('kept vars override the template, and re-render to the same hash', () => {
+    const s = fixture();
+    s.inputs.vars = { APP_NAME: 'XY SPACE GitOrange', AI_GATEWAY: 'xy' };
+    const a = generateWranglerConfig(template, s, extra);
+    const v = read(a).vars;
+    expect(v.APP_NAME).toBe('XY SPACE GitOrange');
+    expect(v.AI_GATEWAY).toBe('xy');
+    expect(v.REVIEW_MODEL).toBe(read(template).vars.REVIEW_MODEL);
+    const b = generateWranglerConfig(template, s, { ...extra, existing: a });
+    expect(configHash(b, null)).toBe(configHash(a, null));
+    expect(configHash(a, null)).not.toBe(
+      configHash(generateWranglerConfig(template, fixture(), extra), null)
+    );
+  });
+
   it('is byte-identical for the same inputs', () => {
     const s = fixture();
     expect(generateWranglerConfig(template, s, extra)).toBe(

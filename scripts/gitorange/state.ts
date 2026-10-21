@@ -42,6 +42,8 @@ export interface InstallState {
     hostname: string | null;
     workersDev: boolean;
     fromEmail: string | null;
+    /** Tunable vars (TUNABLE_VARS) kept from an adopted worker, over the template's values. */
+    vars?: Record<string, string>;
   };
   names: ResourceNames;
   status: Status;

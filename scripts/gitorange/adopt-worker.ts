@@ -8,6 +8,7 @@ import { existsSync, readFileSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import type { Ctx } from './apply.ts';
 import { DO_VARS, renderConfig, writeConfig } from './apply-steps.ts';
+import { TUNABLE_VARS } from './config.ts';
 import { plainTextVars, type WorkerBinding } from './cloudflare.ts';
 import { installDir } from './home.ts';
 import {
@@ -121,7 +122,8 @@ export function varChanges(
           ? `  ${name}  (value not shown) -> removed; the upgrade would generate a ${name} secret in its place`
           : `  ${name}  (value not shown) -> removed; set it as a secret instead`
       );
-    } else if (EXPECTED_TO_CHANGE.has(name)) {
+    } else if (EXPECTED_TO_CHANGE.has(name) || TUNABLE_VARS.includes(name)) {
+      // Tunable vars are kept as found (inputs.vars), never changed by the upgrade.
       continue;
     } else if (DO_ID_VARS.has(name) && value === '') {
       continue;
@@ -168,6 +170,8 @@ type TemplateShape = {
   doBindings: Map<string, string>;
   /** The class of the Durable Object-managed container (the Actions runner). */
   containerClass: string | null;
+  /** The template's plain vars (the defaults a tunable var is compared with). */
+  vars: Record<string, string>;
 };
 
 function templateShape(ctx: Ctx): TemplateShape {
@@ -175,7 +179,11 @@ function templateShape(ctx: Ctx): TemplateShape {
     exports?: Record<string, { type?: string }>;
     durable_objects?: { bindings?: { name: string; class_name: string }[] };
     containers?: { class_name?: string; scheduling_policy?: string }[];
+    vars?: Record<string, unknown>;
   };
+  const vars: Record<string, string> = {};
+  for (const [k, v] of Object.entries(t.vars ?? {}))
+    if (typeof v === 'string') vars[k] = v;
   return {
     classes: Object.entries(t.exports ?? {})
       .filter(([, e]) => e?.type === 'durable-object')
@@ -186,6 +194,7 @@ function templateShape(ctx: Ctx): TemplateShape {
     containerClass:
       t.containers?.find((c) => c.scheduling_policy === 'durable_object')
         ?.class_name ?? null,
+    vars,
   };
 }
 
@@ -491,6 +500,13 @@ export async function planAdoptWorker(
     );
   }
 
+  // Tunable vars the operator set away from the template's defaults are kept as found.
+  const kept: Record<string, string> = {};
+  for (const k of [...TUNABLE_VARS].sort()) {
+    const v = vars[k];
+    if (v !== undefined && v !== shape.vars[k]) kept[k] = v;
+  }
+
   const fresh = newState({
     installationId: installationIdOf(
       accountId,
@@ -503,6 +519,7 @@ export async function planAdoptWorker(
       hostname,
       workersDev: hostname === null,
       fromEmail: vars.FROM_EMAIL || null,
+      ...(Object.keys(kept).length > 0 ? { vars: kept } : {}),
     },
     names,
     baseUrl,
@@ -568,6 +585,9 @@ export async function planAdoptWorker(
     'Inputs:',
     `  Hostname       ${i.hostname ?? 'workers.dev'}`,
     `  Sender         ${i.fromEmail ?? '(none: email is off)'}`,
+    ...Object.entries(kept).map(
+      ([k, v]) => `  Kept: ${k} ${JSON.stringify(v)}`
+    ),
     '',
     `Secrets on the worker (names only): ${list(secrets)}`
   );
