@@ -1,7 +1,7 @@
 // `gitorange <command>`: the user-facing installer (spec §2–§6). Every outside effect comes in
 // through `Deps`, so tests drive `main` with fakes; the real wiring is at the bottom.
 import { realpathSync } from 'node:fs';
-import { join, resolve } from 'node:path';
+import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { parseArgs } from 'node:util';
 import { install, resumeInstalled, type Ctx, type Optional } from './apply.ts';
@@ -9,12 +9,18 @@ import { assertConfigWritable, OPTIONAL_ITEMS } from './apply-steps.ts';
 import { restCloudflare, type Cloudflare } from './cloudflare.ts';
 import { clackIo, collect, type Io } from './collect.ts';
 import { ConfigConflict } from './config.ts';
+import {
+  gitorangeHome,
+  installDir,
+  pickInstall,
+  pickResumable,
+} from './home.ts';
 import { installationIdOf, resourceNames, validateName } from './names.ts';
 import { observe } from './observe.ts';
 import { computePlan, formatPlan } from './plan.ts';
 import { preflight } from './preflight.ts';
 import { processRunner, type Runner } from './runner.ts';
-import { checkoutSource, type Source } from './source.ts';
+import { checkoutSource, packageSource, type Source } from './source.ts';
 import {
   analyticsTokenLink,
   checkAnalyticsToken,
@@ -62,6 +68,8 @@ const DEFAULT_NAME = 'gitorange';
 
 export type Deps = Omit<Ctx, 'cf'> & {
   env: Record<string, string | undefined>;
+  /** Package mode: the directory holding every install (<home>/<slug>/); null = checkout mode (dir and configDir as given). */
+  home: string | null;
   /** The Cloudflare API token; throws with what to do when there is none. */
   token(): Promise<string>;
   cloudflare(token: string): Cloudflare;
@@ -162,7 +170,10 @@ export async function main(argv: string[], deps: Deps): Promise<number> {
         strict: true,
         allowPositionals: false,
       });
-      return await status(values, deps);
+      // Package mode: the install's own directory under home.
+      const picked = deps.home ? pickInstall(deps.home, values.name) : null;
+      const dir = picked ? installDir(deps.home!, picked.slug) : deps.dir;
+      return await status(values, { ...deps, dir });
     }
   } catch (e) {
     if (e instanceof UsageError || isParseArgsError(e)) {
@@ -480,19 +491,26 @@ async function runInstall(f: InstallFlags, deps: Deps): Promise<number> {
     io.print((e as Error).message);
     return 1;
   }
-  const { env: _env, token: _t, cloudflare, ...rest } = deps;
-  const ctx: Ctx = { ...rest, cf: cloudflare(token) };
+  const { env: _env, token: _t, cloudflare, home, ...rest } = deps;
+  let ctx: Ctx = { ...rest, cf: cloudflare(token) };
+  // Package mode: state, lock and wrangler.jsonc live together in <home>/<slug>/, chosen once the name is known.
+  const inInstall = (slug: string) => {
+    if (home === null) return;
+    const d = installDir(home, slug);
+    ctx = { ...ctx, dir: d, configDir: d };
+  };
 
   try {
     let s: InstallState;
     let recorded: boolean;
     if (f.resume) {
-      const found = resumable(deps.dir, f.name);
+      if (home !== null) inInstall(pickResumable(home, f.name).slug);
+      const found = resumable(ctx.dir, f.name);
       if (!found) {
         io.print(
           f.name === undefined
-            ? `No installation found to resume in ${deps.dir}.`
-            : `No installation named ${f.name} found in ${deps.dir}.`
+            ? `No installation found to resume in ${ctx.dir}.`
+            : `No installation named ${f.name} found in ${ctx.dir}.`
         );
         return 1;
       }
@@ -507,12 +525,13 @@ async function runInstall(f: InstallFlags, deps: Deps): Promise<number> {
       recorded = true;
     } else {
       const r = await resolveInputs(f, ctx.cf, io);
+      inInstall(r.name);
       const id = installationIdOf(
         r.accountId,
         r.name,
         r.hostname ?? 'workers.dev'
       );
-      const existing = readState(deps.dir, id);
+      const existing = readState(ctx.dir, id);
       if (existing) {
         if (existing.status === 'installed') {
           io.print(
@@ -554,7 +573,8 @@ async function runInstall(f: InstallFlags, deps: Deps): Promise<number> {
     });
     if (pre.failures.length > 0) {
       io.print('Preflight found problems; nothing was changed.\n');
-      for (const x of pre.failures) io.print(`✗ ${x.message}\n  Fix: ${x.fix}`);
+      for (const x of pre.failures)
+        io.print(`✗ ${x.message}${x.fix ? `\n  Fix: ${x.fix}` : ''}`);
       return 1;
     }
     // A recorded base URL is never recomputed.
@@ -580,8 +600,13 @@ async function runInstall(f: InstallFlags, deps: Deps): Promise<number> {
         assertConfigWritable(ctx);
       } catch (e) {
         if (!(e instanceof ConfigConflict)) throw e;
+        const config = join(ctx.configDir, 'wrangler.jsonc');
+        const aside =
+          ctx.source.kind === 'package'
+            ? `${config} ${config}.hand`
+            : 'wrangler.jsonc wrangler.jsonc.hand';
         io.print(
-          '\nwrangler.jsonc was written by hand: apply will refuse until you move it aside (e.g. `mv wrangler.jsonc wrangler.jsonc.hand`).'
+          `\nwrangler.jsonc was written by hand: apply will refuse until you move it aside (e.g. \`mv ${aside}\`).`
         );
       }
       io.print(`\nPlan ${plan.digest}\n\nTo apply it:`);
@@ -655,14 +680,21 @@ export function isEntry(
 
 if (isEntry(import.meta.main, process.argv[1], import.meta.url)) {
   const cwd = process.cwd();
-  const source = checkoutSource(cwd);
+  // The npm bundle defines __GITORANGE_PACKAGE_ROOT__; in a checkout it is not defined at all.
+  const PACKAGED = typeof __GITORANGE_PACKAGE_ROOT__ === 'string';
+  const home = PACKAGED ? gitorangeHome(process.env) : null;
+  // The bundle lives at <root>/bin/gitorange.js.
+  const source = PACKAGED
+    ? packageSource(dirname(dirname(fileURLToPath(import.meta.url))))
+    : checkoutSource(cwd);
   const deps: Deps = {
     io: clackIo,
     env: process.env,
     runner: processRunner,
-    dir: join(cwd, '.gitorange'),
+    dir: home ?? join(cwd, '.gitorange'),
     source,
-    configDir: cwd,
+    home,
+    configDir: home ?? cwd,
     fetchImpl: fetch,
     sleep: (ms) => new Promise((r) => setTimeout(r, ms)),
     now: () => new Date(),

@@ -261,31 +261,41 @@ describe('preflight', () => {
     expect(r.failures).toEqual([]);
   });
 
-  it('reports docker exit 1 and a docker that cannot start', async () => {
-    const down = fakeRunner({
-      docker: () => ({ code: 1, stdout: '', stderr: 'nope' }),
-      yarn: () => ({
-        code: 0,
-        stdout: table([['example.com', 'mail.example.com', 'yes']]),
-        stderr: '',
-      }),
+  it('names the two docker failures apart', async () => {
+    const yarn = () => ({
+      code: 0,
+      stdout: table([['example.com', 'mail.example.com', 'yes']]),
+      stderr: '',
     });
-    const a = await preflight(fakeCloudflare({ subdomain: 'me' }), down, input);
-    expect(a.failures.map((f) => f.check)).toEqual(['docker']);
-    const missing = fakeRunner({
-      docker: () => Promise.reject(new Error('spawn docker ENOENT')),
-      yarn: () => ({
-        code: 0,
-        stdout: table([['example.com', 'mail.example.com', 'yes']]),
-        stderr: '',
-      }),
+    const ok = { code: 0, stdout: '27.0\n', stderr: '' };
+    const run = (script: Parameters<typeof fakeRunner>[0]) =>
+      preflight(fakeCloudflare({ subdomain: 'me' }), fakeRunner(script), input);
+
+    const down = await run({
+      'docker --version': () => ok,
+      'docker info': () => ({ code: 1, stdout: '', stderr: 'nope' }),
+      yarn,
     });
-    const b = await preflight(
-      fakeCloudflare({ subdomain: 'me' }),
-      missing,
-      input
+    expect(down.failures.map((f) => f.check)).toEqual(['docker']);
+    expect(down.failures[0]!.message).toMatch(
+      /^Docker is installed but not running\./
     );
-    expect(b.failures.map((f) => f.check)).toEqual(['docker']);
+
+    const unreachable = await run({
+      'docker --version': () => ok,
+      'docker info': () => Promise.reject(new Error('boom')),
+      yarn,
+    });
+    expect(unreachable.failures[0]!.message).toMatch(/not running/);
+
+    for (const docker of [
+      () => Promise.reject(new Error('spawn docker ENOENT')),
+      () => ({ code: 127, stdout: '', stderr: '' }),
+    ]) {
+      const r = await run({ docker, yarn });
+      expect(r.failures.map((f) => f.check)).toEqual(['docker']);
+      expect(r.failures[0]!.message).toMatch(/^Docker is not installed\./);
+    }
   });
 
   it('reports every failure at once', async () => {

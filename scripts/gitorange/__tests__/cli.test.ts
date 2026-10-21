@@ -3,7 +3,9 @@ import {
   existsSync,
   mkdirSync,
   mkdtempSync,
+  readdirSync,
   rmSync,
+  statSync,
   writeFileSync,
 } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -87,15 +89,24 @@ function harness(
     confirm?: boolean;
     setupStatus?: { setupRequired: boolean; codeRequired: boolean };
     onCloudflare?: (cf: FakeCloudflare) => void;
+    docker?: Record<string, () => RunResult | Promise<RunResult>>;
+    /** Package mode: state and config go under this home. */
+    pkg?: { home: string; source: ReturnType<typeof packageSource> };
   } = {}
 ) {
   let cf: FakeCloudflare | null = null;
   let tokenCalls = 0;
   const ok = (stdout = ''): RunResult => ({ code: 0, stdout, stderr: '' });
   const runner = fakeRunner({
-    docker: () => ok('27.0.0\n'),
+    ...(opts.docker ?? { docker: () => ok('27.0.0\n') }),
     'git rev-parse': () => ok(`${VERSION}\n`),
     'git status': () => ok(''),
+    [process.execPath]: (args) => {
+      if (args[1] === 'deploy' || args[1] === 'd1') return ok();
+      if (args[1] === 'secret')
+        return { code: 1, stdout: '', stderr: 'not found' };
+      throw new Error(`unexpected wrangler ${args.join(' ')}`);
+    },
     yarn: (args) => {
       if (args[1] === 'deploy') return ok();
       if (args[1] === 'wrangler' && args[2] === 'secret')
@@ -156,9 +167,10 @@ function harness(
     io,
     env: opts.env ?? {},
     runner,
-    dir,
-    source: checkoutSource(cwd),
-    configDir: cwd,
+    dir: opts.pkg?.home ?? dir,
+    source: opts.pkg?.source ?? checkoutSource(cwd),
+    home: opts.pkg?.home ?? null,
+    configDir: opts.pkg?.home ?? cwd,
     fetchImpl,
     sleep: async () => {},
     now: () => new Date('2026-10-17T00:00:00Z'),
@@ -737,5 +749,123 @@ describe('isEntry', () => {
     );
     expect(isEntry(undefined, '/repo/other.ts', url)).toBe(false);
     expect(isEntry(undefined, undefined, url)).toBe(false);
+  });
+});
+
+describe('package mode', () => {
+  const pkg = () => {
+    const home = join(root, 'home');
+    const pkgRoot = fakePackage(mkdtempSync(join(tmpdir(), 'pkg-')), {
+      version: '1.2.0',
+      commit: 'abc123def456',
+    });
+    copyFileSync(
+      join(cwd, 'wrangler.jsonc.example'),
+      join(pkgRoot, 'wrangler.jsonc.example')
+    );
+    mkdirSync(join(pkgRoot, 'migrations'), { recursive: true });
+    writeFileSync(
+      join(pkgRoot, 'migrations', '0000_init.sql'),
+      'CREATE TABLE a;'
+    );
+    const source = packageSource(pkgRoot);
+    return { home, source };
+  };
+  const names = (p: string) =>
+    existsSync(p) ? readdirSync(p).sort() : ([] as string[]);
+
+  it('install writes under home/<slug>, privately, and nothing in the cwd', async () => {
+    const pkgOpts = pkg();
+    const h = harness({
+      pkg: pkgOpts,
+      wellKnown: () => Response.json({ installationId: ID, version: '1.2.0' }),
+    });
+    const code = await main(['install', '--yes', ...FLAGS], h.deps);
+    expect(code).toBe(0);
+    const idir = join(pkgOpts.home, 'acme');
+    expect(names(idir).some((f) => f.endsWith('.json'))).toBe(true);
+    expect(names(idir)).toContain('wrangler.jsonc');
+    expect(statSync(idir).mode & 0o777).toBe(0o700);
+    expect(statSync(join(idir, 'wrangler.jsonc')).mode & 0o777).toBe(0o600);
+    for (const f of names(idir).filter((f) => f.endsWith('.json')))
+      expect(statSync(join(idir, f)).mode & 0o777).toBe(0o600);
+    expect(existsSync(join(cwd, 'wrangler.jsonc'))).toBe(false);
+    expect(existsSync(dir)).toBe(false);
+  });
+
+  it('a hand-written config hint names the full path', async () => {
+    const pkgOpts = pkg();
+    mkdirSync(join(pkgOpts.home, 'acme'), { recursive: true });
+    writeFileSync(join(pkgOpts.home, 'acme', 'wrangler.jsonc'), '{}\n');
+    const h = harness({ pkg: pkgOpts });
+    expect(await main(['install', '--plan', ...FLAGS], h.deps)).toBe(0);
+    const c = join(pkgOpts.home, 'acme', 'wrangler.jsonc');
+    expect(h.text()).toContain(`\`mv ${c} ${c}.hand\``);
+  });
+
+  it('status reads the only install under home', async () => {
+    const pkgOpts = pkg();
+    writeState(join(pkgOpts.home, 'acme'), installedState());
+    const h = harness({ pkg: pkgOpts });
+    expect(await main(['status'], h.deps)).toBe(0);
+    expect(h.text()).toContain('acme');
+  });
+
+  it('status with several installs asks for --name', async () => {
+    const pkgOpts = pkg();
+    writeState(join(pkgOpts.home, 'acme'), installedState());
+    writeState(join(pkgOpts.home, 'beta'), installedState());
+    const h = harness({ pkg: pkgOpts });
+    expect(await main(['status'], h.deps)).toBe(2);
+    expect(h.text()).toContain('Several installs: acme, beta. Pass --name.');
+  });
+});
+
+describe('docker', () => {
+  const NOT_INSTALLED =
+    'Docker is not installed. GitOrange runs Actions jobs in containers, and deploying builds the runner image with Docker. Install Docker Desktop (https://docs.docker.com/get-docker/), start it, then run the same command again.';
+  const NOT_RUNNING =
+    'Docker is installed but not running. Start Docker Desktop (or the Docker daemon), then run the same command again.';
+  const ok = { code: 0, stdout: '27.0.0\n', stderr: '' };
+
+  it('not installed: the exact message, nothing written, --plan prints no digest', async () => {
+    const h = harness({
+      docker: {
+        docker: () => Promise.reject(new Error('spawn docker ENOENT')),
+      },
+    });
+    expect(await main(['install', '--plan', ...FLAGS], h.deps)).toBe(1);
+    expect(h.text()).toContain(NOT_INSTALLED);
+    expect(h.text()).not.toContain('Plan ');
+    expect(existsSync(dir)).toBe(false);
+    expect(existsSync(join(cwd, 'wrangler.jsonc'))).toBe(false);
+    const apply = harness({
+      docker: { docker: () => ({ code: 127, stdout: '', stderr: '' }) },
+    });
+    expect(await main(['install', '--yes', ...FLAGS], apply.deps)).toBe(1);
+    expect(apply.text()).toContain(NOT_INSTALLED);
+    expect(existsSync(dir)).toBe(false);
+  });
+
+  it('not running: the exact message, nothing written, --plan prints no digest', async () => {
+    const h = harness({
+      docker: {
+        'docker --version': () => ok,
+        'docker info': () => ({ code: 1, stdout: '', stderr: 'no daemon' }),
+      },
+    });
+    expect(await main(['install', '--plan', ...FLAGS], h.deps)).toBe(1);
+    expect(h.text()).toContain(NOT_RUNNING);
+    expect(h.text()).not.toContain('Plan ');
+    expect(h.text()).not.toContain('not installed');
+    expect(existsSync(dir)).toBe(false);
+    expect(existsSync(join(cwd, 'wrangler.jsonc'))).toBe(false);
+  });
+
+  it('status never runs docker', async () => {
+    writeState(dir, installedState());
+    const h = harness();
+    expect(await main(['status'], h.deps)).toBe(0);
+    expect(h.runner.calls.filter((c) => c.cmd === 'docker')).toEqual([]);
   });
 });

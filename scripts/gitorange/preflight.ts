@@ -293,22 +293,33 @@ export async function preflight(
       'Check Email Sending in the Cloudflare dashboard.'
     );
 
+  // Two failures, each with the whole text in `message` (no separate fix line).
   const docker = async (): Promise<Outcome> => {
-    const fail = one(
-      'docker',
-      'Docker is not running.',
-      'Start Docker Desktop (or the Docker daemon); the deploy builds the Actions runner image.'
+    const fail = (message: string): Outcome => ({
+      failures: [{ check: 'docker', message, fix: '' }],
+    });
+    const notInstalled = fail(
+      'Docker is not installed. GitOrange runs Actions jobs in containers, and deploying builds the runner image with Docker. Install Docker Desktop (https://docs.docker.com/get-docker/), start it, then run the same command again.'
     );
+    try {
+      const v = await runner.run('docker', ['--version']);
+      if (v.code !== 0) return notInstalled;
+    } catch {
+      return notInstalled;
+    }
     try {
       const res = await runner.run('docker', [
         'info',
         '--format',
         '{{.ServerVersion}}',
       ]);
-      return res.code === 0 ? { failures: [] } : fail;
+      if (res.code === 0) return { failures: [] };
     } catch {
-      return fail;
+      // falls through: the daemon did not answer
     }
+    return fail(
+      'Docker is installed but not running. Start Docker Desktop (or the Docker daemon), then run the same command again.'
+    );
   };
 
   const noop = async (): Promise<Outcome> => ({ failures: [] });
