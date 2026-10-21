@@ -21,7 +21,7 @@ interface Outcome {
 }
 
 const TOKEN_FIX =
-  'Create an API token with the permissions listed in docs/setup.md and log in again.';
+  'Create an API token with the permissions listed in https://github.com/choyiny/gitorange/blob/main/docs/setup.md and log in again.';
 
 class TokenProblem extends Error {}
 

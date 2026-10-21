@@ -162,13 +162,22 @@ Drizzle/D1 and better-auth. Git storage is **Cloudflare Artifacts**: one Artifac
   kind `ordered_after`) and retargets `base_ref` (metadata only, CAS); `stackGate` blocks `landPull`, which also refuses a head carrying another
   open PR's commits (`carriedPull`). Tests drive
   `executeReconcile` with fake `StackModels` (`order`, `recheck`).
-- Installer (`scripts/gitorange/`, `yarn gitorange install|status`, spec `docs/superpowers/specs/2026-10-16-deterministic-install-design.md`):
+- Installer (`scripts/gitorange/`, `yarn gitorange install|status` from a checkout, `npx gitorange install|upgrade|adopt|status` from the npm package `gitorange`, specs `docs/superpowers/specs/2026-10-16-deterministic-install-design.md` and `2026-10-19-npm-cli-design.md`):
   pure modules (`names`, `plan`, `config`, `state`) plus ports for Cloudflare (`cloudflare.ts`) and processes (`runner.ts`) and
   the prompts (`collect.ts`), all injected through `Deps`/`Ctx`. Same inputs give the same names, plan digest and generated
   `wrangler.jsonc` (header marker; a hand-written one is never overwritten). State and lock live in `.gitorange/<id>.json`
   (gitignored): `apply.ts` records each step, so `--resume` continues; resources carry an ownership marker and are never
   touched otherwise. The setup code's hash is the `SETUP_CODE_HASH` secret; `/.well-known/gitorange` is what verify reads.
-  Tests are Node vitest (`scripts/gitorange/vitest.config.ts`), no workerd.
+  Tests are Node vitest (`scripts/gitorange/vitest.config.ts`), no workerd. Both entry points run the same code over a
+  `Source` (`source.ts`: `checkoutSource` or `packageSource`) that says where the built release, migrations and runner
+  Dockerfile come from and prints commands (`yarn gitorange …` vs `npx gitorange@<version> …`); package mode keeps state in
+  `~/.gitorange/<slug>/` (`GITORANGE_HOME`, `home.ts`) and runs its own pinned wrangler from there. `upgrade.ts` plans first
+  (`--plan`/`--expect-plan`), never downgrades, adds only the secrets the worker lacks (never `SETUP_CODE_HASH`), and stops
+  on code that is not a release unless `--replace-custom-code`; `adopt` (`adopt.ts` from a checkout, `adopt-worker.ts` from a
+  deployed worker, read-only on Cloudflare) records an existing install. `install` and `upgrade` check Docker in preflight.
+  Publishing: `yarn release:publish vX.Y.Z` (`scripts/release-publish.mjs`, from a person's own machine; checks the tag is on
+  origin and main with git, builds that commit in a fresh worktree, tests, packs, confirms, `npm publish`). Docs:
+  `docs/updating.md`.
 - Artifacts has no local emulator: `yarn dev` runs `env.dev`, which uses the remote service in the
   `gitorange-dev` namespace. Tests use `wrangler.test.jsonc` (no remote bindings) plus an in-memory
   Artifacts fake.
@@ -186,12 +195,14 @@ Drizzle/D1 and better-auth. Git storage is **Cloudflare Artifacts**: one Artifac
 
 - ALL work happens on a new feature branch — never commit directly to `main`.
 - **NEVER push directly to `main`**.
-- **Deploy only when a person says so.** Run `yarn deploy` (or any `wrangler deploy`) and
-  `yarn db:migrate:prod` only when a person directs it in the conversation, or after you ask and they
-  confirm; never on your own initiative, and never as part of finishing a task. Deploy `main` from a clean
-  checkout of `origin/main` (a separate worktree with `wrangler.jsonc` copied in), never from a feature
-  branch or a dirty tree, and apply pending migrations before `yarn deploy`. Say what you deployed (the
-  commit) when done. The `/gitorange-onboarding` skill deploys step by step with the deployer's confirmation.
+- **Deploy only when a person says so.** git.xyspace.dev runs releases only: cut a release (Releases tab or
+  `gitorange_create_release`), run `yarn release:publish vX.Y.Z` from a person's own machine, then
+  `npx gitorange@<version> upgrade --name gitorange`. Do each only when a person directs it in the conversation, or after
+  you ask and they confirm; never on your own initiative, and never as part of finishing a task. Say what you
+  deployed (the version) when done. For forks and other deployers, `yarn deploy` (or any `wrangler deploy`) and
+  `yarn db:migrate:prod` deploy `main` from a clean checkout of `origin/main` (a separate worktree with `wrangler.jsonc`
+  copied in), never from a feature branch or a dirty tree, with pending migrations applied before `yarn deploy`; the same
+  rule applies. The `/gitorange-onboarding` skill deploys step by step with the deployer's confirmation.
 - Submit work as a pull request for human review, on **git.xyspace.dev** (`origin`,
   `choyiny/gitorange`): push the branch, then open it with the `gitorange_create_pull_request` MCP tool
   (server `xy-space-gitorange`) and follow it with `gitorange_get_pull_request`. GitHub (`github` remote) is a

@@ -20,6 +20,13 @@ GitOrange is licensed under the [Apache License 2.0](LICENSE). There is no CLA. 
 4. If you changed the schema, run `yarn db:generate` and commit the generated migration. Never hand-write migration SQL or edit `worker/src/db/auth.schema.ts`.
 5. Open a pull request against `main` describing what changed and why.
 
+## Publishing a release (maintainers)
+
+Cut a release in GitOrange (Releases tab or `gitorange_create_release`), then run `yarn release:publish vX.Y.Z` from your
+own machine. It checks that the tag is on `origin` and on `main`, builds that commit in a fresh worktree, runs the
+tests, packs, asks you to confirm, and runs `npm publish` (npm asks for your 2FA code). Details in
+[Updating](docs/updating.md#publishing-a-release-maintainers).
+
 ## Code style
 
 - TypeScript strict mode in the Worker and the SPA.

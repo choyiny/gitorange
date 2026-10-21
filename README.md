@@ -184,17 +184,24 @@ revert is reviewed like any other change.
 
 You need a Cloudflare account on the **Workers Paid** plan, a domain onboarded to
 [Email Sending](https://developers.cloudflare.com/email-service/) for invitations, and
-[Node.js](https://nodejs.org/) 20+ with yarn.
+[Node.js](https://nodejs.org/) 22+ and Docker, running (deploying builds the Actions runner image).
 
 ```bash
-git clone https://github.com/choyiny/gitorange.git
-cd gitorange
-claude   # then run /gitorange-onboarding
+npx gitorange install
 ```
 
-`/gitorange-onboarding` in [Claude Code](https://claude.com/claude-code) creates the database and buckets, fills
-in your configuration, sets secrets, runs migrations, and deploys. Prefer to do it by hand? [Setup](docs/setup.md)
-takes about seven steps.
+The installer creates the database and buckets, writes your configuration, sets secrets, runs migrations, and
+deploys, with no clone. Later:
+
+```bash
+npx gitorange@latest upgrade                 # move to the newest release (add --prefer-online if npx serves a stale one)
+npx gitorange adopt --from . | --worker <name>   # take over an install made from a checkout or by hand
+npx gitorange status
+```
+
+Running a fork? Clone the repository and run `claude`, then `/gitorange-onboarding` in
+[Claude Code](https://claude.com/claude-code), or `yarn gitorange install` yourself. Prefer to do it all by hand?
+[Setup](docs/setup.md) takes about seven steps. [Updating](docs/updating.md) covers upgrade and adopt.
 
 Your first visit creates the admin account. Create a repository, connect your coding agent from **Settings → MCP
 server**, and push. Then open **Agents → New reviewer**, add the recommended crew, and invite them from the
@@ -291,7 +298,7 @@ D1 and Email Sending usage for a small team stays within the plan.
 
 ## Documentation
 
-[Setup](docs/setup.md) · [Configuration](docs/configuration.md) · [Architecture](docs/architecture.md) ·
+[Setup](docs/setup.md) · [Updating](docs/updating.md) · [Configuration](docs/configuration.md) · [Architecture](docs/architecture.md) ·
 [Local development](docs/development.md) · [Reviewer agents, states, and stacking](docs/auto-merge.md) ·
 [Skipping irrelevant tests](docs/ci-relevance.md)
 
