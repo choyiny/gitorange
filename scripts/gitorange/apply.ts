@@ -50,8 +50,11 @@ export const desiredOf = (s: InstallState): Desired => ({
   names: s.names,
 });
 
+/** An adopted install's Artifacts namespace is proven by its binding: a failed list does not stop. */
 export const look = (ctx: Ctx, s: InstallState): Promise<Observed> =>
-  observe(ctx.cf, s.accountId, s.names);
+  observe(ctx.cf, s.accountId, s.names, {
+    artifactsBound: Boolean(s.adoptedAt),
+  });
 
 export const resource = (
   key: string,

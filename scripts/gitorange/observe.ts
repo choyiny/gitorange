@@ -30,20 +30,40 @@ export interface Observed {
   r2Empty: Record<string, boolean>;
   workflows: { name: string; scriptName: string }[];
   artifactsNamespaces: string[];
+  /**
+   * Why the Artifacts namespaces could not be listed, when `artifactsBound` let the plan go on
+   * without them (the namespace is then taken as bound, not verified).
+   */
+  artifactsUnverified?: string;
 }
 
-/** Read-only: every list call runs in parallel, then the per-resource lookups for our names. */
+/**
+ * Read-only: every list call runs in parallel, then the per-resource lookups for our names.
+ * `artifactsBound` (an adopted install, whose worker's binding is the proof, as adopt takes it): a
+ * failed Artifacts namespace list is recorded in `artifactsUnverified` instead of thrown.
+ */
 export async function observe(
   cf: Cloudflare,
   accountId: string,
-  names: ResourceNames
+  names: ResourceNames,
+  opts: { artifactsBound?: boolean } = {}
 ): Promise<Observed> {
+  let artifactsUnverified: string | undefined;
+  const listArtifacts = async () => {
+    try {
+      return await cf.listArtifactsNamespaces(accountId);
+    } catch (e) {
+      if (!opts.artifactsBound) throw e;
+      artifactsUnverified = e instanceof Error ? e.message : String(e);
+      return [];
+    }
+  };
   const [vars, d1, r2, workflows, artifactsNamespaces] = await Promise.all([
     cf.workerVars(accountId, names.worker),
     cf.listD1(accountId),
     cf.listR2(accountId),
     cf.listWorkflows(accountId),
-    cf.listArtifactsNamespaces(accountId),
+    listArtifacts(),
   ]);
 
   const ours = d1.filter((d) => d.name === names.d1);
@@ -100,5 +120,6 @@ export async function observe(
     r2Empty: Object.fromEntries(empties),
     workflows,
     artifactsNamespaces,
+    ...(artifactsUnverified !== undefined ? { artifactsUnverified } : {}),
   };
 }

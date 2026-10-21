@@ -104,12 +104,14 @@ const origins = (v: string) =>
  * change what the worker does; `drops` do not (retired vars, a TRUSTED_ORIGINS that only trusts
  * local development origins, which GitOrange never reads) and are shown in the report. A var
  * named like a secret has its value withheld. An empty Durable Object namespace id var is one
- * the upgrade fills in.
+ * the upgrade fills in. Tunable vars are skipped (adopt keeps them as found) except those named in
+ * `compare`, which an upgrade checks for dashboard edits since adopt or the last upgrade.
  */
 export function varChanges(
   current: Record<string, string>,
   next: Record<string, string>,
-  retired: ReadonlySet<string> = RETIRED_VARS
+  retired: ReadonlySet<string> = RETIRED_VARS,
+  compare: ReadonlySet<string> = new Set()
 ): { stops: string[]; drops: string[] } {
   const stops: string[] = [];
   const drops: string[] = [];
@@ -122,7 +124,10 @@ export function varChanges(
           ? `  ${name}  (value not shown) -> removed; the upgrade would generate a ${name} secret in its place`
           : `  ${name}  (value not shown) -> removed; set it as a secret instead`
       );
-    } else if (EXPECTED_TO_CHANGE.has(name) || TUNABLE_VARS.includes(name)) {
+    } else if (
+      EXPECTED_TO_CHANGE.has(name) ||
+      (TUNABLE_VARS.includes(name) && !compare.has(name))
+    ) {
       // Tunable vars are kept as found (inputs.vars), never changed by the upgrade.
       continue;
     } else if (DO_ID_VARS.has(name) && value === '') {
@@ -153,8 +158,23 @@ export function varChanges(
   return { stops, drops };
 }
 
+/** The error for vars a deploy would drop or change: `who` is the upgrade, `then` what to run next. */
+export const varStops = (
+  worker: string,
+  stops: string[],
+  who: string,
+  then: string
+) =>
+  new Error(
+    [
+      `Worker ${worker} has vars ${who} would drop or change:`,
+      ...stops,
+      `Change or remove them on the worker, then ${then}. ${NOTHING}`,
+    ].join('\n')
+  );
+
 /** The generated config's plain vars, from its text. */
-function configVars(text: string): Record<string, string> {
+export function configVars(text: string): Record<string, string> {
   const vars = (parse(text) as { vars?: Record<string, unknown> }).vars ?? {};
   const out: Record<string, string> = {};
   for (const [k, v] of Object.entries(vars))
@@ -534,15 +554,13 @@ export async function planAdoptWorker(
   const to = await ctx.source.version(ctx.runner);
   // What the first upgrade cannot carry over stops here, before anything is written.
   const changes = varChanges(vars, configVars(renderConfig(ctx, s, to).text));
-  if (changes.stops.length > 0) {
-    throw new Error(
-      [
-        `Worker ${worker} has vars the first upgrade would drop or change:`,
-        ...changes.stops,
-        `Change or remove them on the worker, then run adopt again. ${NOTHING}`,
-      ].join('\n')
+  if (changes.stops.length > 0)
+    throw varStops(
+      worker,
+      changes.stops,
+      'the first upgrade',
+      'run adopt again'
     );
-  }
 
   const running =
     (await wellKnownVersion(ctx, baseUrl)) ?? (vars.GITORANGE_VERSION || null);

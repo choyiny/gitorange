@@ -34,7 +34,8 @@ import {
   verifyAt,
   writeConfig,
 } from './apply-steps.ts';
-import { ConfigConflict, isGenerated } from './config.ts';
+import { configVars, varChanges, varStops } from './adopt-worker.ts';
+import { ConfigConflict, isGenerated, TUNABLE_VARS } from './config.ts';
 import type { Observed } from './observe.ts';
 import { computePlan, type Action, type Plan } from './plan.ts';
 import { dockerProblem } from './preflight.ts';
@@ -69,6 +70,10 @@ export type UpgradePlan = {
    * operator deletes the stray one and runs the upgrade again.
    */
   problems: string[];
+  /** Vars the deploy drops that the worker does not need (adopt's `varChanges` drops). */
+  drops: string[];
+  /** Bindings taken as proven without the API confirming them (an adopted Artifacts namespace). */
+  unverified: string[];
   /** The generated config's hash differs from `deployedConfigHash`. */
   configChanged: boolean;
   /** First 12 hex of sha256 over the plan lines. */
@@ -130,8 +135,14 @@ async function inspect(
  * Migration files in the package that the install's D1 has not applied. No `d1_migrations` table
  * on an empty database: all. No such table beside other tables (a database set up without
  * `wrangler d1 migrations apply`) stops: applying everything would fail on the existing tables.
+ * Applied migrations the package does not ship stop too: the database is ahead of this release
+ * (checked whatever the running version, so --replace-custom-code never deploys older code over it).
  */
-async function pendingMigrations(ctx: Ctx, s: InstallState): Promise<string[]> {
+async function pendingMigrations(
+  ctx: Ctx,
+  s: InstallState,
+  to: string
+): Promise<string[]> {
   const files = readdirSync(ctx.source.migrationsDir)
     .filter((f) => f.endsWith('.sql'))
     .sort();
@@ -157,6 +168,12 @@ async function pendingMigrations(ctx: Ctx, s: InstallState): Promise<string[]> {
     throw new Error(
       `D1 ${d1.name} has tables but no d1_migrations table; GitOrange cannot tell which migrations ran. ` +
         'Record the migrations that already ran in a d1_migrations table (as `wrangler d1 migrations apply` does), then run the upgrade again. Nothing was changed.'
+    );
+  }
+  const ahead = applied.filter((n) => !files.includes(n)).sort();
+  if (ahead.length > 0) {
+    throw new Error(
+      `The database has migrations this release does not ship (${ahead.join(', ')}): it is ahead of ${to}. Upgrade to a newer release instead. Nothing was changed.`
     );
   }
   return files.filter((f) => !applied.includes(f));
@@ -189,6 +206,9 @@ function planLines(p: Omit<UpgradePlan, 'digest'>): string[] {
   if (p.missing.length > 0)
     lines.push(`Missing (you add them): ${p.missing.join(', ')}`);
   lines.push(...p.problems);
+  if (p.drops.length > 0)
+    lines.push('Drops these vars (the worker does not need them):', ...p.drops);
+  lines.push(...p.unverified);
   lines.push(
     `Config: ${p.configChanged ? 'changes' : 'unchanged'}`,
     '',
@@ -209,15 +229,51 @@ type Planned = {
   have: string[];
 };
 
+/**
+ * The worker's vars against the config this upgrade deploys (wrangler deploy replaces them all), as
+ * adopt checks them: a var edited on the dashboard since adopt or the last upgrade stops. Tunable
+ * vars are compared when kept (`inputs.vars`), and all of them on the first upgrade after adopt,
+ * which recorded them as found; otherwise a release may change their template default.
+ */
+function varDrift(
+  s: InstallState,
+  obs: Observed,
+  configText: string
+): string[] {
+  const current = obs.worker.vars;
+  if (!current) return [];
+  const compare = new Set(
+    firstAfterAdopt(s) ? TUNABLE_VARS : Object.keys(s.inputs.vars ?? {})
+  );
+  const { stops, drops } = varChanges(
+    current,
+    configVars(configText),
+    undefined,
+    compare
+  );
+  if (stops.length > 0)
+    throw varStops(
+      s.names.worker,
+      stops,
+      'the upgrade',
+      'run the upgrade again'
+    );
+  return drops;
+}
+
 async function planned(
   ctx: Ctx,
   s: InstallState,
   running: Running,
-  to: string
+  to: string,
+  /** False while continuing an upgrade: its own deploys may have changed the vars. */
+  checkVars = true
 ): Promise<Planned> {
+  const migrations = await pendingMigrations(ctx, s, to);
   const obs = await look(ctx, s);
   const base = computePlan(desiredOf(s), obs, s);
-  const migrations = await pendingMigrations(ctx, s);
+  const config = renderConfig(ctx, s, to);
+  const drops = checkVars ? varDrift(s, obs, config.text) : [];
   const workerIsNew =
     base.actions.find((a) => a.key === 'worker')?.action === 'create';
   const have = await existingSecretNames(ctx, s.names.worker, workerIsNew);
@@ -232,7 +288,12 @@ async function planned(
     // Names only: what the operator types later is never part of the plan or its digest.
     missing: optionalSecretNames(missingOptional(have)),
     problems: halfSet(ctx, s, have),
-    configChanged: renderConfig(ctx, s, to).hash !== s.deployedConfigHash,
+    drops,
+    unverified:
+      obs.artifactsUnverified !== undefined
+        ? [`artifacts ${s.names.artifacts}: bound, not verified`]
+        : [],
+    configChanged: config.hash !== s.deployedConfigHash,
   };
   const digest = createHash('sha256')
     .update(planLines(p).join('\n'))
@@ -371,9 +432,19 @@ export async function upgrade(
       running = await inspect(ctx, s, to);
       checkRunning(ctx, s, running, to, opts.replaceCustomCode);
     }
-    const { plan, base, obs, have } = await planned(ctx, s, running, to);
+    const { plan, base, obs, have } = await planned(
+      ctx,
+      s,
+      running,
+      to,
+      !unfinished
+    );
     problems = plan.problems;
     ctx.io.print(formatUpgradePlan(plan));
+    if (obs.artifactsUnverified !== undefined)
+      ctx.io.print(
+        `\nNote: the Artifacts namespace ${s.names.artifacts} could not be confirmed (${obs.artifactsUnverified}); its binding on ${s.names.worker} is taken as the proof.`
+      );
     if (opts.plan) {
       const args = [
         'upgrade',
