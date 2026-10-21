@@ -77,6 +77,60 @@ function parseObject(
   }
 }
 
+const adoptedMismatch = (name: string) =>
+  new PlanStop(
+    `\`${name}\` is recorded as adopted, but what exists in Cloudflare is not the resource that was adopted. Nothing was changed.`
+  );
+
+/**
+ * A resource recorded as adopted is ours without the marker, row or var checks: the recorded
+ * identity must match what is observed (the uuid for D1, the name for the rest).
+ */
+function decideAdopted(
+  kind: ResourceKind,
+  name: string,
+  desired: Desired,
+  observed: Observed,
+  recorded: Resource
+): Action['action'] {
+  switch (kind) {
+    case 'd1': {
+      const matches = observed.d1.filter((d) => d.name === name);
+      if (matches.length === 0) {
+        throw recordedButMissing(name);
+      }
+      if (!matches.some((d) => d.uuid === recorded.id)) {
+        throw adoptedMismatch(name);
+      }
+      return 'reuse';
+    }
+    case 'r2':
+      if (!observed.r2.includes(name)) {
+        throw recordedButMissing(name);
+      }
+      if (recorded.name !== name) {
+        throw adoptedMismatch(name);
+      }
+      return 'reuse';
+    case 'workflow':
+      if (!observed.workflows.some((w) => w.name === name)) {
+        throw recordedButMissing(name);
+      }
+      if (recorded.name !== name) {
+        throw adoptedMismatch(name);
+      }
+      return 'reuse';
+    case 'worker':
+      if (!observed.worker.exists) {
+        throw recordedButMissing(name);
+      }
+      if (recorded.name !== desired.names.worker) {
+        throw adoptedMismatch(name);
+      }
+      return 'deploy';
+  }
+}
+
 /** One resource's action, or a PlanStop. `recorded` is this key's state-file entry, if any. */
 function decide(
   key: Key,
@@ -88,6 +142,9 @@ function decide(
 ): Action['action'] {
   const name = desired.names[key];
   const { installationId, ownershipNonce } = desired;
+  if (recorded?.ownership === 'adopted') {
+    return decideAdopted(kind, name, desired, observed, recorded);
+  }
 
   switch (kind) {
     case 'd1': {

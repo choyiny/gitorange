@@ -19,6 +19,7 @@ export type Status =
   | 'deploying'
   | 'verifying'
   | 'installed'
+  | 'upgrading'
   | 'failed';
 export type ResourceKind = 'worker' | 'd1' | 'r2' | 'workflow';
 
@@ -27,7 +28,7 @@ export interface Resource {
   kind: ResourceKind;
   name: string;
   id: string;
-  ownership: 'created';
+  ownership: 'created' | 'adopted';
   state: 'ready';
 }
 
@@ -54,6 +55,12 @@ export interface InstallState {
   deployedConfigHash?: string;
   /** The `GITORANGE_VERSION` last deployed successfully: what verify expects. */
   deployedVersion?: string;
+  /** Absolute state dir this installation moved to; this file is then a stub. */
+  movedTo?: string;
+  adoptedAt?: string;
+  upgradedAt?: string;
+  /** The version an in-progress upgrade is moving to. */
+  upgradeTarget?: string;
 }
 
 export type NewStateInput = Pick<
@@ -83,8 +90,9 @@ const ALLOWED: Record<Status, Status[]> = {
   provisioning: ['deploying', 'failed'],
   deploying: ['verifying', 'provisioning', 'failed'],
   verifying: ['installed', 'failed'],
-  installed: [],
-  failed: ['provisioning', 'deploying', 'verifying'],
+  installed: ['upgrading'],
+  upgrading: ['installed', 'failed'],
+  failed: ['provisioning', 'deploying', 'verifying', 'upgrading'],
 };
 
 export function transition(s: InstallState, to: Status): InstallState {

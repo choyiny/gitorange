@@ -637,3 +637,87 @@ describe('observe', () => {
     expect(o.worker).toEqual({ exists: false, vars: null });
   });
 });
+
+describe('computePlan: adopted resources', () => {
+  const adopted = (
+    key: string,
+    kind: Resource['kind'],
+    name: string,
+    id: string
+  ): Resource => ({ ...rec(key, kind, name, id), ownership: 'adopted' });
+  const withRes = (...r: Resource[]) => {
+    const s = state();
+    s.resources.push(...r);
+    return s;
+  };
+
+  it('adopted d1 without install row is reused', () => {
+    const s = withRes(adopted('d1', 'd1', 'gitorange-db', 'uuid-1'));
+    const o = {
+      ...empty(),
+      d1: [{ uuid: 'uuid-1', name: 'gitorange-db' }],
+      d1Tables: { 'uuid-1': ['repositories'] },
+      d1InstallRow: { 'uuid-1': null },
+    };
+    expect(computePlan(desired, o, s).actions[0].action).toBe('reuse');
+  });
+
+  const buckets: [string, string, number][] = [
+    ['lfs', 'gitorange-lfs', 1],
+    ['actionsLogs', 'gitorange-actions-logs', 2],
+    ['actionsCache', 'gitorange-actions-cache', 3],
+  ];
+  for (const [key, name, i] of buckets) {
+    it(`adopted r2 without marker is reused (${key})`, () => {
+      const s = withRes(adopted(key, 'r2', name, name));
+      const o = {
+        ...empty(),
+        r2: [name],
+        r2Markers: { [name]: null },
+        r2Empty: { [name]: false },
+      };
+      expect(computePlan(desired, o, s).actions[i].action).toBe('reuse');
+    });
+  }
+
+  it('adopted workflows bound elsewhere are reused', () => {
+    const s = withRes(
+      adopted('actionsWorkflow', 'workflow', 'gitorange-actions-run', 'x'),
+      adopted('mergeWorkflow', 'workflow', 'gitorange-merge-resolution', 'y')
+    );
+    const o = {
+      ...empty(),
+      workflows: [
+        { name: 'gitorange-actions-run', scriptName: 'other' },
+        { name: 'gitorange-merge-resolution', scriptName: 'other' },
+      ],
+    };
+    const a = computePlan(desired, o, s).actions;
+    expect(a[4].action).toBe('reuse');
+    expect(a[5].action).toBe('reuse');
+  });
+
+  it('adopted worker without GITORANGE_INSTALLATION deploys', () => {
+    const s = withRes(adopted('worker', 'worker', 'gitorange', 'gitorange'));
+    const o = { ...empty(), worker: { exists: true, vars: {} } };
+    expect(computePlan(desired, o, s).actions[6].action).toBe('deploy');
+  });
+
+  it('adopted id mismatch stops', () => {
+    const s = withRes(adopted('d1', 'd1', 'gitorange-db', 'uuid-old'));
+    const o = {
+      ...empty(),
+      d1: [{ uuid: 'uuid-new', name: 'gitorange-db' }],
+    };
+    expect(stopMessage(() => computePlan(desired, o, s))).toContain(
+      '`gitorange-db` is recorded as adopted'
+    );
+  });
+
+  it('an adopted resource missing in Cloudflare stops as missing', () => {
+    const s = withRes(adopted('worker', 'worker', 'gitorange', 'gitorange'));
+    expect(stopMessage(() => computePlan(desired, empty(), s))).toContain(
+      'recorded but missing'
+    );
+  });
+});

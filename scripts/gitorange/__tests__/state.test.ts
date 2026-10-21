@@ -69,6 +69,10 @@ describe('transition', () => {
     ['failed', 'provisioning'],
     ['failed', 'deploying'],
     ['failed', 'verifying'],
+    ['installed', 'upgrading'],
+    ['upgrading', 'installed'],
+    ['upgrading', 'failed'],
+    ['failed', 'upgrading'],
     ['deploying', 'provisioning'],
     ['provisioning', 'provisioning'],
     ['deploying', 'deploying'],
@@ -100,6 +104,43 @@ describe('transition', () => {
       );
     });
   }
+});
+
+describe('upgrading and adopted', () => {
+  it('installed can start an upgrade', () => {
+    const s = { ...fresh(), status: 'installed' as const };
+    expect(transition(s, 'upgrading').status).toBe('upgrading');
+  });
+  it('failed upgrade resumes', () => {
+    const s = { ...fresh(), status: 'failed' as const, upgradeTarget: '1.2.0' };
+    expect(transition(s, 'upgrading').status).toBe('upgrading');
+  });
+  it('installed cannot go to provisioning', () => {
+    const s = { ...fresh(), status: 'installed' as const };
+    expect(() => transition(s, 'provisioning')).toThrow(
+      'Cannot move from installed to provisioning'
+    );
+  });
+  it('adopted ownership round-trips', () => {
+    const r = {
+      key: 'd1',
+      kind: 'd1',
+      name: 'x',
+      id: 'id1',
+      ownership: 'adopted',
+      state: 'ready',
+    } as const;
+    const s = {
+      ...recordResource(fresh(), r),
+      adoptedAt: '2026-10-21T00:00:00.000Z',
+      movedTo: '/home/x/.gitorange',
+      upgradedAt: '2026-10-22T00:00:00.000Z',
+      upgradeTarget: '1.2.0',
+    };
+    const back = JSON.parse(JSON.stringify(s)) as typeof s;
+    expect(back.resources[0].ownership).toBe('adopted');
+    expect(back).toEqual(s);
+  });
 });
 
 describe('steps and resources', () => {
